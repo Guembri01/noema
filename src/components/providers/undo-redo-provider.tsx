@@ -28,13 +28,17 @@ import {
   canUndo as engineCanUndo,
   clear as engineClear,
   createUndoStack,
+  historyView,
   mergeRemote as engineMergeRemote,
   nextRedoCommand,
   nextUndoCommand,
   push as enginePush,
   redo as engineRedo,
+  redoTo as engineRedoTo,
   undo as engineUndo,
+  undoTo as engineUndoTo,
   type Command,
+  type HistoryEntry,
   type UndoStack,
 } from "@/lib/undo-redo";
 
@@ -77,8 +81,17 @@ export type UndoRedoApi = {
   canRedo: boolean;
   /** The present state with every applied command folded in, oldest first. */
   state: GlobalUndoState;
+  /** The actual stack, oldest first — what the history surface renders. */
+  history: HistoryEntry[];
   undo(): void;
   redo(): void;
+  /**
+   * Undo every local step down to (and including) `history[index]`. The row's
+   * index comes straight from {@link history}; remote/undone rows are no-ops.
+   */
+  undoTo(index: number): void;
+  /** Redo every local step up to (and including) `history[index]`. */
+  redoTo(index: number): void;
   /** Record a local, invertible command and advance the state. */
   push(command: GlobalCommand): void;
   /** Fold in a collaborator's command (outside the local undo scope). */
@@ -96,10 +109,17 @@ const DETACHED: UndoRedoApi = {
   canUndo: false,
   canRedo: false,
   state: {},
+  history: [],
   undo() {
     /* not mounted */
   },
   redo() {
+    /* not mounted */
+  },
+  undoTo() {
+    /* not mounted */
+  },
+  redoTo() {
     /* not mounted */
   },
   push() {
@@ -114,6 +134,29 @@ const DETACHED: UndoRedoApi = {
 };
 
 const UndoRedoContext = createContext<UndoRedoApi | null>(null);
+
+/**
+ * Run a transition's server effects in order. Undo effects arrive newest-first
+ * and redo effects oldest-first from the pure engine, so awaiting them here is
+ * what keeps a multi-step history click from racing its own writes. A failed
+ * effect must not brick the stack — the in-memory history already moved, and
+ * the next undo/redo can still try.
+ */
+async function runEffects(
+  commands: readonly GlobalCommand[],
+  direction: "undo" | "redo",
+): Promise<void> {
+  for (const command of commands) {
+    const effect = direction === "undo" ? command.onUndo : command.onRedo;
+    if (!effect) continue;
+    try {
+      await effect();
+    } catch {
+      // Keep walking: the stack is the source of truth, and one failed write
+      // should not leave the remainder of a bulk inverse unapplied.
+    }
+  }
+}
 
 export function UndoRedoProvider({
   children,
@@ -140,6 +183,24 @@ export function UndoRedoProvider({
       void Promise.resolve(command.onRedo()).catch(() => undefined);
     }
   }, [stack]);
+  const undoTo = useCallback(
+    (index: number) => {
+      const transition = engineUndoTo(stack, index);
+      if (transition.commands.length === 0) return;
+      setStack(transition.stack);
+      void runEffects(transition.commands, "undo");
+    },
+    [stack],
+  );
+  const redoTo = useCallback(
+    (index: number) => {
+      const transition = engineRedoTo(stack, index);
+      if (transition.commands.length === 0) return;
+      setStack(transition.stack);
+      void runEffects(transition.commands, "redo");
+    },
+    [stack],
+  );
   const push = useCallback(
     (command: GlobalCommand) => setStack((current) => enginePush(current, command)),
     [],
@@ -153,6 +214,10 @@ export function UndoRedoProvider({
 
   const canUndo = engineCanUndo(stack);
   const canRedo = engineCanRedo(stack);
+  const history = useMemo<HistoryEntry[]>(
+    () => historyView(stack).entries,
+    [stack],
+  );
 
   // Global shortcuts. An editable target (input, textarea, select,
   // contenteditable — e.g. the editor) keeps its own history, so we never
@@ -191,13 +256,28 @@ export function UndoRedoProvider({
       canUndo,
       canRedo,
       state: stack.state,
+      history,
       undo,
       redo,
+      undoTo,
+      redoTo,
       push,
       mergeRemote,
       clear,
     }),
-    [canUndo, canRedo, stack.state, undo, redo, push, mergeRemote, clear],
+    [
+      canUndo,
+      canRedo,
+      stack.state,
+      history,
+      undo,
+      redo,
+      undoTo,
+      redoTo,
+      push,
+      mergeRemote,
+      clear,
+    ],
   );
 
   return (

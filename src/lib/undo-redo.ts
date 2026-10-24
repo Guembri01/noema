@@ -155,6 +155,21 @@ export type HistoryEntry = {
   at?: number;
 };
 
+/**
+ * The result of walking the history to a chosen entry: the resulting stack and
+ * the commands that were actually undone/redone, in the order the effects must
+ * run. Remote entries are never included — they are outside the local scope.
+ */
+export type HistoryTransition<S> = {
+  /** The stack after every step. */
+  stack: UndoStack<S>;
+  /**
+   * Commands crossed by the transition. For `undoTo` this is newest-first; for
+   * `redoTo` it is oldest-first, so a caller can await their effects in order.
+   */
+  commands: Command<S>[];
+};
+
 /** A usable history depth: a finite number floored to an integer ≥ 1. */
 function normalizeLimit(limit: number | undefined): number {
   if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_UNDO_LIMIT;
@@ -356,6 +371,66 @@ export function redo<S>(stack: UndoStack<S>): UndoStack<S> {
   );
 
   return { ...stack, entries, state, lastAt: null, lastCoalesceKey: null };
+}
+
+/**
+ * Undo every local step down to (and including) the entry at `index`.
+ *
+ * The history view renders one row per entry; selecting a row asks the stack to
+ * walk back to it. Remote entries are skipped exactly as {@link undo} skips
+ * them, so a collaborator's step is never reverted by someone else's click.
+ * Returns the transitioned stack plus the commands whose effects must run, in
+ * newest-first order. A no-op (no commands, same state) when `index` is out of
+ * range, already undone, remote, or when no local step remains.
+ */
+export function undoTo<S>(stack: UndoStack<S>, index: number): HistoryTransition<S> {
+  const target = stack.entries[index];
+  if (!target || target.remote || target.undone) {
+    return { stack: snapshot(stack), commands: [] };
+  }
+
+  let current = stack;
+  const commands: Command<S>[] = [];
+  while (true) {
+    const command = nextUndoCommand(current);
+    if (!command) break;
+    const commandIndex = current.entries.findIndex(
+      (entry) => !entry.remote && !entry.undone && entry.command === command,
+    );
+    current = undo(current);
+    commands.push(command);
+    if (commandIndex === index) break;
+  }
+  return { stack: current, commands };
+}
+
+/**
+ * Redo every local step up to (and including) the entry at `index`.
+ *
+ * The mirror of {@link undoTo}: a row on the redo side asks the stack to walk
+ * forward to it. Remote entries are left untouched. Returns the transitioned
+ * stack plus the commands to re-run, oldest-first. A no-op when the entry is
+ * applied, remote, out of range, or when the redo branch does not reach it.
+ */
+export function redoTo<S>(stack: UndoStack<S>, index: number): HistoryTransition<S> {
+  const target = stack.entries[index];
+  if (!target || target.remote || !target.undone) {
+    return { stack: snapshot(stack), commands: [] };
+  }
+
+  let current = stack;
+  const commands: Command<S>[] = [];
+  while (true) {
+    const command = nextRedoCommand(current);
+    if (!command) break;
+    const commandIndex = current.entries.findIndex(
+      (entry) => !entry.remote && entry.undone && entry.command === command,
+    );
+    current = redo(current);
+    commands.push(command);
+    if (commandIndex === index) break;
+  }
+  return { stack: current, commands };
 }
 
 /**

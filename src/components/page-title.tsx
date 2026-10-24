@@ -26,6 +26,7 @@ import {
   Undo2,
   Upload,
 } from "lucide-react";
+import { UndoHistoryControl } from "@/components/undo-history";
 import {
   archivePageAction,
   getPageContentAction,
@@ -706,8 +707,11 @@ export function PageTitle({
   const {
     canUndo,
     canRedo,
+    history,
     undo: undoGlobal,
     redo: redoGlobal,
+    undoTo: undoGlobalTo,
+    redoTo: redoGlobalTo,
     push: pushGlobal,
   } = useUndoRedo();
 
@@ -868,6 +872,7 @@ export function PageTitle({
       label,
       apply: (state) => state,
       invert: (state) => state,
+      at: Date.now(),
       onUndo,
       onRedo,
     });
@@ -1433,6 +1438,12 @@ export function PageTitle({
             >
               <Redo2 className="h-4 w-4" aria-hidden />
             </button>
+            <UndoHistoryControl
+              entries={history}
+              locale={locale}
+              onUndoTo={undoGlobalTo}
+              onRedoTo={redoGlobalTo}
+            />
           </div>
         }
         actions={

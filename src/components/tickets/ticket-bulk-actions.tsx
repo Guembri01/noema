@@ -1,13 +1,22 @@
 "use client";
 
 import { useState, type Dispatch, type SetStateAction } from "react";
+import { useRouter } from "next/navigation";
 import { Archive, Trash2 } from "lucide-react";
 import {
   bulkArchiveTicketsAction,
   bulkDeleteTicketsAction,
   bulkUpdateTicketsAction,
-  restoreTicketAction,
+  toggleTicketLabelAction,
+  updateTicketAction,
 } from "@/server/actions/tickets";
+import { useUndoRedo } from "@/components/providers/undo-redo-provider";
+import {
+  bulkEffectCommand,
+  bulkPatchCommand,
+  planBulkChanges,
+  type BulkRowChange,
+} from "@/lib/undo-bulk";
 import { ESTIMATE_UNITS, TICKET_PRIORITIES, TICKET_STATUSES } from "@/lib/tickets";
 import { safeAction, useAction } from "@/lib/actions-client";
 import {
@@ -23,7 +32,7 @@ import { ConfirmDialog, type ConfirmTone } from "@/components/ui/confirm-dialog"
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
-import type { LabelRow } from "./ticket-types";
+import type { LabelRow, TicketRow } from "./ticket-types";
 import type { RunAction } from "./tickets-toolbar";
 
 /** The scalar patches the bulk endpoint accepts (mirrors the action input). */
@@ -40,6 +49,74 @@ type BulkPatch = {
 
 /** Sentinel option value meaning "clear this relation" (→ `null`). */
 const CLEAR = "__clear__";
+
+/**
+ * Pure inverse planning for a batch of bulk edits: one entry per selected ticket
+ * that would really change, with the patch that restores it (`before`) and the
+ * patch that re-applies the edit (`after`). Rows already at the target value are
+ * dropped, so "set status to the status it already has" never enters history.
+ *
+ * Labels are planned as add/remove *toggles*: adding is only offered for rows
+ * that lack the label, removing only for rows that carry it, which keeps the
+ * undo/redo path idempotent even if a collaborator already changed the row.
+ */
+export function bulkTicketChanges(
+  rows: readonly TicketRow[],
+  selectedIds: readonly string[],
+  data: BulkPatch,
+): BulkRowChange<BulkPatch>[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const changes: BulkRowChange<BulkPatch>[] = [];
+
+  for (const rowId of selectedIds) {
+    const row = byId.get(rowId);
+    if (!row) continue;
+    const before: BulkPatch = {};
+    const after: BulkPatch = {};
+
+    if (data.status !== undefined && data.status !== row.status) {
+      before.status = row.status;
+      after.status = data.status;
+    }
+    if (data.priority !== undefined && data.priority !== row.priority) {
+      before.priority = row.priority;
+      after.priority = data.priority;
+    }
+    if (data.assigneeId !== undefined && data.assigneeId !== row.assigneeId) {
+      before.assigneeId = row.assigneeId;
+      after.assigneeId = data.assigneeId;
+    }
+    if (data.projectId !== undefined && data.projectId !== row.projectId) {
+      before.projectId = row.projectId;
+      after.projectId = data.projectId;
+    }
+    if (data.estimate !== undefined) {
+      const currentUnit = row.estimateUnit ?? "points";
+      const nextUnit = data.estimateUnit ?? currentUnit;
+      if (data.estimate !== row.estimate || nextUnit !== currentUnit) {
+        before.estimate = row.estimate;
+        before.estimateUnit = currentUnit;
+        after.estimate = data.estimate;
+        after.estimateUnit = nextUnit;
+      }
+    }
+    for (const labelId of data.addLabelIds ?? []) {
+      if (row.labelIds.includes(labelId)) continue;
+      after.addLabelIds = [...(after.addLabelIds ?? []), labelId];
+      before.removeLabelIds = [...(before.removeLabelIds ?? []), labelId];
+    }
+    for (const labelId of data.removeLabelIds ?? []) {
+      if (!row.labelIds.includes(labelId)) continue;
+      after.removeLabelIds = [...(after.removeLabelIds ?? []), labelId];
+      before.addLabelIds = [...(before.addLabelIds ?? []), labelId];
+    }
+
+    if (Object.keys(before).length > 0 || Object.keys(after).length > 0) {
+      changes.push({ rowId, before, after });
+    }
+  }
+  return changes;
+}
 
 /* -------------------------------------------------------------------------- *
  * Pure mappings — property → control and bulk action → confirm copy
@@ -105,6 +182,7 @@ export function TicketBulkActions({
   run,
   locale = "en",
   allIds,
+  tickets = [],
 }: {
   checked: string[];
   setChecked: Dispatch<SetStateAction<string[]>>;
@@ -118,22 +196,57 @@ export function TicketBulkActions({
    * `Switch`; omitted (the current toolbar wiring) leaves it out.
    */
   allIds?: string[];
+  /**
+   * The live ticket rows the selection points at. Required to plan an honest
+   * inverse for property edits (the previous value is not in the `BulkPatch`);
+   * omitted, archive/restore still record one reversible step.
+   */
+  tickets?: readonly TicketRow[];
 }) {
+  const router = useRouter();
+  const { push: pushGlobal } = useUndoRedo();
   const [estimate, setEstimate] = useState("0");
   const [unit, setUnit] = useState<string>("points");
   const [confirm, setConfirm] = useState<BulkDestructiveAction | null>(null);
   const { run: runDestructive, pending } = useAction(locale);
 
-  const applyUpdate = (data: BulkPatch, label: string) =>
-    run(label, async () => {
+  const applyTicketPatch = async (ticketId: string, patch: BulkPatch) => {
+    const { addLabelIds, removeLabelIds, ...scalars } = patch;
+    if (Object.keys(scalars).length > 0) {
+      await updateTicketAction({ ticketId, ...scalars });
+    }
+    for (const labelId of addLabelIds ?? []) {
+      await toggleTicketLabelAction(ticketId, labelId);
+    }
+    for (const labelId of removeLabelIds ?? []) {
+      await toggleTicketLabelAction(ticketId, labelId);
+    }
+  };
+
+  const applyUpdate = (data: BulkPatch, label: string) => {
+    // Snapshot before the write lands: the inverse needs each row's old value.
+    // Planning here (not after the round-trip) means the history step is built
+    // from the values the user actually saw when they clicked.
+    const plan = planBulkChanges(label, bulkTicketChanges(tickets, checked, data));
+    const at = Date.now();
+    return run(label, async () => {
       const outcome = await safeAction(() =>
         bulkUpdateTicketsAction({ ticketIds: checked, ...data }),
       );
       if (!outcome.ok) return { ok: false, message: outcome.error };
       const result = outcome.value;
       if ("error" in result) return { ok: false, message: result.error };
+
+      const command = bulkPatchCommand<Record<string, unknown>, BulkPatch>(
+        plan,
+        applyTicketPatch,
+        { at, id: crypto.randomUUID() },
+      );
+      if (command) pushGlobal(command);
+      router.refresh();
       return { ok: true };
     });
+  };
 
   const applyEstimate = () => {
     const value = estimate.trim() === "" ? null : Number(estimate);
@@ -144,15 +257,28 @@ export function TicketBulkActions({
 
   const doArchive = () => {
     const ids = checked.slice();
+    const at = Date.now();
+    const label = ids.length === 1 ? "Archive ticket" : `Archive ${ids.length} tickets`;
     runDestructive(() => bulkArchiveTicketsAction({ ticketIds: ids }), {
       success: "Tickets archived",
-      undo: {
-        label: t(locale, "archiveTicket"),
-        undo: async () => {
-          for (const id of ids) await restoreTicketAction(id);
-        },
-      },
       onSuccess: () => {
+        // One command for the whole selection: one Ctrl+Z restores every row.
+        pushGlobal(
+          bulkEffectCommand<Record<string, unknown>>({
+            id: crypto.randomUUID(),
+            label,
+            rowIds: ids,
+            at,
+            undo: async (rowIds) => {
+              await bulkArchiveTicketsAction({ ticketIds: [...rowIds], archived: false });
+              router.refresh();
+            },
+            redo: async (rowIds) => {
+              await bulkArchiveTicketsAction({ ticketIds: [...rowIds], archived: true });
+              router.refresh();
+            },
+          }),
+        );
         setConfirm(null);
         setChecked((current) => current.filter((id) => !ids.includes(id)));
       },

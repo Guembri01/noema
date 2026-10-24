@@ -7,7 +7,10 @@ import { renderToStaticMarkup } from "react-dom/server";
  * status `Badge`, the archiver `Avatar` and the `Button` restore.
  */
 
-vi.mock("@/server/actions/tickets", () => ({ restoreTicketAction: vi.fn() }));
+vi.mock("@/server/actions/tickets", () => ({
+  bulkArchiveTicketsAction: vi.fn(),
+  restoreTicketAction: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import { ArchiveRow, archiveStatusTone, type ArchivedTicketRow } from "./ticket-archive-view";

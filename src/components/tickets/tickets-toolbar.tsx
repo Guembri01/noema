@@ -918,6 +918,7 @@ export function TicketsToolbar({
           projects={projects}
           run={run}
           locale={locale}
+          tickets={tickets}
         />
       )}
 

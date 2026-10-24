@@ -13,6 +13,7 @@ import {
 import { PromptDialog } from "@/components/prompt-dialog";
 import { useAction } from "@/lib/actions-client";
 import { useUndoRedo } from "@/components/providers/undo-redo-provider";
+import { bulkEffectCommand } from "@/lib/undo-bulk";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -882,6 +883,15 @@ export function DatabaseView({
       ),
     ];
   }, [dependencyEdges, extraDependencyEdges]);
+  // A refresh that removes selected rows (another client trashed one, a filter
+  // changed) must not leave invisible ids in the bulk selection.
+  useEffect(() => {
+    setSelectedRowIds((current) => {
+      const live = new Set(rows.map((row) => row.id));
+      const next = current.filter((id) => live.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [rows]);
   /**
    * R89.24 — the schema lock is optimistic while the server write is in
    * flight: the toolbar flips immediately, and a refused write (e.g. a member
@@ -915,6 +925,9 @@ export function DatabaseView({
    */
   const [propertyToDelete, setPropertyToDelete] = useState<DBProperty | null>(null);
   const [rowToDelete, setRowToDelete] = useState<string | null>(null);
+  /** Table multi-selection for bulk row actions (trash → one undo step). */
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [lockPending, setLockPending] = useState(false);
   const [deletedRows, setDeletedRows] = useState<
     { id: string; title: string; icon: string | null; deletedAt: string }[] | null
@@ -1967,6 +1980,32 @@ export function DatabaseView({
    */
   const removeRow = (rowId: string) => setRowToDelete(rowId);
 
+  /**
+   * Record a trashed row (or a batch of them) as one reversible global step.
+   * The inverse restores every id; redo trashes them again. The successful
+   * subset is captured, so a partially failed batch only advertises what can
+   * really be restored.
+   */
+  const recordRowsTrashed = (label: string, ids: readonly string[]) => {
+    if (ids.length === 0) return;
+    pushGlobal(
+      bulkEffectCommand<Record<string, unknown>>({
+        id: crypto.randomUUID(),
+        label,
+        rowIds: ids,
+        at: Date.now(),
+        undo: async (rowIds) => {
+          for (const id of rowIds) await restorePageAction(id);
+          router.refresh();
+        },
+        redo: async (rowIds) => {
+          for (const id of rowIds) await deleteRowAction(id);
+          router.refresh();
+        },
+      }),
+    );
+  };
+
   /** The confirmed half of `removeRow`: trash the row and refresh. */
   const confirmRemoveRow = (rowId: string) =>
     startTransition(async () => {
@@ -1975,7 +2014,41 @@ export function DatabaseView({
         toast.error(result.error);
         return;
       }
+      const title = rowsById.get(rowId)?.title || t(locale, "untitled");
+      recordRowsTrashed(`${t(locale, "deleteRow")}: ${title}`, [rowId]);
+      setSelectedRowIds((current) => current.filter((id) => id !== rowId));
       toast.success(t(locale, "dbRowTrashed"));
+      router.refresh();
+    });
+
+  /** Bulk trash for the table selection: one history entry for the batch. */
+  const confirmRemoveSelectedRows = () =>
+    startTransition(async () => {
+      const ids = selectedRowIds.slice();
+      if (ids.length === 0) {
+        setBulkDeleteOpen(false);
+        return;
+      }
+      const deleted: string[] = [];
+      let failure: string | null = null;
+      for (const id of ids) {
+        const result = await deleteRowAction(id);
+        if ("error" in result) {
+          failure ??= result.error;
+          continue;
+        }
+        deleted.push(id);
+      }
+      setBulkDeleteOpen(false);
+      setSelectedRowIds((current) => current.filter((id) => !deleted.includes(id)));
+      if (deleted.length > 0) {
+        recordRowsTrashed(
+          `${t(locale, "deleteRow")} (${deleted.length})`,
+          deleted,
+        );
+        toast.success(t(locale, "dbRowTrashed"));
+      }
+      if (failure) toast.error(failure);
       router.refresh();
     });
 
@@ -2100,6 +2173,23 @@ export function DatabaseView({
         toast.error(result.error);
         return;
       }
+      // Restoring is invertible too: undo trashes the row again.
+      pushGlobal(
+        bulkEffectCommand<Record<string, unknown>>({
+          id: crypto.randomUUID(),
+          label: t(locale, "restore"),
+          rowIds: [rowId],
+          at: Date.now(),
+          undo: async (rowIds) => {
+            for (const id of rowIds) await deleteRowAction(id);
+            router.refresh();
+          },
+          redo: async (rowIds) => {
+            for (const id of rowIds) await restorePageAction(id);
+            router.refresh();
+          },
+        }),
+      );
       toast.success(t(locale, "dbRowRestored"));
       const list = await listDeletedRowsAction(databasePageId);
       setDeletedRows("error" in list ? [] : list.rows);
@@ -2189,6 +2279,36 @@ export function DatabaseView({
           </p>
         )
       )}
+
+      {/* Bulk row actions: appears only while the table selection is non-empty,
+          and records one invertible step for the whole batch. */}
+      {editable && activeView.type === "TABLE" && selectedRowIds.length > 0 ? (
+        <div
+          data-testid="database-bulk-bar"
+          className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs"
+        >
+          <span className="font-medium text-fg">
+            {selectedRowIds.length} {t(locale, "selected")}
+          </span>
+          <Button
+            variant="danger"
+            tone="soft"
+            size="xs"
+            leftIcon={<Trash2 className="h-3.5 w-3.5" aria-hidden />}
+            onClick={() => setBulkDeleteOpen(true)}
+          >
+            {`${t(locale, "deleteRow")} (${selectedRowIds.length})`}
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="ms-auto"
+            onClick={() => setSelectedRowIds([])}
+          >
+            {t(locale, "clear")}
+          </Button>
+        </div>
+      ) : null}
 
       {/* Deleted rows: soft-deleted rows of this database, restorable inline. */}
       {deletedRows !== null && (
@@ -2411,6 +2531,26 @@ export function DatabaseView({
           loading={loading}
           onAddRow={editable ? addRow : undefined}
           footer={tableFooter}
+          selectedRowIds={selectedRowIds}
+          onToggleRow={
+            editable
+              ? (rowId) =>
+                  setSelectedRowIds((current) =>
+                    current.includes(rowId)
+                      ? current.filter((id) => id !== rowId)
+                      : [...current, rowId],
+                  )
+              : undefined
+          }
+          onToggleAllRows={
+            editable
+              ? (rowIds) =>
+                  setSelectedRowIds((current) => {
+                    const all = rowIds.length > 0 && rowIds.every((id) => current.includes(id));
+                    return all ? [] : [...rowIds];
+                  })
+              : undefined
+          }
         />
       ) : (
         <EmptyState
@@ -2629,6 +2769,17 @@ export function DatabaseView({
           setRowToDelete(null);
           confirmRemoveRow(target);
         }}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        tone="danger"
+        title={`${t(locale, "deleteRow")} (${selectedRowIds.length})`}
+        description={t(locale, "dbRowTrashed")}
+        confirmLabel={t(locale, "delete")}
+        cancelLabel={t(locale, "cancel")}
+        onConfirm={confirmRemoveSelectedRows}
       />
     </div>
   );

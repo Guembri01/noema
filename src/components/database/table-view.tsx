@@ -117,6 +117,7 @@ import {
 } from "@/lib/form-view";
 import { optionEdge, optionInk, optionSurface, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 import { shouldAnimateLayout, useFlipList } from "@/lib/layout-shift";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ROW_MOTION_MS,
   enteredIds,
@@ -212,6 +213,9 @@ export function TableView({
   rowHeight,
   loading = false,
   onAddRow,
+  selectedRowIds = [],
+  onToggleRow,
+  onToggleAllRows,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -272,11 +276,18 @@ export function TableView({
   loading?: boolean;
   /** Empty-state primary action; absent renders the hint without a button. */
   onAddRow?: () => void;
+  /** Row ids currently selected for the bulk bar (optional, table-only). */
+  selectedRowIds?: readonly string[];
+  /** Toggle one row's selection; absent renders no selection control. */
+  onToggleRow?: (rowId: string) => void;
+  /** Toggle the whole visible selection; absent renders no select-all box. */
+  onToggleAllRows?: (rowIds: string[]) => void;
 }) {
   const columns = visibleColumns(
     properties as unknown as QueryProperty[],
     config,
   ) as unknown as DBProperty[];
+  const selected = new Set(selectedRowIds);
   const frozen = config.freezeFirstColumn !== false;
   const rowMode = resolveTableRowHeight(rowHeight);
   const cellClass = tableRowCellClass(rowMode);
@@ -477,8 +488,18 @@ export function TableView({
           );
         })}
         <td className="px-1 align-top">
-          <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
-            {editable && onReorderRows && (
+          <div className="flex items-center justify-end gap-0.5">
+            {onToggleRow ? (
+              <Checkbox
+                size="sm"
+                aria-label={`${t(locale, "select")}: ${row.title}`}
+                checked={selected.has(row.id)}
+                onCheckedChange={() => onToggleRow(row.id)}
+                className="me-1 shrink-0"
+              />
+            ) : null}
+            <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
+              {editable && onReorderRows && (
               <>
                 <button
                   type="button"
@@ -559,6 +580,7 @@ export function TableView({
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             )}
+            </div>
           </div>
         </td>
       </tr>
@@ -683,7 +705,25 @@ export function TableView({
             <th
               className="sticky top-0 w-16 border-b border-border-strong bg-surface"
               style={{ zIndex: Z.sticky }}
-            />
+            >
+              {onToggleRow && onToggleAllRows ? (
+                <Checkbox
+                  size="sm"
+                  aria-label={t(locale, "selectAll")}
+                  checked={
+                    visibleRows.length > 0 &&
+                    visibleRows.every((row) => selected.has(row.id))
+                      ? true
+                      : visibleRows.some((row) => selected.has(row.id))
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={() =>
+                    onToggleAllRows(visibleRows.map((row) => row.id))
+                  }
+                />
+              ) : null}
+            </th>
           </tr>
         </thead>
         {motionGroups && motionGroups.length > 0 ? (

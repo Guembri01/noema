@@ -1318,6 +1318,10 @@ const en = {
   aboutLocalFirst: "Your data stays on your machine — no account, no telemetry, no lock-in.",
   aboutSource: "Source code",
   aboutDocs: "Documentation",
+  undoHistory: "Undo history",
+  noUndoHistory: "No reversible actions yet.",
+  remoteAction: "From a collaborator",
+  selected: "selected",
 };
 
 type Dict = Record<keyof typeof en, string>;
@@ -2620,6 +2624,10 @@ const DICTS: Record<LocaleCode, Dict> = {
     aboutLocalFirst: "Vos données restent sur votre machine — pas de compte, pas de télémétrie, pas d’enfermement.",
     aboutSource: "Code source",
     aboutDocs: "Documentation",
+    undoHistory: "Historique des annulations",
+    noUndoHistory: "Aucune action réversible pour l’instant.",
+    remoteAction: "Par un collaborateur",
+    selected: "sélectionné(s)",
   },
   es: {
     search: "Buscar",
@@ -3917,6 +3925,10 @@ const DICTS: Record<LocaleCode, Dict> = {
     aboutLocalFirst: "Tus datos se quedan en tu equipo: sin cuenta, sin telemetría, sin dependencias.",
     aboutSource: "Código fuente",
     aboutDocs: "Documentación",
+    undoHistory: "Historial de deshacer",
+    noUndoHistory: "Aún no hay acciones reversibles.",
+    remoteAction: "De un colaborador",
+    selected: "seleccionado(s)",
   },
   de: {
     search: "Suchen",
@@ -5214,6 +5226,10 @@ const DICTS: Record<LocaleCode, Dict> = {
     aboutLocalFirst: "Ihre Daten bleiben auf Ihrem Rechner — kein Konto, keine Telemetrie, kein Lock-in.",
     aboutSource: "Quellcode",
     aboutDocs: "Dokumentation",
+    undoHistory: "Rückgängig-Verlauf",
+    noUndoHistory: "Noch keine umkehrbaren Aktionen.",
+    remoteAction: "Von einem Mitbearbeiter",
+    selected: "ausgewählt",
   },
   ar: {
     search: "بحث",
@@ -6511,6 +6527,10 @@ const DICTS: Record<LocaleCode, Dict> = {
     aboutLocalFirst: "تبقى بياناتك على جهازك — بلا حساب ولا تتبّع ولا احتكار.",
     aboutSource: "الشيفرة المصدرية",
     aboutDocs: "التوثيق",
+    undoHistory: "سجل التراجع",
+    noUndoHistory: "لا توجد إجراءات قابلة للتراجع بعد.",
+    remoteAction: "من متعاون آخر",
+    selected: "محدد",
   },
 };
 

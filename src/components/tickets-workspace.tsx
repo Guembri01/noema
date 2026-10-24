@@ -238,6 +238,7 @@ export function TicketsWorkspace({
         closed={closed}
         checked={checked}
         setChecked={setChecked}
+        tickets={rows}
         onSortChange={(spec) => setSortSpecs(spec ? [spec] : [])}
       />
 

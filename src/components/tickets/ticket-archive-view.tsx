@@ -4,8 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArchiveRestore, Search } from "lucide-react";
 import { toast } from "sonner";
-import { restoreTicketAction } from "@/server/actions/tickets";
+import { bulkArchiveTicketsAction, restoreTicketAction } from "@/server/actions/tickets";
 import { safeAction } from "@/lib/actions-client";
+import { useUndoRedo } from "@/components/providers/undo-redo-provider";
+import { bulkEffectCommand } from "@/lib/undo-bulk";
 import { t } from "@/lib/i18n";
 import { formatRelativeTime } from "@/lib/i18n-format";
 import { statusMeta } from "@/lib/tickets";
@@ -125,6 +127,7 @@ export function TicketArchiveView({
   locale: string;
 }) {
   const router = useRouter();
+  const { push: pushGlobal } = useUndoRedo();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -139,19 +142,54 @@ export function TicketArchiveView({
 
   const restoreMany = (ids: string[]) =>
     startTransition(async () => {
+      const restored: string[] = [];
       for (const id of ids) {
         const outcome = await safeAction(() => restoreTicketAction(id), { locale });
         if (!outcome.ok) {
           toast.error(outcome.error);
-          return;
+          break;
         }
         if ("error" in outcome.value) {
           toast.error(outcome.value.error);
-          return;
+          break;
         }
+        restored.push(id);
       }
-      setSelected((current) => current.filter((id) => !ids.includes(id)));
-      toast.success(ids.length === 1 ? "Ticket restored" : `${ids.length} tickets restored`);
+      if (restored.length === 0) return;
+      // A bulk restore is one history step: undo archives the same rows again.
+      pushGlobal(
+        bulkEffectCommand<Record<string, unknown>>({
+          id: crypto.randomUUID(),
+          label:
+            restored.length === 1
+              ? "Restore ticket"
+              : `Restore ${restored.length} tickets`,
+          rowIds: restored,
+          at: Date.now(),
+          undo: async (rowIds) => {
+            const outcome = await safeAction(
+              () => bulkArchiveTicketsAction({ ticketIds: [...rowIds], archived: true }),
+              { locale },
+            );
+            if (!outcome.ok) throw new Error(outcome.error);
+            if ("error" in outcome.value) throw new Error(outcome.value.error);
+            router.refresh();
+          },
+          redo: async (rowIds) => {
+            const outcome = await safeAction(
+              () => bulkArchiveTicketsAction({ ticketIds: [...rowIds], archived: false }),
+              { locale },
+            );
+            if (!outcome.ok) throw new Error(outcome.error);
+            if ("error" in outcome.value) throw new Error(outcome.value.error);
+            router.refresh();
+          },
+        }),
+      );
+      setSelected((current) => current.filter((id) => !restored.includes(id)));
+      toast.success(
+        restored.length === 1 ? "Ticket restored" : `${restored.length} tickets restored`,
+      );
       router.refresh();
     });
 

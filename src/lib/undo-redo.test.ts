@@ -11,9 +11,11 @@ import {
   mergeRemote,
   push,
   redo,
+  redoTo,
   type Command,
   type UndoStack,
   undo,
+  undoTo,
 } from "./undo-redo";
 
 /**
@@ -515,6 +517,66 @@ describe("clear", () => {
     const stack = clear(stackOf(0, { limit: 3, coalesceWindowMs: 50 }));
     expect(stack.limit).toBe(3);
     expect(stack.coalesceWindowMs).toBe(50);
+  });
+});
+
+describe("history transitions", () => {
+  const threeStep = () => {
+    let stack = stackOf(0);
+    stack = push(stack, step(1, { id: "a", label: "One" }));
+    stack = push(stack, step(10, { id: "b", label: "Two" }));
+    stack = push(stack, step(100, { id: "c", label: "Three" }));
+    return stack;
+  };
+
+  it("undoTo the newest entry is exactly one step", () => {
+    const stack = threeStep();
+    const transition = undoTo(stack, 2);
+    expect(transition.commands.map((command) => command.id)).toEqual(["c"]);
+    expect(transition.stack.state).toBe(11);
+    expect(canRedo(transition.stack)).toBe(true);
+  });
+
+  it("undoTo an older entry walks back to it, newest-first", () => {
+    const stack = threeStep();
+    const transition = undoTo(stack, 0);
+    expect(transition.commands.map((command) => command.id)).toEqual(["c", "b", "a"]);
+    expect(transition.stack.state).toBe(0);
+    expect(canUndo(transition.stack)).toBe(false);
+    expect(transition.stack.entries.every((entry) => entry.undone)).toBe(true);
+  });
+
+  it("redoTo walks forward to the chosen undone entry, oldest-first", () => {
+    const undone = undoTo(threeStep(), 0).stack;
+    const transition = redoTo(undone, 1);
+    expect(transition.commands.map((command) => command.id)).toEqual(["a", "b"]);
+    expect(transition.stack.state).toBe(11);
+    expect(historyView(transition.stack).entries.map((entry) => entry.applied)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("is a no-op for a remote entry", () => {
+    const stack = mergeRemote(threeStep(), step(7, { id: "remote" }));
+    const transition = undoTo(stack, 3);
+    expect(transition.commands).toEqual([]);
+    expect(transition.stack.state).toBe(stack.state);
+  });
+
+  it("is a no-op for an entry already on the other side", () => {
+    const stack = undoTo(threeStep(), 1).stack;
+    expect(undoTo(stack, 1).commands).toEqual([]);
+    expect(redoTo(stack, 0)).toMatchObject({ commands: [] });
+    expect(redoTo(stack, 0).stack.state).toBe(stack.state);
+  });
+
+  it("never returns the same entry array (no aliasing)", () => {
+    const stack = threeStep();
+    const transition = undoTo(stack, 5);
+    expect(transition.commands).toEqual([]);
+    expect(transition.stack.entries).not.toBe(stack.entries);
   });
 });
 
