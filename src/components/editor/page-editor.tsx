@@ -1046,7 +1046,7 @@ function PageEditorBody({
       TemplateButton.configure({ locale }),
       ButtonBlock.configure({ locale }),
       AskAi.configure({ workspaceId, locale, pageId }),
-      SyncedBlock.configure({ locale }),
+      SyncedBlock.configure({ locale, pageId, workspaceSlug }),
       AnimatedImage.configure({ locale }),
       LinkedDatabase.configure({ workspaceId, workspaceSlug, locale }),
       UmlDiagram,
@@ -1529,7 +1529,7 @@ function PageEditorBody({
       )}
 
       <DiagramPresenceProvider awareness={collab?.provider.awareness ?? null}>
-        <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} locale={locale}>
+        <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} pageId={pageId} locale={locale}>
           <EditorContent editor={editor} />
         </BlockContextMenu>
       </DiagramPresenceProvider>

@@ -69,7 +69,7 @@ This repository is a **working application plus a complete parity tracker**.
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
   — 563 rows, each with a status and a note explaining the current state. Today:
-  **468 implemented · 73 partial · 0 planned · 22 deliberately out of scope**.
+  **470 implemented · 71 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -122,7 +122,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Page permissions | Per-member page access (**Can edit / Can view / No access**) that overrides the workspace role for that page |
 | Automations | **Button properties** (set another property to a value on click) and **page locking** (read-only pages/databases) |
 | Importers | **Trello JSON** → database (lists → status options), **Markdown .zip** → nested pages, **Word .docx** → page, Markdown file, **Notion API** (`POST /api/import/notion` — integration token + nested child pages) |
-| Editor blocks | … + **linked database** (source-view-bound, filter/sort-aware, with synced/detached overrides, a detached-only in-block filter/sort editor, and row create/edit/delete that writes through the source database's authz) |
+| Editor blocks | … + **linked database** (source-view-bound, filter/sort-aware, with synced/detached overrides, a detached-only in-block filter/sort editor, and row create/edit/delete that writes through the source database's authz) + **synced block** (source marker, live same-page propagation, cross-page refresh, detach with fresh ids) |
 | Accessibility | Visible focus rings, a **skip-to-content** link, `lang`/`dir` from locale, labelled landmarks/navs/controls, and a **WCAG contrast-audited palette** (`npm run check:a11y`) |
 | Formulas | FORMULA properties with an expression engine (`prop("Name")`, `+ - * / %`, comparisons, `if`, `concat`, `round`, `min/max`, `abs`, `length`, `upper/lower`, `contains`, `empty`, `now/today`) |
 | Quality | **Vitest** unit tests for the pure logic (block serialisation, database query engine), **Playwright** e2e, `tsc --noEmit`, ESLint, `npm run check:fast` inner-loop gate and `npm run check:coherence` drift gate |
@@ -349,7 +349,7 @@ dark variants under `.dark`).
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
 (generated from the feature matrix by `npm run docs:gaps`): of 563 tracked rows,
-73 are still partial and 22 are deliberately out of scope — the rest are
+71 are still partial and 22 are deliberately out of scope — the rest are
 implemented — with a priority shortlist at the top.
 
 

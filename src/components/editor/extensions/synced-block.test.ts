@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Schema } from "@tiptap/pm/model";
 import { createSyncedBlockState, createSyncRef } from "@/lib/synced-blocks";
 import {
+  collectSyncedMirrorUpdates,
+  detachedSnapshotJson,
+  findBlockJsonById,
+  findBlockNodeById,
   pmDocToSyncBlocks,
   planRegisterSyncedInstance,
   planSyncedDetach,
@@ -9,6 +13,7 @@ import {
   resolveSyncedContent,
   syncBlockText,
   syncBlockToPmJson,
+  syncSnapshotDoc,
   syncedAttrsFromRef,
   syncedMarkerProps,
   syncedNodeTargetsSource,
@@ -29,6 +34,25 @@ const schema = new Schema({
       group: "block",
       content: "inline*",
       attrs: { id: { default: null }, refBlockId: { default: null }, refBlockIds: { default: null } },
+    },
+    blockquote: {
+      group: "block",
+      content: "block+",
+      attrs: { id: { default: null } },
+    },
+    syncedBlock: {
+      group: "block",
+      atom: true,
+      attrs: {
+        id: { default: null },
+        refId: { default: null },
+        sourceBlockId: { default: null },
+        sourcePageId: { default: null },
+        sourcePageTitle: { default: null },
+        content: { default: "" },
+        readOnly: { default: false },
+        instanceId: { default: null },
+      },
     },
     text: { group: "inline" },
   },
@@ -86,7 +110,7 @@ describe("syncedMarkerProps (sourceMarker)", () => {
   it("renders the canonical source marker with a deep link", () => {
     const marker = syncedMarkerProps(syncedAttrsFromRef(ref));
     expect(marker?.label).toBe("Synced from p1");
-    expect(marker?.href).toBe("/page/p1#src");
+    expect(marker?.href).toBe("/w/p1#src");
     expect(marker?.readOnly).toBe(false);
   });
 
@@ -164,5 +188,108 @@ describe("syncBlockToPmJson", () => {
       attrs: { id: "src" },
       content: [{ type: "text", text: "hello" }],
     });
+  });
+
+  it("keeps ProseMirror attrs, marks and content verbatim", () => {
+    const snapshot = {
+      id: "src",
+      type: "paragraph",
+      attrs: { id: "src", textAlign: "center" },
+      content: [
+        { type: "text", text: "hello", marks: [{ type: "bold" }] },
+      ],
+    };
+    expect(syncBlockToPmJson(snapshot)).toEqual(snapshot);
+    expect(syncSnapshotDoc(snapshot)).toEqual({
+      type: "doc",
+      content: [snapshot],
+    });
+  });
+
+  it("gives a detached copy fresh ids so it cannot collide with its source", () => {
+    const snapshot = {
+      type: "blockquote",
+      attrs: { id: "source-id" },
+      content: [
+        { type: "paragraph", attrs: { id: "child-id" }, content: [{ type: "text", text: "x" }] },
+      ],
+    };
+    const detached = detachedSnapshotJson(snapshot as never);
+    expect(detached.attrs?.id).toBeTruthy();
+    expect(detached.attrs?.id).not.toBe("source-id");
+    const child = detached.content?.[0] as { attrs?: { id?: string } } | undefined;
+    expect(child?.attrs?.id).toBeTruthy();
+    expect(child?.attrs?.id).not.toBe("child-id");
+    expect(snapshot.attrs.id).toBe("source-id");
+  });
+});
+
+describe("same-page source lookup and propagation", () => {
+  const sourceJson = {
+    type: "paragraph",
+    attrs: { id: "src" },
+    content: [{ type: "text", text: "Source" }],
+  };
+  const staleJson = {
+    type: "paragraph",
+    attrs: { id: "src" },
+    content: [{ type: "text", text: "stale" }],
+  };
+  const doc = schema.nodeFromJSON({
+    type: "doc",
+    content: [
+      sourceJson,
+      {
+        type: "syncedBlock",
+        attrs: {
+          id: "mirror",
+          sourceBlockId: "src",
+          sourcePageId: "p1",
+          content: JSON.stringify(staleJson),
+          instanceId: "inst",
+        },
+      },
+    ],
+  });
+
+  it("finds a source node by its stable block id", () => {
+    expect(findBlockNodeById(doc, "src")?.textContent).toBe("Source");
+    expect(findBlockNodeById(doc, "missing")).toBeNull();
+  });
+
+  it("finds a block in a stored cross-page document", () => {
+    expect(findBlockJsonById({ type: "doc", content: [sourceJson] }, "src")).toEqual(
+      sourceJson,
+    );
+    expect(findBlockJsonById({ type: "doc", content: [sourceJson] }, "missing")).toBeNull();
+  });
+
+  it("reports a stale mirror with the source snapshot", () => {
+    const updates = collectSyncedMirrorUpdates(doc);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sourceBlockId).toBe("src");
+    expect(JSON.parse(updates[0].content)).toMatchObject({
+      type: "paragraph",
+      attrs: { id: "src" },
+      content: [{ type: "text", text: "Source" }],
+    });
+  });
+
+  it("leaves an up-to-date mirror alone", () => {
+    const fresh = schema.nodeFromJSON({
+      type: "doc",
+      content: [
+        sourceJson,
+        {
+          type: "syncedBlock",
+          attrs: {
+            sourceBlockId: "src",
+            sourcePageId: "p1",
+            content: JSON.stringify(doc.child(0).toJSON()),
+          },
+        },
+      ],
+    });
+    expect(collectSyncedMirrorUpdates(fresh)).toEqual([]);
   });
 });

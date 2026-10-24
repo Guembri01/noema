@@ -5,7 +5,10 @@ import { Schema } from "@tiptap/pm/model";
 // action; stub both so the pure engine helpers can be imported under vitest's
 // node environment.
 vi.mock("katex/dist/katex.min.css", () => ({}));
-vi.mock("@/server/actions/pages", () => ({ updatePageAction: vi.fn() }));
+vi.mock("@/server/actions/pages", () => ({
+  updatePageAction: vi.fn(),
+  getPageContentAction: vi.fn(),
+}));
 
 import {
   cleanClipboardHtml,

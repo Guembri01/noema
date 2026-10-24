@@ -68,8 +68,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
 | Table of contents | Auto-generated page outline with links. | ✅ | Lists headings; scroll-spy navigation partial. Spec detail: docs/specs/editor-deep.md §5 (R84.16); live close: B96 (e2e/toc.spec.ts). |
 | Breadcrumb block | Shows the page's ancestor path. | ✅ | Renders path; deep-tree linking rough. |
-| Synced block | Mirror one block's content in many places. | 🟡 | Planned via reference ids; editing propagation needs care. |
-| Synced block source marker | Visual marker of the canonical source. | 🟡 | Planned. |
+| Synced block | Mirror one block's content in many places. | ✅ | Same-page mirrors propagate live through a TipTap plugin; cross-page mirrors refresh on mount (and via the card's refresh action); detaching re-ids the copied subtree. |
+| Synced block source marker | Visual marker of the canonical source. | ✅ | Each mirror shows a "Synced" badge and a deep link to its source page/block; broken sources keep the last snapshot and show a warning. |
 | Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
@@ -769,7 +769,7 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 87 | 11 | 0 | 2 | 100 |
+| 1. Editor & blocks | 89 | 9 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 34 | 1 | 0 | 1 | 36 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **468** | **73** | **0** | **22** | **563** |
+| **Total** | **470** | **71** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

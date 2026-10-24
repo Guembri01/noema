@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ClipboardCopy,
   Copy,
+  Layers,
   Link2,
   ListOrdered,
   MessageSquare,
@@ -288,12 +289,15 @@ export function BlockContextMenu({
   editor,
   editable,
   workspaceId,
+  pageId,
   locale = "en",
   children,
 }: {
   editor: Editor;
   editable: boolean;
   workspaceId?: string;
+  /** Current page id, so a synced copy can name its source page. */
+  pageId: string;
   locale?: string;
   children: ReactNode;
 }) {
@@ -398,6 +402,76 @@ export function BlockContextMenu({
       .insertContentAt(pos + node.nodeSize, node.toJSON())
       .run();
     toast.success(t(locale, "blockDuplicated"));
+  };
+
+  /**
+   * Insert a read-only mirror of the block under the menu immediately after its
+   * top-level ancestor. The source stays editable; `SyncedBlock`'s propagation
+   * plugin refreshes the mirror snapshot on every same-page edit, and a mirror
+   * copied to another page re-fetches its source on mount.
+   */
+  const createSyncedCopy = () => {
+    if (pos === null) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node) return;
+    if (node.type.name === "syncedBlock") {
+      const sourceBlockId =
+        typeof node.attrs.sourceBlockId === "string" ? node.attrs.sourceBlockId : "";
+      const sourcePageId =
+        typeof node.attrs.sourcePageId === "string" ? node.attrs.sourcePageId : "";
+      if (sourceBlockId === "" || sourcePageId === "") {
+        toast.error(t(locale, "syncedBlockNeedsId"));
+        return;
+      }
+      const at = pos + node.nodeSize;
+      editor
+        .chain()
+        .focus()
+        .insertSyncedBlock(
+          {
+            sourceBlockId,
+            sourcePageId,
+            sourcePageTitle:
+              typeof node.attrs.sourcePageTitle === "string"
+                ? node.attrs.sourcePageTitle
+                : null,
+            content: typeof node.attrs.content === "string" ? node.attrs.content : "",
+          },
+          { at },
+        )
+        .run();
+      toast.success(t(locale, "syncedCopyCreated"));
+      return;
+    }
+
+    const sourceId = blockAnchorId(editor.state.doc, pos);
+    if (!sourceId) {
+      toast.error(t(locale, "syncedBlockNeedsId"));
+      return;
+    }
+    let sourceContent: string | null = null;
+    let insertAt: number | null = null;
+    editor.state.doc.forEach((candidate, offset) => {
+      if (insertAt !== null) return;
+      if (typeof candidate.attrs?.id === "string" && candidate.attrs.id === sourceId) {
+        sourceContent = JSON.stringify(candidate.toJSON());
+        insertAt = offset + candidate.nodeSize;
+      }
+    });
+    const at = insertAt ?? pos + node.nodeSize;
+    editor
+      .chain()
+      .focus()
+      .insertSyncedBlock(
+        {
+          sourceBlockId: sourceId,
+          sourcePageId: pageId,
+          content: sourceContent ?? JSON.stringify(node.toJSON()),
+        },
+        { at },
+      )
+      .run();
+    toast.success(t(locale, "syncedCopyCreated"));
   };
 
   /**
@@ -813,6 +887,9 @@ export function BlockContextMenu({
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={duplicate}>
             <Copy className="h-4 w-4 text-muted" /> {t(locale, "duplicate")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={createSyncedCopy}>
+            <Layers className="h-4 w-4 text-muted" /> {t(locale, "createSyncedCopy")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={comment}>
             <MessageSquare className="h-4 w-4 text-muted" /> {t(locale, "comment")}

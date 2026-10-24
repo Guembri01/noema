@@ -340,7 +340,7 @@ export function sourceMarker(ref: SyncedRef, options: { readOnly?: boolean } = {
     sourcePageId: ref.sourcePageId,
     label: `Synced from ${ref.sourcePageId}`,
     readOnly: options.readOnly === true,
-    href: `/page/${encodeURIComponent(ref.sourcePageId)}#${encodeURIComponent(ref.sourceBlockId)}`,
+    href: `/w/${encodeURIComponent(ref.sourcePageId)}#${encodeURIComponent(ref.sourceBlockId)}`,
   };
 }
 

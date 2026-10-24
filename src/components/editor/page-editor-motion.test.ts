@@ -7,7 +7,10 @@ import { DUR, EASE } from "@/lib/design-tokens";
 // action; stub both so the pure motion mapping can be imported under vitest's
 // node environment (the same seam `page-editor-engines.test.ts` uses).
 vi.mock("katex/dist/katex.min.css", () => ({}));
-vi.mock("@/server/actions/pages", () => ({ updatePageAction: vi.fn() }));
+vi.mock("@/server/actions/pages", () => ({
+  updatePageAction: vi.fn(),
+  getPageContentAction: vi.fn(),
+}));
 
 import {
   EditorRowChrome,

@@ -2,36 +2,33 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 468 implemented · 73 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 470 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **73** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
-| 2 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
-| 3 | **Comment notification deep links** | Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block. | 7. Collaboration |
-| 4 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
-| 5 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 6 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 7 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 8 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 1 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
+| 2 | **Comment notification deep links** | Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block. | 7. Collaboration |
+| 3 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
+| 4 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
+| 5 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 6 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 7 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
 ### 1. Editor & blocks
 
-87 done · 11 partial · 0 planned · 2 out of scope
+89 done · 9 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
 | Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
 | KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
-| Synced block | Mirror one block's content in many places. | 🟡 | Planned via reference ids; editing propagation needs care. |
-| Synced block source marker | Visual marker of the canonical source. | 🟡 | Planned. |
 | Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |

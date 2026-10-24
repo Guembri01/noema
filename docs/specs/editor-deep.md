@@ -78,7 +78,7 @@ honest backlog this audit exists to surface.
 | 67 | Table merge/split cells | ⛔ | Out of scope by design |
 | 68 | Table of contents | 🟡 | **B96 live; spec detail here §5 (R84.16)** |
 | 69 | Breadcrumb block (deep-tree linking) | 🟡 | Unowned |
-| 70-71 | Synced block + source marker | 🧭 | Unowned (needs reference ids) |
+| 70-71 | Synced block + source marker | ✅ | Editor node + source badge; same-page live propagation, cross-page refresh and detach ship (matrix ✅) |
 | 72 | Template button block | 🧭 | Gated on the templates system — `docs/specs/templates.md` (matrix `:339`) |
 | 73 | Button block | 🧭 | Gated on automations — `docs/specs/automations.md` |
 | 74 | Ask-AI block | 🧭 | Gated on AI layer — `docs/specs/ai-surface.md` (matrix `:532`) |

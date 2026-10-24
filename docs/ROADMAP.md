@@ -42,7 +42,7 @@ Ordered by dependency and impact. Every item maps to rows in
 - [~] Embeds + bookmark cards (YouTube, Vimeo, Loom, Spotify, SoundCloud, Figma, CodePen
   recognized; SSRF-guarded link preview) — generic sandboxed iframe path, provider
   allowlist pending (matrix 🟡)
-- [ ] Synced view / synced blocks — no code yet (matrix 🧭; the earlier [x] here was wrong)
+- [x] Synced block / source marker — source link, same-page live propagation, cross-page refresh, detach (matrix ✅); synced *view* is the separate page embed
 - [ ] Ask-AI **block** (matrix 🧭) · [~] Ask AI in the selection toolbar + block menu
   (ask/summarize/translate via the docked chat; matrix 🟡)
 - [~] Page settings: full-width (works, persisted) · [ ] small text + page fonts

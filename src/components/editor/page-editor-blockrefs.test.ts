@@ -5,7 +5,10 @@ import { Schema } from "@tiptap/pm/model";
 // action; stub both so the pure block-reference helpers can be imported under
 // vitest's node environment (same seam as `page-editor-engines.test.ts`).
 vi.mock("katex/dist/katex.min.css", () => ({}));
-vi.mock("@/server/actions/pages", () => ({ updatePageAction: vi.fn() }));
+vi.mock("@/server/actions/pages", () => ({
+  updatePageAction: vi.fn(),
+  getPageContentAction: vi.fn(),
+}));
 
 import {
   blockReferenceCopy,

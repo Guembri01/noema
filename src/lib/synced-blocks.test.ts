@@ -323,7 +323,7 @@ describe("sourceMarker", () => {
     expect(marker.sourceBlockId).toBe("s1");
     expect(marker.sourcePageId).toBe("p1");
     expect(marker.label).toBe("Synced from p1");
-    expect(marker.href).toBe("/page/p1#s1");
+    expect(marker.href).toBe("/w/p1#s1");
     expect(marker.readOnly).toBe(false);
   });
 
@@ -334,7 +334,7 @@ describe("sourceMarker", () => {
 
   it("encodes the ids in the deep link", () => {
     const weird = createSyncRef({ sourceBlockId: "b 1", sourcePageId: "p/1" });
-    expect(sourceMarker(weird, {}).href).toBe("/page/p%2F1#b%201");
+    expect(sourceMarker(weird, {}).href).toBe("/w/p%2F1#b%201");
   });
 });
 
