@@ -18,7 +18,9 @@ Set these in the app environment (all values are documented in `.env.example`):
 | `AUTH_SAML_CALLBACK_URL` | no | Our ACS URL. Default: `<origin>/api/auth/saml/acs`. |
 | `AUTH_SAML_EMAIL_ATTRIBUTE` | no | Attribute carrying the email. Default: Azure's `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`. |
 | `AUTH_SAML_NAME_ATTRIBUTE` | no | Attribute carrying the display name. Default: `name`. |
-| `AUTH_SAML_GROUPS_ATTRIBUTE` | no | Group attribute (captured for the future role mapper). Default: `groups`. |
+| `AUTH_SAML_GROUPS_ATTRIBUTE` | no | Group attribute. Default: `groups`. |
+| `AUTH_SAML_WORKSPACE_ID` | no | Every successful SAML login joins this workspace. Unset = no auto-join. |
+| `AUTH_SAML_ROLE_RULES` | no | `group:ROLE` shorthand or a JSON array; `ADMIN` wins over `MEMBER`, `OWNER` is clamped to `ADMIN`. |
 | `AUTH_SAML_NAME_ID_FORMAT` | no | Default: `urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress`. |
 | `AUTH_SAML_PRIVATE_KEY` / `AUTH_SAML_SP_CERT` | no | Both together enable SP-signed AuthnRequests and a signing certificate in metadata. |
 | `AUTH_SAML_DECRYPTION_KEY` / `AUTH_SAML_DECRYPTION_CERT` | no | Both together enable encrypted assertions. |
@@ -94,6 +96,9 @@ from the request origin.
   An existing account is linked only when it already proved its address
   (`User.emailVerified`); an unverified local account is refused with
   `?error=sso_email_taken` (the same B07 rule as OIDC).
+- When `AUTH_SAML_WORKSPACE_ID` is set, each login joins that workspace with the
+  role mapped from the group attribute (highest rule wins, default `MEMBER`).
+  `OWNER` cannot be granted by a rule and an existing owner is never demoted.
 - `GET|POST /api/auth/saml/slo` always destroys the local session and returns
   to `/login`. Full SLO request validation is not implemented.
 

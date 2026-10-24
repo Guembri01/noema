@@ -36,6 +36,12 @@ export const SAML_ACS_PATH = "/api/auth/saml/acs";
 /** The absolute SLO path, relative to the request origin. */
 export const SAML_SLO_PATH = "/api/auth/saml/slo";
 
+/** Roles a SAML group rule may grant. OWNER is deliberately absent. */
+export type SamlMappedRole = "MEMBER" | "ADMIN";
+
+/** One ordered group→role rule. */
+export type SamlRoleRule = { group: string; role: SamlMappedRole };
+
 /** A resolved deployment connection. */
 export type SamlSettings = {
   /** The IdP's entity id (also the expected assertion issuer). */
@@ -58,8 +64,12 @@ export type SamlSettings = {
   emailAttribute: string;
   /** Attribute carrying the display name. */
   nameAttribute: string;
-  /** Attribute carrying group membership (reserved for role mapping). */
+  /** Attribute carrying group membership. */
   groupsAttribute: string;
+  /** Optional workspace every successful SAML login joins. */
+  workspaceId?: string;
+  /** Ordered group→role rules; highest privilege wins, OWNER is clamped. */
+  roleRules: SamlRoleRule[];
   /** Optional SP private key + public cert for signing AuthnRequests/metadata. */
   signingKey?: string;
   spCertificate?: string;
@@ -76,6 +86,94 @@ export type SamlSettingsResult =
 /** Normalise PEM text from an env var (`\n` escapes included). */
 export function normalizePem(value: string | undefined): string {
   return (value ?? "").replace(/\\n/g, "\n").trim();
+}
+
+/**
+ * Parse `AUTH_SAML_ROLE_RULES`.
+ *
+ * Two shapes are accepted, both case-insensitive on the role:
+ *   - JSON: `[{"group":"eng","role":"ADMIN"}]`
+ *   - shorthand: `eng:ADMIN,ops:MEMBER`
+ *
+ * OWNER is never granted: an `OWNER` rule is clamped to `ADMIN` (ownership is
+ * a human action, not a directory attribute). Unknown roles, empty groups and
+ * malformed entries fail closed with a reason instead of being ignored.
+ */
+export function parseSamlRoleRules(
+  raw: string | undefined,
+): { ok: true; rules: SamlRoleRule[] } | { ok: false; reason: string } {
+  const text = (raw ?? "").trim();
+  if (text === "") return { ok: true, rules: [] };
+
+  const entries: { group: unknown; role: unknown }[] = [];
+  if (text.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return { ok: false, reason: "AUTH_SAML_ROLE_RULES is not valid JSON." };
+    }
+    if (!Array.isArray(parsed)) {
+      return { ok: false, reason: "AUTH_SAML_ROLE_RULES must be a JSON array." };
+    }
+    for (const entry of parsed) {
+      if (typeof entry !== "object" || entry === null) {
+        return { ok: false, reason: "AUTH_SAML_ROLE_RULES entries must be objects." };
+      }
+      const record = entry as Record<string, unknown>;
+      entries.push({ group: record.group, role: record.role });
+    }
+  } else {
+    for (const part of text.split(",")) {
+      const [group, role, ...rest] = part.split(":");
+      if (rest.length > 0) {
+        return {
+          ok: false,
+          reason: "AUTH_SAML_ROLE_RULES shorthand entries are `group:ROLE`.",
+        };
+      }
+      entries.push({ group, role });
+    }
+  }
+
+  const rules: SamlRoleRule[] = [];
+  for (const entry of entries) {
+    const group = typeof entry.group === "string" ? entry.group.trim() : "";
+    if (!group) {
+      return { ok: false, reason: "AUTH_SAML_ROLE_RULES has an empty group." };
+    }
+    const rawRole = typeof entry.role === "string" ? entry.role.trim().toUpperCase() : "";
+    if (rawRole !== "MEMBER" && rawRole !== "ADMIN" && rawRole !== "OWNER") {
+      return {
+        ok: false,
+        reason: `AUTH_SAML_ROLE_RULES has an unsupported role (${rawRole || "empty"}).`,
+      };
+    }
+    rules.push({ group, role: rawRole === "MEMBER" ? "MEMBER" : "ADMIN" });
+  }
+  return { ok: true, rules };
+}
+
+/**
+ * Highest-privilege rule wins. The default is MEMBER, and only ADMIN/MEMBER
+ * can be returned — an OWNER rule was clamped when the rules were parsed.
+ */
+export function mapSamlGroupsToRole(
+  rules: readonly SamlRoleRule[],
+  groups: readonly string[],
+): SamlMappedRole {
+  if (rules.some((rule) => rule.role === "ADMIN" && groups.includes(rule.group))) {
+    return "ADMIN";
+  }
+  return "MEMBER";
+}
+
+/** The group values from a SAML profile, as strings. */
+export function samlGroups(
+  profile: Record<string, unknown>,
+  settings: SamlSettings,
+): string[] {
+  return samlValues(Array.isArray(profile.groups) ? profile.groups : profile[settings.groupsAttribute]);
 }
 
 /** First non-empty string in a value that may be a SAML multi-value array. */
@@ -143,6 +241,9 @@ export function resolveSamlSettings(
     };
   }
 
+  const roleRules = parseSamlRoleRules(env.AUTH_SAML_ROLE_RULES);
+  if (!roleRules.ok) return roleRules;
+
   const cleanOrigin = origin.replace(/\/+$/, "");
   const settings: SamlSettings = {
     idpEntityId,
@@ -162,7 +263,10 @@ export function resolveSamlSettings(
       env.AUTH_SAML_NAME_ATTRIBUTE?.trim() || DEFAULT_SAML_NAME_ATTRIBUTE,
     groupsAttribute:
       env.AUTH_SAML_GROUPS_ATTRIBUTE?.trim() || DEFAULT_SAML_GROUPS_ATTRIBUTE,
+    roleRules: roleRules.rules,
   };
+  const workspaceId = env.AUTH_SAML_WORKSPACE_ID?.trim();
+  if (workspaceId) settings.workspaceId = workspaceId;
   const logoutUrl = env.AUTH_SAML_LOGOUT_URL?.trim();
   if (logoutUrl) settings.logoutUrl = logoutUrl;
   if (signingKey) settings.signingKey = signingKey;

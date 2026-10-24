@@ -6,9 +6,11 @@ import { randomToken } from "@/lib/slug";
 import { createSamlClient } from "@/lib/sso/saml-client";
 import { readSamlRelayState } from "@/lib/sso/saml-relay";
 import {
+  mapSamlGroupsToRole,
   resolveSamlSettings,
   samlAssertionKey,
   samlEnabled,
+  samlGroups,
   samlIdentityProfile,
   samlStrategy,
 } from "@/lib/sso/saml";
@@ -105,6 +107,45 @@ export async function POST(request: Request) {
       return failure(origin, "sso_email_taken");
     }
     return failure(origin);
+  }
+
+  // Optional directory-driven auto-join. The mapping may grant ADMIN/MEMBER,
+  // never OWNER; an existing OWNER is left untouched so a login can never
+  // demote the human who owns the workspace.
+  if (settings.settings.workspaceId) {
+    const role = mapSamlGroupsToRole(
+      settings.settings.roleRules,
+      samlGroups(profile, settings.settings),
+    );
+    try {
+      const existing = await prisma.workspaceMember.findUnique({
+        where: {
+          workspaceId_userId: {
+            workspaceId: settings.settings.workspaceId,
+            userId,
+          },
+        },
+        select: { role: true },
+      });
+      if (existing?.role !== "OWNER") {
+        await prisma.workspaceMember.upsert({
+          where: {
+            workspaceId_userId: {
+              workspaceId: settings.settings.workspaceId,
+              userId,
+            },
+          },
+          create: {
+            workspaceId: settings.settings.workspaceId,
+            userId,
+            role,
+          },
+          update: { role },
+        });
+      }
+    } catch {
+      return failure(origin);
+    }
   }
 
   await createSession(userId);

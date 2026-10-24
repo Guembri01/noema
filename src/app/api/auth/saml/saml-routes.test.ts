@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
   user: { findMany: vi.fn(), create: vi.fn() },
+  workspaceMember: { findUnique: vi.fn(), upsert: vi.fn() },
   samlAssertionSeen: { deleteMany: vi.fn(), create: vi.fn() },
 }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -45,6 +46,9 @@ const ENV_KEYS = [
   "AUTH_SAML_SP_ENTITY_ID",
   "AUTH_SAML_CALLBACK_URL",
   "AUTH_SAML_EMAIL_ATTRIBUTE",
+  "AUTH_SAML_GROUPS_ATTRIBUTE",
+  "AUTH_SAML_WORKSPACE_ID",
+  "AUTH_SAML_ROLE_RULES",
   "AUTH_STRATEGIES",
 ] as const;
 const savedEnv = new Map<string, string | undefined>();
@@ -57,6 +61,8 @@ function configureSaml(): void {
   process.env.AUTH_SAML_SP_ENTITY_ID = `${ORIGIN}/api/auth/saml/metadata`;
   process.env.AUTH_SAML_CALLBACK_URL = ACS;
   process.env.AUTH_SAML_EMAIL_ATTRIBUTE = "email";
+  delete process.env.AUTH_SAML_WORKSPACE_ID;
+  delete process.env.AUTH_SAML_ROLE_RULES;
   delete process.env.AUTH_STRATEGIES;
 }
 
@@ -94,6 +100,8 @@ beforeEach(async () => {
   client.validatePostResponseAsync.mockResolvedValue({ profile: profile(), loggedOut: false });
   prismaMock.user.findMany.mockResolvedValue([]);
   prismaMock.user.create.mockResolvedValue({ id: "new-user" });
+  prismaMock.workspaceMember.findUnique.mockResolvedValue(null);
+  prismaMock.workspaceMember.upsert.mockResolvedValue({ id: "member-1" });
   prismaMock.samlAssertionSeen.deleteMany.mockResolvedValue({ count: 0 });
   prismaMock.samlAssertionSeen.create.mockResolvedValue({ id: "seen" });
 });
@@ -258,6 +266,36 @@ describe("POST /api/auth/saml/acs", () => {
     );
     expect(response.headers.get("location")).toBe(`${ORIGIN}/login?error=sso`);
     expect(client.validatePostResponseAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe("SAML directory auto-join", () => {
+  it("adds a mapped MEMBER/ADMIN to the configured workspace", async () => {
+    process.env.AUTH_SAML_WORKSPACE_ID = "ws-1";
+    process.env.AUTH_SAML_ROLE_RULES = "eng:ADMIN,ops:MEMBER";
+
+    await samlAcs(formRequest({ SAMLResponse: "signed-response", RelayState: relayState }));
+
+    expect(prismaMock.workspaceMember.upsert).toHaveBeenCalledWith({
+      where: { workspaceId_userId: { workspaceId: "ws-1", userId: "new-user" } },
+      create: { workspaceId: "ws-1", userId: "new-user", role: "ADMIN" },
+      update: { role: "ADMIN" },
+    });
+  });
+
+  it("defaults to MEMBER and never demotes an existing OWNER", async () => {
+    process.env.AUTH_SAML_WORKSPACE_ID = "ws-1";
+    prismaMock.workspaceMember.findUnique.mockResolvedValue({ role: "OWNER" });
+
+    await samlAcs(formRequest({ SAMLResponse: "signed-response", RelayState: relayState }));
+
+    expect(prismaMock.workspaceMember.upsert).not.toHaveBeenCalled();
+  });
+
+  it("does not touch memberships when no workspace is configured", async () => {
+    await samlAcs(formRequest({ SAMLResponse: "signed-response", RelayState: relayState }));
+    expect(prismaMock.workspaceMember.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.workspaceMember.upsert).not.toHaveBeenCalled();
   });
 });
 

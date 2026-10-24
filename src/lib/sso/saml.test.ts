@@ -4,9 +4,12 @@ import { SignedXml } from "xml-crypto";
 import { createSamlClient, samlMetadata } from "./saml-client";
 import { createSamlRelayState, readSamlRelayState } from "./saml-relay";
 import {
+  mapSamlGroupsToRole,
+  parseSamlRoleRules,
   resolveSamlSettings,
   samlAssertionId,
   samlAssertionKey,
+  samlGroups,
   samlIdentityProfile,
   type SamlSettings,
 } from "./saml";
@@ -39,6 +42,12 @@ function settingsFrom(env: Record<string, string> = ENV): SamlSettings {
   const resolved = resolveSamlSettings(env, "https://app.example.com");
   if (!resolved.ok) throw new Error(resolved.reason);
   return resolved.settings;
+}
+
+function roleRules(raw: string) {
+  const parsed = parseSamlRoleRules(raw);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.rules;
 }
 
 const settings = settingsFrom();
@@ -224,6 +233,47 @@ describe("identity mapping and replay key", () => {
         "re-encoded-copy",
       ),
     ).toBe("saml:assert-9");
+  });
+});
+
+describe("group role mapping", () => {
+  it("parses JSON and shorthand rules", () => {
+    expect(parseSamlRoleRules('[{"group":"eng","role":"ADMIN"}]')).toEqual({
+      ok: true,
+      rules: [{ group: "eng", role: "ADMIN" }],
+    });
+    expect(roleRules("eng:ADMIN,ops:MEMBER")).toEqual([
+      { group: "eng", role: "ADMIN" },
+      { group: "ops", role: "MEMBER" },
+    ]);
+  });
+
+  it("never grants OWNER from a directory group", () => {
+    const rules = roleRules("owners:OWNER");
+    expect(rules).toEqual([{ group: "owners", role: "ADMIN" }]);
+    expect(mapSamlGroupsToRole(rules, ["owners"])).toBe("ADMIN");
+  });
+
+  it("uses the highest privilege that matches, defaulting to MEMBER", () => {
+    const rules = roleRules("eng:ADMIN,ops:MEMBER");
+    expect(mapSamlGroupsToRole(rules, ["ops"])).toBe("MEMBER");
+    expect(mapSamlGroupsToRole(rules, ["ops", "eng"])).toBe("ADMIN");
+    expect(mapSamlGroupsToRole(rules, ["other"])).toBe("MEMBER");
+  });
+
+  it("fails closed on malformed rules", () => {
+    expect(parseSamlRoleRules("[not json").ok).toBe(false);
+    expect(parseSamlRoleRules("eng:SUPERUSER").ok).toBe(false);
+    expect(parseSamlRoleRules(":ADMIN").ok).toBe(false);
+  });
+
+  it("extracts group arrays from the configured SAML attribute", () => {
+    expect(
+      samlGroups({ groups: ["eng", "ops"] }, { ...settings, groupsAttribute: "groups" }),
+    ).toEqual(["eng", "ops"]);
+    expect(
+      samlGroups({ roles: "admin" }, { ...settings, groupsAttribute: "roles" }),
+    ).toEqual(["admin"]);
   });
 });
 
