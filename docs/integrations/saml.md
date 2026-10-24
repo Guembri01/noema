@@ -78,6 +78,20 @@ login whose email domain matches a verified row auto-joins that workspace. The
 role still comes from `AUTH_SAML_ROLE_RULES`/`MEMBER`, and an existing owner is
 never demoted.
 
+### SCIM 2.0 Users (R10.20, partial)
+
+Generate a SCIM token from a connection card in **Settings → Single sign-on**
+(it is shown once; only its SHA-256 is stored). Endpoints:
+
+- `GET /api/scim/v2/Users` — paginated workspace members as SCIM Users;
+- `GET /api/scim/v2/Users/:id`;
+- `POST /api/scim/v2/Users` — JIT user + `MEMBER` membership (409 when already a member);
+- `PATCH /api/scim/v2/Users/:id` — `active: false` removes membership;
+- `DELETE /api/scim/v2/Users/:id` — deprovision by removing membership.
+
+The workspace owner cannot be deactivated through SCIM. Groups, teamspace sync
+and SCIM group→role mapping are not implemented yet.
+
 ### Metadata rotation (backend, R10.17)
 
 A connection may carry an `metadataUrl`. `refreshSsoConnectionMetadataAction`

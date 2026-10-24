@@ -192,6 +192,9 @@ model SsoConnection {
   groupsAttribute String?
   roleRules       Json?
   enabled         Boolean  @default(true)
+  /// SCIM 2.0 provisioning token, stored only as a SHA-256 hash (R10.20).
+  scimEnabled     Boolean  @default(false)
+  scimTokenHash   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

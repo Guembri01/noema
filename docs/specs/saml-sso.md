@@ -7,8 +7,9 @@
 > per-workspace `SsoConnection` rows/admin CRUD with `?connection=` route
 > resolution, `VerifiedDomain` DNS TXT verification/auto-join, and metadata-URL
 > certificate rotation with a 24-hour overlap (see
-> `docs/integrations/saml.md`), and an admin SSO settings section. Not yet
-> built: SCIM. Requirement IDs
+> `docs/integrations/saml.md`), an admin SSO settings section and SCIM 2.0
+> **Users** provisioning. Not yet built: SCIM Groups/teamspace sync. Requirement
+> IDs
 > (`R10.x`) remain the traceability anchors; §12's task list references them
 > 1:1 and every test cites the IDs it covers.
 

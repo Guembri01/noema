@@ -37,6 +37,7 @@ const connection = {
   groupsAttribute: "groups",
   roleRules: "eng:ADMIN",
   enabled: true,
+  scimEnabled: false,
 };
 
 describe("SsoSettings", () => {

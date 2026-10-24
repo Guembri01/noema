@@ -11,7 +11,9 @@ import { t } from "@/lib/i18n";
 import {
   createSsoConnectionAction,
   deleteSsoConnectionAction,
+  generateScimTokenAction,
   refreshSsoConnectionMetadataAction,
+  revokeScimTokenAction,
   updateSsoConnectionAction,
   type SsoConnectionInput,
 } from "@/server/actions/sso-connections";
@@ -36,6 +38,7 @@ export type SsoConnectionRow = {
   groupsAttribute: string | null;
   roleRules: string;
   enabled: boolean;
+  scimEnabled: boolean;
 };
 
 export type VerifiedDomainRow = {
@@ -80,6 +83,7 @@ export function SsoSettings({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [domain, setDomain] = useState("");
   const [domainConnection, setDomainConnection] = useState("");
+  const [scimToken, setScimToken] = useState<string | null>(null);
 
   const refresh = () => router.refresh();
   const edit = (row: SsoConnectionRow) => {
@@ -148,9 +152,15 @@ export function SsoSettings({
                 <p className="truncate text-xs text-muted">{row.ssoUrl}</p>
                 <p className="mt-1 text-xs text-muted">
                   {row.enabled ? "Enabled" : "Disabled"}
+                  {row.scimEnabled ? " · SCIM enabled" : ""}
                   {row.metadataUrl ? ` · metadata ${row.metadataUrl}` : ""}
                   {row.metadataFetchedAt ? ` · fetched ${row.metadataFetchedAt}` : ""}
                 </p>
+                {scimToken && (
+                  <p className="mt-2 break-all rounded border border-border bg-surface-2 p-2 font-mono text-xs">
+                    SCIM token (shown once): {scimToken}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap gap-1">
                 <Button type="button" size="sm" variant="ghost" onClick={() => edit(row)}>
@@ -171,6 +181,43 @@ export function SsoSettings({
                     leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
                   >
                     {t(locale, "refresh")}
+                  </Button>
+                )}
+                {row.scimEnabled ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() =>
+                      run(() => revokeScimTokenAction(workspaceId, row.id), {
+                        success: "SCIM token revoked",
+                        onSuccess: () => {
+                          setScimToken(null);
+                          refresh();
+                        },
+                      })
+                    }
+                  >
+                    Revoke SCIM
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() =>
+                      run(() => generateScimTokenAction(workspaceId, row.id), {
+                        success: "SCIM token created — copy it now",
+                        onSuccess: (value) => {
+                          if ("ok" in value && value.ok) setScimToken(value.token);
+                          refresh();
+                        },
+                      })
+                    }
+                  >
+                    SCIM token
                   </Button>
                 )}
                 <Button

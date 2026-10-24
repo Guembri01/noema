@@ -56,6 +56,7 @@
     "check:a11y": "node --env-file=.env scripts/check-a11y.mjs",
     "check:sso": "node --env-file=.env scripts/check-sso-teamspaces.mjs",
     "check:saml": "vitest run src/lib/sso/saml.test.ts src/lib/sso/domains.test.ts src/lib/sso/metadata.test.ts src/app/api/auth/saml/saml-routes.test.ts src/server/actions/verified-domains.test.ts src/server/actions/sso-connections.test.ts",
+    "check:scim": "vitest run src/lib/scim/users.test.ts src/app/api/scim/v2/scim-users.test.ts",
     "check:matrix": "node scripts/feature-matrix-counts.mjs",
     "check:ui": "node --env-file=.env scripts/check-workspace-ui.mjs",
     "check:public-ui": "node scripts/check-public-surfaces.mjs",

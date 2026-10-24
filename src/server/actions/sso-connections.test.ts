@@ -24,8 +24,10 @@ vi.mock("@/lib/feed-guard", () => guard);
 import {
   createSsoConnectionAction,
   deleteSsoConnectionAction,
+  generateScimTokenAction,
   listSsoConnectionsAction,
   refreshSsoConnectionMetadataAction,
+  revokeScimTokenAction,
   updateSsoConnectionAction,
   type SsoConnectionInput,
 } from "./sso-connections";
@@ -152,6 +154,28 @@ describe("create / update / delete", () => {
     expect(activity.logActivity).toHaveBeenCalledWith(
       expect.objectContaining({ action: "sso.connection_deleted" }),
     );
+  });
+});
+
+describe("SCIM tokens", () => {
+  it("returns a token once and stores only its hash", async () => {
+    const result = await generateScimTokenAction("ws-1", "conn-1");
+    expect(result).toMatchObject({ ok: true, token: expect.stringMatching(/^noema_scim_/) });
+    expect(db.update).toHaveBeenCalledWith({
+      where: { id: "conn-1" },
+      data: { scimEnabled: true, scimTokenHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    });
+    const stored = db.update.mock.calls[0][0].data.scimTokenHash as string;
+    if (!("ok" in result)) throw new Error(result.error);
+    expect(stored).not.toBe(result.token);
+  });
+
+  it("revokes the token without touching SAML", async () => {
+    await expect(revokeScimTokenAction("ws-1", "conn-1")).resolves.toEqual({ ok: true });
+    expect(db.update).toHaveBeenCalledWith({
+      where: { id: "conn-1" },
+      data: { scimEnabled: false, scimTokenHash: null },
+    });
   });
 });
 

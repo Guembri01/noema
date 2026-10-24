@@ -242,6 +242,7 @@ export default async function SettingsPage({
             groupsAttribute: true,
             roleRules: true,
             enabled: true,
+            scimEnabled: true,
           },
         }),
         prisma.verifiedDomain.findMany({

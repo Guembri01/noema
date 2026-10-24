@@ -211,7 +211,9 @@ Ordered by dependency and impact. Every item maps to rows in
   the local session.
 - [x] **SAML T10.5/T10.6** — admin SSO settings section: connection CRUD, metadata refresh and
   verified-domain TXT workflow.
-- [ ] **SAML T10.8** — SCIM 2.0 provisioning.
+- [x] **SAML T10.8 (Users half)** — SCIM 2.0 Users endpoints with one-time hashed tokens,
+  pagination, JIT membership, deprovisioning and owner protection.
+- [ ] **SAML T10.8 (Groups half)** — SCIM Groups and teamspace/role sync.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

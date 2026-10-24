@@ -2,6 +2,7 @@
 
 /** Per-workspace SAML connection management (admin settings surface). */
 
+import { randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -9,6 +10,7 @@ import { logActivity } from "@/lib/activity";
 import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions";
 import { parseSamlRoleRules } from "@/lib/sso/saml";
 import { parseIdpMetadata } from "@/lib/sso/metadata";
+import { hashScimToken } from "@/lib/scim/users";
 import { safeFetchGuarded } from "@/lib/feed-guard";
 
 export type SsoConnectionResult<T = unknown> =
@@ -48,6 +50,7 @@ export type SsoConnectionView = {
   groupsAttribute: string | null;
   roleRules: string;
   enabled: boolean;
+  scimEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -67,6 +70,7 @@ const SELECT = {
   groupsAttribute: true,
   roleRules: true,
   enabled: true,
+  scimEnabled: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -160,6 +164,7 @@ function toView(row: {
   groupsAttribute: string | null;
   roleRules: Prisma.JsonValue;
   enabled: boolean;
+  scimEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }): SsoConnectionView {
@@ -181,6 +186,7 @@ function toView(row: {
         ? ""
         : JSON.stringify(row.roleRules),
     enabled: row.enabled,
+    scimEnabled: row.scimEnabled,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -322,6 +328,61 @@ export async function refreshSsoConnectionMetadataAction(
     meta: { connectionId, rotated },
   });
   return { ok: true, connection: toView(updated) };
+}
+
+/** Mint a SCIM bearer token. The plaintext is returned once and never stored. */
+export async function generateScimTokenAction(
+  workspaceId: string,
+  connectionId: string,
+): Promise<SsoConnectionResult<{ token: string }>> {
+  const auth = await authorize(workspaceId);
+  if ("error" in auth) return auth;
+  const row = await prisma.ssoConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+    select: { id: true },
+  });
+  if (!row) return { error: "That SAML connection does not exist in this workspace." };
+  const token = `noema_scim_${randomBytes(32).toString("base64url")}`;
+  await prisma.ssoConnection.update({
+    where: { id: connectionId },
+    data: { scimEnabled: true, scimTokenHash: await hashScimToken(token) },
+  });
+  await logActivity({
+    workspaceId,
+    actorId: auth.user.id,
+    action: "sso.connection_updated",
+    targetType: "workspace",
+    targetId: workspaceId,
+    meta: { connectionId, scim: "token_created" },
+  });
+  return { ok: true, token };
+}
+
+/** Revoke the SCIM token (leave the SAML connection itself untouched). */
+export async function revokeScimTokenAction(
+  workspaceId: string,
+  connectionId: string,
+): Promise<SsoConnectionResult> {
+  const auth = await authorize(workspaceId);
+  if ("error" in auth) return auth;
+  const row = await prisma.ssoConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+    select: { id: true },
+  });
+  if (!row) return { error: "That SAML connection does not exist in this workspace." };
+  await prisma.ssoConnection.update({
+    where: { id: connectionId },
+    data: { scimEnabled: false, scimTokenHash: null },
+  });
+  await logActivity({
+    workspaceId,
+    actorId: auth.user.id,
+    action: "sso.connection_updated",
+    targetType: "workspace",
+    targetId: workspaceId,
+    meta: { connectionId, scim: "token_revoked" },
+  });
+  return { ok: true };
 }
 
 /** Delete one of the workspace's connections. */
