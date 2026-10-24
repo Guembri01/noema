@@ -50,7 +50,7 @@ a desktop app that needs nothing else installed.
 [![Noema in motion — the editor, database views, tickets, cycles, chat and the desktop build](./docs/Noema-demo-preview.gif)](https://github.com/Guembri01/noema/releases/latest/download/Noema-demo.mp4)
 
 **[▶ Watch the two-minute product film](https://github.com/Guembri01/noema/releases/latest/download/Noema-demo.mp4)** — one pass over
-every area: the block editor, seven database views, conditional formatting,
+every area: the block editor, eight database views, conditional formatting,
 tickets with labels and estimates, cycles and burndown, projects and milestones,
 the workspace roadmap, grounded chat, comments, version history, sharing and the
 desktop build.
@@ -85,7 +85,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Editor | TipTap block editor: headings, lists, to-do lists, quote, code, divider, **callout**, **toggle**, **columns**, **table**, **table of contents**, **inline + block equations (KaTeX)**, **breadcrumb**, **bookmark & embed** (YouTube/Vimeo/Loom/Spotify/Figma…), **synced view** (page transclusion), **@-mentions** (pages/people/dates), **file & image uploads** (paste, drag-drop or picker), rich inline formatting via a **selection bubble menu**, a keyboard-driven `/` slash menu, and **pointer drag-and-drop** reordering |
 | Link previews | `GET /api/link-preview` fetches OpenGraph metadata with an SSRF guard (http(s) only, DNS-resolved hosts and every redirect hop must be public), size cap and timeout |
 | Backlinks | **Linked references** — pages that @-mention the current page |
-| Databases | Full-page databases with typed properties, **Table / Board / List / Gallery / Calendar / Timeline / Chart** views, **AND/OR + nested filters, sorts, grouping, conditional colors** (saved per view), view tabs with an “add view” menu, per-property menus (rename/duplicate/delete/formula), inline cell editing, templates, CSV import/export, open-row-as-page |
+| Databases | Full-page databases with typed properties, **Table / Board / List / Gallery / Calendar / Timeline / Chart / Form** views, **AND/OR + nested filters, sorts, grouping, conditional colors** (saved per view), view tabs with an “add view” menu, per-property menus (rename/duplicate/delete/formula), inline cell editing, templates, CSV import/export, open-row-as-page |
 | Page chrome | Emoji icons, cover images (presets), breadcrumbs, page options menu (copy link, cover, export, move to workspace, lock, trash), favorites, **follow** |
 | Navigation | **Row side-peek**, **responsive mobile shell** (drawer sidebar), ⌘K quick find, breadcrumbs, following/favorites |
 | Properties | TEXT, NUMBER, SELECT, MULTI_SELECT, STATUS, DATE, CHECKBOX, URL/EMAIL/PHONE, PEOPLE, FILES, **FORMULA** (expression engine), **RELATION** (link to another database), **ROLLUP** (14 aggregates over related rows), and computed system fields (**CREATED_TIME/BY, LAST_EDITED_TIME/BY, UNIQUE_ID**) |

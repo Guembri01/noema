@@ -38,6 +38,7 @@ export const VIEW_TYPES = [
   "CALENDAR",
   "TIMELINE",
   "CHART",
+  "FORM",
 ] as const;
 
 export type ViewType = (typeof VIEW_TYPES)[number];
@@ -102,6 +103,8 @@ export type ViewConfig = {
   columnWidths?: Record<string, number>;
   rowColorRules?: ViewColorRule[];
   wrapCells?: boolean;
+  /** FORM: opaque respondent-form config, parsed by `@/lib/form-view`. */
+  form?: unknown;
 };
 
 /** The config every failure path degrades to, and the zero state of a view. */
@@ -299,6 +302,11 @@ export function normalizeViewConfig(raw: unknown, props: readonly ViewProperty[]
   if (rules) config.rowColorRules = rules;
 
   if (typeof record.wrapCells === "boolean") config.wrapCells = record.wrapCells;
+
+  // FORM: preserve the form-owned object so a form view's configuration
+  // survives a round-trip through this schema; `@/lib/form-view` validates it.
+  const form = asRecord(record.form);
+  if (form) config.form = form;
 
   return config;
 }

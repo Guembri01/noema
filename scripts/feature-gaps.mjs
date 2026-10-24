@@ -42,7 +42,7 @@ const total = rows.length;
 const PRIORITY = [
   ["Filter tree UI", "The AND/OR filter tree already evaluates; the nested group builder UI is not exposed.", "3. Databases"],
   ["Conditional formatting", "ColorRule is modelled and evaluated; the rule-authoring and render path are partial.", "3. Databases"],
-  ["Form view", "No ViewType.FORM yet; the builder + public submit path are spec'd but unwired.", "3. Databases"],
+  ["Form view (public)", "The internal FORM view is wired; the public share-token route and builder still need shipping.", "3. Databases"],
   ["Linked database writes", "View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending.", "3. Databases"],
   ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],

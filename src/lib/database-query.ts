@@ -136,6 +136,12 @@ export type ViewConfig = {
    */
   wipLimits?: Record<string, number>;
   /**
+   * FORM: the stored respondent form (`FormSchema`/`FormConfig`). Treated as an
+   * opaque JSON object here; `@/lib/form-view` parses and validates every field
+   * before it renders or accepts a submission.
+   */
+  form?: unknown;
+  /**
    * NUMBER: an optional per-view display spec. Deliberately `unknown` — the
    * formatter validates it at render time, so this layer passes it through
    * untouched rather than mis-casting a stored value.
@@ -1217,6 +1223,11 @@ export function normalizeViewConfig(input: unknown): ViewConfig {
   if (footer) out.footer = footer;
   const formatRules = normalizeFormatRulesKey(record.formatRules);
   if (formatRules) out.formatRules = formatRules;
+  // FORM: the respondent form schema is owned by `@/lib/form-view`, which
+  // tolerates malformed JSON. Keep the object intact here so a builder save or
+  // a config patch round-trips instead of silently erasing the form.
+  const form = asRecord(record.form);
+  if (form) out.form = form;
   return out;
 }
 

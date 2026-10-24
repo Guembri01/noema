@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 455 implemented · 86 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 454 implemented · 87 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **86** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **87** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -12,7 +12,7 @@ This file lists the **86** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | 1 | **Filter tree UI** | The AND/OR filter tree already evaluates; the nested group builder UI is not exposed. | 3. Databases |
 | 2 | **Conditional formatting** | ColorRule is modelled and evaluated; the rule-authoring and render path are partial. | 3. Databases |
-| 3 | **Form view** | No ViewType.FORM yet; the builder + public submit path are spec'd but unwired. | 3. Databases |
+| 3 | **Form view (public)** | The internal FORM view is wired; the public share-token route and builder still need shipping. | 3. Databases |
 | 4 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
 | 5 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
 | 6 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
@@ -58,10 +58,11 @@ This file lists the **86** rows that are not finished, area by area, plus 22 int
 
 ### 3. Databases
 
-44 done · 9 partial · 0 planned
+43 done · 10 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
+| Form view | Public/Internal form that creates rows. | 🟡 | The internal `FORM` view is wired end-to-end: `ViewType.FORM` (schema, canonical type list, view menu and action guards), the respondent renderer, validation and row creation through `createRowAction` + `setPropertyValueAction`. The public share-token route and form builder UI remain (R89.29). |
 | AND/OR filter groups | Boolean combination of filters. | 🟡 | Planned as a filter tree. FilterNode tree already evaluates (database-query.ts:66); tree UI spec'd: docs/specs/database-deep.md (R89.2). |
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |

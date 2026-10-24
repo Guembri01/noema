@@ -63,6 +63,7 @@ enum ViewType {
   CALENDAR
   TIMELINE
   CHART
+  FORM
 }
 
 enum SharePermission {

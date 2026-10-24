@@ -21,7 +21,8 @@ export type ViewTypeName =
   | "GALLERY"
   | "CALENDAR"
   | "TIMELINE"
-  | "CHART";
+  | "CHART"
+  | "FORM";
 
 export const VIEW_TYPES: { type: ViewTypeName; label: string }[] = [
   { type: "TABLE", label: "Table" },
@@ -31,6 +32,7 @@ export const VIEW_TYPES: { type: ViewTypeName; label: string }[] = [
   { type: "CALENDAR", label: "Calendar" },
   { type: "TIMELINE", label: "Timeline" },
   { type: "CHART", label: "Chart" },
+  { type: "FORM", label: "Form" },
 ];
 
 export function ViewIcon({ type }: { type: string }) {

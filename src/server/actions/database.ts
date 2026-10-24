@@ -838,6 +838,7 @@ const VIEW_TYPES = [
   "CALENDAR",
   "TIMELINE",
   "CHART",
+  "FORM",
 ] as const;
 type ViewType = (typeof VIEW_TYPES)[number];
 
@@ -847,7 +848,15 @@ function isViewType(value: unknown): value is ViewType {
 
 export async function createViewAction(
   databasePageId: string,
-  type: "TABLE" | "BOARD" | "LIST" | "GALLERY" | "CALENDAR" | "TIMELINE" | "CHART",
+  type:
+    | "TABLE"
+    | "BOARD"
+    | "LIST"
+    | "GALLERY"
+    | "CALENDAR"
+    | "TIMELINE"
+    | "CHART"
+    | "FORM",
   name: string,
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);

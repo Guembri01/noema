@@ -477,6 +477,19 @@ describe("view config serialization", () => {
     expect(parseViewConfig(stored)).toEqual(config);
   });
 
+  it("round-trips a form-view config without interpreting it", () => {
+    const form = {
+      id: "form-1",
+      databaseId: "db-1",
+      title: "Requests",
+      fields: [{ propertyId: "title", label: "Title", required: true }],
+      accepting: true,
+    };
+    const stored = JSON.parse(JSON.stringify(normalizeViewConfig({ form })));
+    expect(stored).toEqual({ form });
+    expect(normalizeViewConfig({ form: "nope" } as never)).not.toHaveProperty("form");
+  });
+
   it("keeps the optional keys but drops malformed values", () => {
     const out = normalizeViewConfig({
       laneBy: 7,

@@ -29,7 +29,7 @@ const PROPS: ViewProperty[] = [
 ];
 
 describe("VIEW_TYPES / isViewType", () => {
-  it("lists the seven canonical view types in menu order", () => {
+  it("lists the eight canonical view types in menu order", () => {
     expect(VIEW_TYPES).toEqual([
       "TABLE",
       "BOARD",
@@ -38,6 +38,7 @@ describe("VIEW_TYPES / isViewType", () => {
       "CALENDAR",
       "TIMELINE",
       "CHART",
+      "FORM",
     ]);
   });
 
@@ -73,7 +74,8 @@ describe("normalizeViewConfig", () => {
   });
 
   it("falls back to TABLE for an unknown view type but keeps a known one", () => {
-    expect(normalizeViewConfig({ viewType: "FORM" }, PROPS).viewType).toBe("TABLE");
+    expect(normalizeViewConfig({ viewType: "NOPE" }, PROPS).viewType).toBe("TABLE");
+    expect(normalizeViewConfig({ viewType: "FORM" }, PROPS).viewType).toBe("FORM");
     expect(normalizeViewConfig({ viewType: "BOARD" }, PROPS).viewType).toBe("BOARD");
   });
 
@@ -87,6 +89,12 @@ describe("normalizeViewConfig", () => {
     const filter = { and: [{ propertyId: "status", operator: "is", value: "Done" }] };
     expect(normalizeViewConfig({ filter }, PROPS).filter).toEqual(filter);
     expect(normalizeViewConfig({ filter: "nope" }, PROPS).filter).toBeUndefined();
+  });
+
+  it("keeps an opaque form object and drops a malformed one", () => {
+    const form = { id: "form-1", fields: [{ propertyId: "title", label: "Title" }] };
+    expect(normalizeViewConfig({ viewType: "FORM", form }, PROPS).form).toEqual(form);
+    expect(normalizeViewConfig({ viewType: "FORM", form: "nope" }, PROPS).form).toBeUndefined();
   });
 
   it("normalizes sorts: default direction, known properties only, first wins", () => {
@@ -185,9 +193,10 @@ describe("validateViewConfig", () => {
 
   it("flags a non-object and a missing or invalid view type", () => {
     expect(validateViewConfig(null).map((issue) => issue.code)).toEqual(["not_an_object"]);
-    expect(validateViewConfig({ viewType: "FORM" }).map((issue) => issue.code)).toEqual([
+    expect(validateViewConfig({ viewType: "NOPE" }).map((issue) => issue.code)).toEqual([
       "invalid_view_type",
     ]);
+    expect(validateViewConfig({ viewType: "FORM" })).toEqual([]);
   });
 
   it("flags every malformed field at once with stable codes", () => {
