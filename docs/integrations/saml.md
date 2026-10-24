@@ -40,6 +40,27 @@ from the request origin.
 `AUTH_STRATEGIES` can disable SAML (`AUTH_STRATEGIES=password`), and
 `AUTH_PASSWORD=disabled` gives a SAML-only deployment.
 
+### Per-workspace connections (backend)
+
+The `SsoConnection` table now stores an optional SAML connection per
+workspace (`name`, IdP entity id, SSO URL, certificate, SP/ACS overrides,
+attribute names, role rules and enabled). Admin server actions
+`listSsoConnectionsAction`, `createSsoConnectionAction`,
+`updateSsoConnectionAction` and `deleteSsoConnectionAction` validate the row,
+require `manageSettings`, and write `sso.connection_*` activity records.
+
+A workspace login starts at:
+
+```
+/api/auth/saml/start?connection=<connectionId>
+```
+
+The same `?connection=` selects the connection's SP metadata at
+`/api/auth/saml/metadata`. The RelayState is signed with the connection id, so
+the ACS loads the same row; an unknown/disabled row fails closed. The settings
+UI and verified-domain records are not shipped yet, so the actions are currently
+an admin/back-office seam, not a rendered settings section.
+
 ## 2. Provider notes
 
 ### Okta

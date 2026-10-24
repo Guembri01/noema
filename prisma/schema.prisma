@@ -163,8 +163,35 @@ model Workspace {
   chatThreads    ChatThread[]
   calendarFeeds  CalendarFeed[]
   calendarEvents CalendarEvent[]
+  ssoConnections SsoConnection[]
 
   @@index([ownerId])
+}
+
+/// Per-workspace SAML connection (M2). The env-level `AUTH_SAML_*` connection
+/// remains the deployment default; a row here lets one workspace point at its
+/// own IdP. Secrets (private keys) are not stored in this first slice.
+model SsoConnection {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  protocol        String   @default("saml")
+  idpEntityId     String
+  ssoUrl          String
+  certificate     String
+  spEntityId      String?
+  callbackUrl     String?
+  emailAttribute  String?
+  nameAttribute   String?
+  groupsAttribute String?
+  roleRules       Json?
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model WorkspaceMember {

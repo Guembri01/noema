@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { settingsFromSsoConnection } from "@/lib/sso/connection";
 import { samlMetadata } from "@/lib/sso/saml-client";
 import { resolveSamlSettings } from "@/lib/sso/saml";
 
@@ -11,8 +13,17 @@ export const runtime = "nodejs";
  * ACS/SLO endpoints and public certificates, never a private key.
  */
 export async function GET(request: Request) {
-  const origin = new URL(request.url).origin;
-  const settings = resolveSamlSettings(process.env, origin);
+  const url = new URL(request.url);
+  const connectionId = url.searchParams.get("connection");
+  const settings = connectionId
+    ? await prisma.ssoConnection
+        .findUnique({ where: { id: connectionId } })
+        .then((row) =>
+          row
+            ? settingsFromSsoConnection(row, url.origin)
+            : ({ ok: false, reason: "That SAML connection does not exist." } as const),
+        )
+    : resolveSamlSettings(process.env, url.origin);
   if (!settings.ok) {
     return NextResponse.json({ error: settings.reason }, { status: 404 });
   }

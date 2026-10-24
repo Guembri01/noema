@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const prismaMock = vi.hoisted(() => ({
   user: { findMany: vi.fn(), create: vi.fn() },
   workspaceMember: { findUnique: vi.fn(), upsert: vi.fn() },
+  ssoConnection: { findUnique: vi.fn() },
   samlAssertionSeen: { deleteMany: vi.fn(), create: vi.fn() },
 }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -102,6 +103,7 @@ beforeEach(async () => {
   prismaMock.user.create.mockResolvedValue({ id: "new-user" });
   prismaMock.workspaceMember.findUnique.mockResolvedValue(null);
   prismaMock.workspaceMember.upsert.mockResolvedValue({ id: "member-1" });
+  prismaMock.ssoConnection.findUnique.mockResolvedValue(null);
   prismaMock.samlAssertionSeen.deleteMany.mockResolvedValue({ count: 0 });
   prismaMock.samlAssertionSeen.create.mockResolvedValue({ id: "seen" });
 });
@@ -149,6 +151,66 @@ describe("GET /api/auth/saml/start", () => {
   });
 });
 
+const CONNECTION = {
+  id: "connection-1",
+  workspaceId: "ws-1",
+  name: "Acme Okta",
+  protocol: "saml",
+  idpEntityId: "https://idp.example.com/metadata",
+  ssoUrl: "https://idp.example.com/sso",
+  certificate: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
+  spEntityId: null,
+  callbackUrl: null,
+  emailAttribute: "email",
+  nameAttribute: null,
+  groupsAttribute: null,
+  roleRules: [{ group: "eng", role: "ADMIN" }],
+  enabled: true,
+};
+
+describe("per-workspace SAML connections", () => {
+  it("starts and settles a connection login without the env connection", async () => {
+    prismaMock.ssoConnection.findUnique.mockResolvedValue(CONNECTION);
+    delete process.env.AUTH_SAML_SSO_URL;
+
+    const start = await samlStart(new Request(`${START}?connection=connection-1`));
+    expect(start.status).toBe(307);
+    const relay =
+      new URL(start.headers.get("location") ?? "").searchParams.get("RelayState") ?? "";
+    expect(await readSamlRelayState(relay)).toEqual({
+      returnTo: "/app",
+      connectionId: "connection-1",
+    });
+
+    prismaMock.workspaceMember.findUnique.mockResolvedValue(null);
+    const response = await samlAcs(
+      formRequest({ SAMLResponse: "signed-response", RelayState: relay }),
+    );
+    expect(response.status).toBe(307);
+    expect(prismaMock.ssoConnection.findUnique).toHaveBeenCalledWith({
+      where: { id: "connection-1" },
+    });
+    expect(prismaMock.workspaceMember.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId_userId: { workspaceId: "ws-1", userId: "new-user" } },
+        create: expect.objectContaining({ role: "ADMIN" }),
+      }),
+    );
+  });
+
+  it("404s for an unknown connection and rejects a disabled one", async () => {
+    const unknown = await samlStart(new Request(`${START}?connection=missing`));
+    expect(unknown.status).toBe(404);
+
+    prismaMock.ssoConnection.findUnique.mockResolvedValue({
+      ...CONNECTION,
+      enabled: false,
+    });
+    const disabled = await samlStart(new Request(`${START}?connection=connection-1`));
+    expect(disabled.status).toBe(404);
+  });
+});
+
 describe("GET /api/auth/saml/metadata", () => {
   it("returns SP metadata XML", async () => {
     const response = await samlMetadataRoute(new Request(`${ORIGIN}/api/auth/saml/metadata`));
@@ -162,6 +224,17 @@ describe("GET /api/auth/saml/metadata", () => {
     delete process.env.AUTH_SAML_ENTITY_ID;
     const response = await samlMetadataRoute(new Request(`${ORIGIN}/api/auth/saml/metadata`));
     expect(response.status).toBe(404);
+  });
+
+  it("serves metadata for a workspace connection", async () => {
+    prismaMock.ssoConnection.findUnique.mockResolvedValue(CONNECTION);
+    const response = await samlMetadataRoute(
+      new Request(`${ORIGIN}/api/auth/saml/metadata?connection=connection-1`),
+    );
+    expect(response.status).toBe(200);
+    expect(samlClientMock.samlMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws-1" }),
+    );
   });
 });
 

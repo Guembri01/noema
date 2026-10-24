@@ -3,11 +3,13 @@ import { createSession } from "@/lib/auth";
 import { linkOrCreate, normalizeIdentity } from "@/lib/auth-strategies";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
+import { settingsFromSsoConnection } from "@/lib/sso/connection";
 import { createSamlClient } from "@/lib/sso/saml-client";
 import { readSamlRelayState } from "@/lib/sso/saml-relay";
 import {
   mapSamlGroupsToRole,
   resolveSamlSettings,
+  samlAllowedByStrategyList,
   samlAssertionKey,
   samlEnabled,
   samlGroups,
@@ -33,8 +35,7 @@ export async function POST(request: Request) {
   const env = process.env;
   const url = new URL(request.url);
   const origin = url.origin;
-  const settings = resolveSamlSettings(env, origin);
-  if (!settings.ok || !samlEnabled(env)) return failure(origin);
+  if (!samlAllowedByStrategyList(env)) return failure(origin);
 
   const form = await request.formData().catch(() => null);
   const samlResponse = form?.get("SAMLResponse");
@@ -45,6 +46,17 @@ export async function POST(request: Request) {
 
   const relay = await readSamlRelayState(relayState);
   if (!relay) return failure(origin);
+
+  let settings;
+  if (relay.connectionId) {
+    const row = await prisma.ssoConnection.findUnique({ where: { id: relay.connectionId } });
+    if (!row) return failure(origin);
+    settings = settingsFromSsoConnection(row, origin);
+  } else {
+    settings = resolveSamlSettings(env, origin);
+    if (settings.ok && !samlEnabled(env)) return failure(origin);
+  }
+  if (!settings.ok) return failure(origin);
 
   let profile: Record<string, unknown> | null;
   try {

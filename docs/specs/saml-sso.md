@@ -3,9 +3,11 @@
 > **Status: env-level M1 implemented; per-workspace M2/M3 pending.** The
 > deployment-default SAML connection now has start/ACS/metadata/SLO routes,
 > `@node-saml/node-saml` validation, a persistent assertion replay cache,
-> JIT/linking and signed RelayState (see `docs/integrations/saml.md`). Not yet
-> built: `SsoConnection`/`VerifiedDomain` persistence, settings UI, group→role
-> mapping, domain auto-join, metadata-URL rotation and SCIM. Requirement IDs
+> JIT/linking, group→role mapping, workspace auto-join, signed RelayState and
+> per-workspace `SsoConnection` rows/admin CRUD with `?connection=` route
+> resolution (see `docs/integrations/saml.md`). Not yet built: the rendered
+> settings UI, `VerifiedDomain` persistence/auto-join, metadata-URL rotation and
+> SCIM. Requirement IDs
 > (`R10.x`) remain the traceability anchors; §12's task list references them
 > 1:1 and every test cites the IDs it covers.
 

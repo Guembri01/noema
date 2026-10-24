@@ -10,7 +10,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **SAML SSO** | Env-level SAML login, group→role mapping and workspace auto-join are implemented; per-workspace connections, domain verification and the settings UI remain. | 8. Sharing & permissions |
+| 1 | **SAML SSO** | Env-level SAML login, group→role mapping, workspace auto-join and per-workspace connection rows/actions are implemented; domain verification and the settings UI remain. | 8. Sharing & permissions |
 | 2 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
 | 3 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
@@ -178,7 +178,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | Error tracking | Capture and triage errors. | 🟡 | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
-| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Still missing: per-workspace `SsoConnection`/settings UI, verified-domain auto-join, metadata-URL rotation and SCIM (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
+| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions and `?connection=` start/metadata/ACS resolution are implemented (settings UI and verified-domain rows are not). Still missing: the rendered SSO settings section, verified-domain auto-join, metadata-URL rotation and SCIM (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
 | Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
 | GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |

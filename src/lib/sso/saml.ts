@@ -281,6 +281,19 @@ export function samlEnabled(env: AuthEnv): boolean {
   return enabledStrategies(env).some((strategy) => strategy.kind === "saml");
 }
 
+/**
+ * Whether SAML is allowed when a workspace connection supplies the config.
+ * The allow-list is authoritative; the env-level connection additionally needs
+ * its `AUTH_SAML_*` settings (checked by {@link samlEnabled}).
+ */
+export function samlAllowedByStrategyList(env: AuthEnv): boolean {
+  const entries = (env.AUTH_STRATEGIES ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length === 0 || entries.includes("saml");
+}
+
 /** The registry-shaped strategy the shared identity/link code consumes. */
 export function samlStrategy(settings: SamlSettings): AuthStrategy {
   return {

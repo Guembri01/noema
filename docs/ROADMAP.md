@@ -200,9 +200,11 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] **SAML T10.1 (env-level slice)** — `@node-saml/node-saml`, start/ACS/metadata/SLO,
   signed RelayState, `SamlAssertionSeen` replay cache, JIT/linking and real signed-fixture
   tests [R10.1, R10.2, R10.3, R10.4, R10.5, R10.6, R10.14, R10.16].
-- [ ] **SAML T10.2–T10.8** — `SsoConnection`/`VerifiedDomain` persistence, per-workspace
-  connections + settings UI, group→role mapping, domain auto-join, metadata-URL rotation,
-  SLO validation and SCIM.
+- [x] **SAML T10.2/T10.4** — `SsoConnection` persistence, admin CRUD actions, signed
+  connection-aware RelayState, `?connection=` start/metadata/ACS, group→role mapping and
+  workspace auto-join.
+- [ ] **SAML T10.5–T10.8** — rendered settings UI, `VerifiedDomain` persistence/auto-join,
+  metadata-URL rotation, SLO validation and SCIM.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

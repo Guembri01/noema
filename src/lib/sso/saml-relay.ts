@@ -26,9 +26,16 @@ function relayKey(): Uint8Array {
 }
 
 /** Mint the RelayState for one login, normalising an unsafe return path. */
-export async function createSamlRelayState(returnTo: string): Promise<string> {
+export async function createSamlRelayState(
+  returnTo: string,
+  connectionId?: string,
+): Promise<string> {
   const safeReturnTo = isSafeReturnTo(returnTo) ? returnTo : DEFAULT_RETURN_TO;
-  return new SignJWT({ purpose: PURPOSE, returnTo: safeReturnTo })
+  return new SignJWT({
+    purpose: PURPOSE,
+    returnTo: safeReturnTo,
+    ...(connectionId ? { connectionId } : {}),
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(TTL)
@@ -41,7 +48,7 @@ export async function createSamlRelayState(returnTo: string): Promise<string> {
  */
 export async function readSamlRelayState(
   value: unknown,
-): Promise<{ returnTo: string } | null> {
+): Promise<{ returnTo: string; connectionId?: string } | null> {
   if (typeof value !== "string" || value.length === 0) return null;
   try {
     const { payload } = await jwtVerify(value, relayKey(), {
@@ -50,7 +57,14 @@ export async function readSamlRelayState(
     if (payload.purpose !== PURPOSE) return null;
     const returnTo = payload.returnTo;
     if (typeof returnTo !== "string" || !isSafeReturnTo(returnTo)) return null;
-    return { returnTo };
+    const connectionId = payload.connectionId;
+    if (
+      connectionId !== undefined &&
+      (typeof connectionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(connectionId))
+    ) {
+      return null;
+    }
+    return connectionId ? { returnTo, connectionId } : { returnTo };
   } catch {
     return null;
   }
