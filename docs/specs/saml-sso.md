@@ -5,9 +5,9 @@
 > `@node-saml/node-saml` validation, a persistent assertion replay cache,
 > JIT/linking, group→role mapping, workspace auto-join, signed RelayState and
 > per-workspace `SsoConnection` rows/admin CRUD with `?connection=` route
-> resolution (see `docs/integrations/saml.md`). Not yet built: the rendered
-> settings UI, `VerifiedDomain` persistence/auto-join, metadata-URL rotation and
-> SCIM. Requirement IDs
+> resolution, and `VerifiedDomain` DNS TXT verification/auto-join (see
+> `docs/integrations/saml.md`). Not yet built: the rendered settings UI,
+> metadata-URL rotation and SCIM. Requirement IDs
 > (`R10.x`) remain the traceability anchors; §12's task list references them
 > 1:1 and every test cites the IDs it covers.
 

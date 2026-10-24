@@ -203,8 +203,10 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] **SAML T10.2/T10.4** — `SsoConnection` persistence, admin CRUD actions, signed
   connection-aware RelayState, `?connection=` start/metadata/ACS, group→role mapping and
   workspace auto-join.
-- [ ] **SAML T10.5–T10.8** — rendered settings UI, `VerifiedDomain` persistence/auto-join,
-  metadata-URL rotation, SLO validation and SCIM.
+- [x] **SAML T10.9 (domain half)** — `VerifiedDomain` persistence, DNS TXT add/verify/delete
+  actions and verified-domain auto-join.
+- [ ] **SAML T10.5–T10.8** — rendered settings UI, metadata-URL rotation, SLO validation and
+  SCIM.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

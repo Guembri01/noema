@@ -58,8 +58,25 @@ A workspace login starts at:
 The same `?connection=` selects the connection's SP metadata at
 `/api/auth/saml/metadata`. The RelayState is signed with the connection id, so
 the ACS loads the same row; an unknown/disabled row fails closed. The settings
-UI and verified-domain records are not shipped yet, so the actions are currently
-an admin/back-office seam, not a rendered settings section.
+UI is not shipped yet, so the actions are currently an admin/back-office seam,
+not a rendered settings section.
+
+### Verified domains (backend, R10.9)
+
+`VerifiedDomain` stores a DNS-verified email domain for a workspace (optionally
+scoped to one connection). Admin actions:
+
+- `listVerifiedDomainsAction(workspaceId)`
+- `addVerifiedDomainAction(workspaceId, domain, connectionId?)` — returns the
+  TXT owner `_noema-verification.<domain>` and the token to publish;
+- `verifyVerifiedDomainAction(workspaceId, domain)` — resolves TXT and marks the
+  row verified;
+- `deleteVerifiedDomainAction(workspaceId, domain)`.
+
+When the env-level connection has no `AUTH_SAML_WORKSPACE_ID`, a successful
+login whose email domain matches a verified row auto-joins that workspace. The
+role still comes from `AUTH_SAML_ROLE_RULES`/`MEMBER`, and an existing owner is
+never demoted.
 
 ## 2. Provider notes
 

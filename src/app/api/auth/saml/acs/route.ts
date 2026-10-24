@@ -4,6 +4,7 @@ import { linkOrCreate, normalizeIdentity } from "@/lib/auth-strategies";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 import { settingsFromSsoConnection } from "@/lib/sso/connection";
+import { emailDomain } from "@/lib/sso/domains";
 import { createSamlClient } from "@/lib/sso/saml-client";
 import { readSamlRelayState } from "@/lib/sso/saml-relay";
 import {
@@ -16,6 +17,7 @@ import {
   samlIdentityProfile,
   samlStrategy,
 } from "@/lib/sso/saml";
+import { ensureSamlMembership } from "@/server/sso-membership";
 import { claimSamlAssertion } from "@/server/sso-replay";
 
 export const runtime = "nodejs";
@@ -123,38 +125,25 @@ export async function POST(request: Request) {
 
   // Optional directory-driven auto-join. The mapping may grant ADMIN/MEMBER,
   // never OWNER; an existing OWNER is left untouched so a login can never
-  // demote the human who owns the workspace.
-  if (settings.settings.workspaceId) {
-    const role = mapSamlGroupsToRole(
-      settings.settings.roleRules,
-      samlGroups(profile, settings.settings),
-    );
-    try {
-      const existing = await prisma.workspaceMember.findUnique({
-        where: {
-          workspaceId_userId: {
-            workspaceId: settings.settings.workspaceId,
-            userId,
-          },
-        },
-        select: { role: true },
+  // demote the human who owns the workspace. Without a configured workspace,
+  // a verified email domain can select the workspace instead (R10.9).
+  const groups = samlGroups(profile, settings.settings);
+  const role = mapSamlGroupsToRole(settings.settings.roleRules, groups);
+  let workspaceId = settings.settings.workspaceId;
+  if (!workspaceId) {
+    const domain = emailDomain(identity.email);
+    if (domain) {
+      const verified = await prisma.verifiedDomain.findFirst({
+        where: { domain, verifiedAt: { not: null } },
+        orderBy: { verifiedAt: "desc" },
+        select: { workspaceId: true },
       });
-      if (existing?.role !== "OWNER") {
-        await prisma.workspaceMember.upsert({
-          where: {
-            workspaceId_userId: {
-              workspaceId: settings.settings.workspaceId,
-              userId,
-            },
-          },
-          create: {
-            workspaceId: settings.settings.workspaceId,
-            userId,
-            role,
-          },
-          update: { role },
-        });
-      }
+      workspaceId = verified?.workspaceId;
+    }
+  }
+  if (workspaceId) {
+    try {
+      await ensureSamlMembership(workspaceId, userId, role);
     } catch {
       return failure(origin);
     }

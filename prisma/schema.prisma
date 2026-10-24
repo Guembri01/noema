@@ -164,6 +164,7 @@ model Workspace {
   calendarFeeds  CalendarFeed[]
   calendarEvents CalendarEvent[]
   ssoConnections SsoConnection[]
+  verifiedDomains VerifiedDomain[]
 
   @@index([ownerId])
 }
@@ -190,8 +191,29 @@ model SsoConnection {
   updatedAt       DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  verifiedDomains VerifiedDomain[]
 
   @@index([workspaceId])
+}
+
+/// A DNS-verified email domain that may auto-join a workspace on SAML login.
+/// A row exists before verification so the admin can read the TXT token; only
+/// `verifiedAt != null` participates in auto-join.
+model VerifiedDomain {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  connectionId String?
+  domain       String
+  verifyToken  String
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  workspace  Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection SsoConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, domain])
+  @@index([domain, verifiedAt])
+  @@index([connectionId])
 }
 
 model WorkspaceMember {
