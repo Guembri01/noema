@@ -77,6 +77,7 @@ vi.mock("next/cache", () => ({ revalidatePath: h.cache.revalidatePath }));
 
 import {
   searchRelationTargetsAction,
+  loadMoreDatabaseRowsAction,
   setPropertyValueAction,
   setRelationTwoWayAction,
   updatePropertyAction,
@@ -269,6 +270,14 @@ function seedRow(id: string, databaseId: string, title = id) {
     page(id, { parentId: databaseId, type: "PAGE", title }),
   );
 }
+
+describe("loadMoreDatabaseRowsAction", () => {
+  it("rejects a cursor that is not an opaque pagination token", async () => {
+    await expect(
+      loadMoreDatabaseRowsAction("db-a", "not-a-cursor"),
+    ).resolves.toEqual({ error: "Invalid cursor." });
+  });
+});
 
 describe("setPropertyValueAction — relation writes", () => {
   beforeEach(() => {

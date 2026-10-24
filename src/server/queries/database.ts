@@ -5,12 +5,25 @@
  * @/server/queries through the re-export barrel.
  */
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { docMentionsPage } from "@/lib/mentions";
+import { decodeCursor, encodeCursor } from "@/lib/cursor-pagination";
 
 export type RelationData = {
   options: { id: string; title: string; icon: string | null }[];
   valuesByRow: Record<string, Record<string, unknown>>;
   properties: { id: string; name: string; type: string }[];
+};
+
+/**
+ * Page-local row pagination options. `rowLimit` is the page size (undefined =
+ * the historical unbounded read); `rowCursor` is the opaque keyset token from
+ * the previous page. Rows are ordered by `(position, id)` so a load-more never
+ * repeats or skips a row under concurrent writes.
+ */
+export type DatabaseRowPageOptions = {
+  rowLimit?: number;
+  rowCursor?: string | null;
 };
 
 /**
@@ -31,6 +44,7 @@ export type RelationData = {
 export async function getDatabase(
   databasePageId: string,
   readablePageIds: ReadonlySet<string> | null = null,
+  options: DatabaseRowPageOptions = {},
 ) {
   // A database's rows are the pages that hang under it, and they belong to the
   // database's own workspace. `Page.parentId` is a plain foreign key, so a row
@@ -43,7 +57,20 @@ export async function getDatabase(
     select: { workspaceId: true },
   });
   const workspaceId = database?.workspaceId ?? "";
-  const [properties, views, rows, templateRows] = await Promise.all([
+  const cursor = options.rowCursor ? decodeCursor(options.rowCursor) : null;
+  const rowWhere: Prisma.PageWhereInput = {
+    parentId: databasePageId,
+    workspaceId,
+    deletedAt: null,
+  };
+  if (cursor && typeof cursor.key === "number") {
+    rowWhere.OR = [
+      { position: { gt: cursor.key } },
+      { position: cursor.key, id: { gt: cursor.tiebreaker } },
+    ];
+  }
+  const rowLimit = options.rowLimit;
+  const [properties, views, fetchedRows, templateRows] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
       orderBy: { position: "asc" },
@@ -53,8 +80,9 @@ export async function getDatabase(
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: databasePageId, workspaceId, deletedAt: null },
-      orderBy: { position: "asc" },
+      where: rowWhere,
+      orderBy: [{ position: "asc" }, { id: "asc" }],
+      ...(typeof rowLimit === "number" ? { take: rowLimit + 1 } : {}),
       include: {
         propertyValues: true,
         createdBy: { select: { name: true } },
@@ -81,6 +109,15 @@ export async function getDatabase(
       },
     }),
   ]);
+
+  const hasMoreRows =
+    typeof rowLimit === "number" && fetchedRows.length > rowLimit;
+  const rows = hasMoreRows ? fetchedRows.slice(0, rowLimit) : fetchedRows;
+  const lastRow = rows[rows.length - 1];
+  const nextRowCursor =
+    hasMoreRows && lastRow
+      ? encodeCursor({ key: lastRow.position, tiebreaker: lastRow.id })
+      : null;
 
   // Resolve related-database rows/values for relation + rollup properties.
   const relationData: Record<string, RelationData> = {};
@@ -209,7 +246,7 @@ export async function getDatabase(
     } | null,
   }));
 
-  return { properties, views, rows, templates, relationData, lastEditedBy, dependencies };
+  return { properties, views, rows, templates, relationData, lastEditedBy, dependencies, nextRowCursor };
 }
 
 export type DatabaseData = Awaited<ReturnType<typeof getDatabase>>;

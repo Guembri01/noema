@@ -45,6 +45,7 @@ vi.mock("@/server/actions/database", () => {
     "createRowFromTemplateAction",
     "deleteTemplateAction",
     "listDeletedRowsAction",
+    "loadMoreDatabaseRowsAction",
     "reorderPropertiesAction",
     "saveRowAsTemplateAction",
     "setPropertyValueAction",

@@ -119,7 +119,7 @@ export default async function PageRoute({
   );
 
   const [database, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
-    page.type === "DATABASE" ? getDatabase(page.id, guestReadScope) : Promise.resolve(null),
+    page.type === "DATABASE" ? getDatabase(page.id, guestReadScope, { rowLimit: 100 }) : Promise.resolve(null),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
@@ -249,6 +249,7 @@ export default async function PageRoute({
         }
         members={members.map((member) => ({ id: member.id, name: member.name }))}
         editable={editable}
+        nextRowCursor={database.nextRowCursor}
         dependencyEdges={database.dependencies.map((edge) => ({
           from: edge.blockerId,
           to: edge.blockedId,

@@ -39,6 +39,7 @@ import {
   importCsvAction as rawImportCsvAction,
   createRowFromTemplateAction as rawCreateRowFromTemplateAction,
   listDeletedRowsAction as rawListDeletedRowsAction,
+  loadMoreDatabaseRowsAction as rawLoadMoreDatabaseRowsAction,
   reorderPropertiesAction as rawReorderPropertiesAction,
   saveRowAsTemplateAction as rawSaveRowAsTemplateAction,
   setPropertyValueAction as rawSetPropertyValueAction,
@@ -72,6 +73,8 @@ const createRowFromTemplateAction =
   guarded(rawCreateRowFromTemplateAction) as typeof rawCreateRowFromTemplateAction;
 const listDeletedRowsAction =
   guarded(rawListDeletedRowsAction) as typeof rawListDeletedRowsAction;
+const loadMoreDatabaseRowsAction =
+  guarded(rawLoadMoreDatabaseRowsAction) as typeof rawLoadMoreDatabaseRowsAction;
 const reorderPropertiesAction =
   guarded(rawReorderPropertiesAction) as typeof rawReorderPropertiesAction;
 const saveRowAsTemplateAction =
@@ -807,13 +810,14 @@ export function DatabaseView({
   databases,
   properties,
   views,
-  rows,
+  rows: initialRows,
   members,
   editable,
   dependencyEdges = [],
   schemaLocked = false,
   lockedPropertyIds,
   loading = false,
+  nextRowCursor = null,
 }: {
   databasePageId: string;
   workspaceId: string;
@@ -824,6 +828,8 @@ export function DatabaseView({
   properties: DBProperty[];
   views: DBView[];
   rows: DBRow[];
+  /** Opaque keyset token for the next row window (`null` at the end). */
+  nextRowCursor?: string | null;
   /** Workspace members offered by PEOPLE cells (multi-user assignment). */
   members?: { id: string; name: string }[];
   editable: boolean;
@@ -846,6 +852,28 @@ export function DatabaseView({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const { run: runAction } = useAction(locale);
+  const [extraRows, setExtraRows] = useState<DBRow[]>([]);
+  const [extraDependencyEdges, setExtraDependencyEdges] = useState<DependencyEdge[]>([]);
+  const [rowCursor, setRowCursor] = useState<string | null>(nextRowCursor);
+  const [loadingMoreRows, setLoadingMoreRows] = useState(false);
+  useEffect(() => {
+    setRowCursor(nextRowCursor);
+  }, [nextRowCursor]);
+  const rows = useMemo(() => {
+    const seen = new Set(initialRows.map((row) => row.id));
+    return [...initialRows, ...extraRows.filter((row) => !seen.has(row.id))];
+  }, [initialRows, extraRows]);
+  const allDependencyEdges = useMemo(() => {
+    const seen = new Set(
+      dependencyEdges.map((edge) => `${edge.from}\u0000${edge.to}`),
+    );
+    return [
+      ...dependencyEdges,
+      ...extraDependencyEdges.filter(
+        (edge) => !seen.has(`${edge.from}\u0000${edge.to}`),
+      ),
+    ];
+  }, [dependencyEdges, extraDependencyEdges]);
   /**
    * R89.24 — the schema lock is optimistic while the server write is in
    * flight: the toolbar flips immediately, and a refused write (e.g. a member
@@ -1132,8 +1160,8 @@ export function DatabaseView({
   // the graph is empty, every indicator is blank and no column is added, so an
   // ordinary database renders exactly as before.
   const dependencyGraph = useMemo(
-    () => buildSubIssueDependencyTree(toSubIssueEdges(dependencyEdges)),
-    [dependencyEdges],
+    () => buildSubIssueDependencyTree(toSubIssueEdges(allDependencyEdges)),
+    [allDependencyEdges],
   );
   const dependencySummary = (rowId: string): string => {
     const node = dependencyGraph.nodes.get(rowId);
@@ -1165,7 +1193,7 @@ export function DatabaseView({
   // The virtual dependency column, plus the table schema/config that show it.
   // Both are the plain values when there are no edges, so the table is
   // untouched until a caller supplies dependencies.
-  const hasDependencyEdges = dependencyEdges.length > 0;
+  const hasDependencyEdges = allDependencyEdges.length > 0;
   const dependencyColumn: DBProperty = {
     id: DEPENDENCY_COLUMN_ID,
     name: `${t(locale, "relationBlocks")} / ${t(locale, "relationBlockedBy")}`,
@@ -1713,6 +1741,50 @@ export function DatabaseView({
     });
   };
 
+  /** Append the next keyset window of rows without discarding loaded rows. */
+  const loadMoreRows = () => {
+    if (!rowCursor || loadingMoreRows) return;
+    setLoadingMoreRows(true);
+    startTransition(async () => {
+      const page = await loadMoreDatabaseRowsAction(databasePageId, rowCursor);
+      setLoadingMoreRows(false);
+      if ("error" in page) {
+        toast.error(page.error);
+        return;
+      }
+      const nextRows: DBRow[] = page.rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        icon: row.icon,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        createdByName: row.createdBy?.name ?? null,
+        lastEditedByName:
+          page.lastEditedBy[row.id] ?? row.createdBy?.name ?? null,
+        subOfId: row.subOfId,
+        position: row.position,
+        propertyValues: row.propertyValues.map((entry) => ({
+          propertyId: entry.propertyId,
+          value: entry.value,
+        })),
+      }));
+      setExtraRows((previous) => {
+        const seen = new Set(previous.map((row) => row.id));
+        return [...previous, ...nextRows.filter((row) => !seen.has(row.id))];
+      });
+      setExtraDependencyEdges((previous) => {
+        const seen = new Set(previous.map((edge) => `${edge.from}\u0000${edge.to}`));
+        return [
+          ...previous,
+          ...page.dependencies
+            .map((edge) => ({ from: edge.blockerId, to: edge.blockedId }))
+            .filter((edge) => !seen.has(`${edge.from}\u0000${edge.to}`)),
+        ];
+      });
+      setRowCursor(page.nextRowCursor);
+    });
+  };
+
   /**
    * Materialize a template's prefills into a fresh row. The pure planner
    * (`applyTemplate`) plans the row's starting values from the template's
@@ -2221,7 +2293,7 @@ export function DatabaseView({
           workspaceSlug={workspaceSlug}
           properties={properties}
           rows={viewRows}
-          edges={toTimelineEdges(dependencyEdges)}
+          edges={toTimelineEdges(allDependencyEdges)}
           editable={editable}
         />
       ) : activeView.type === "CHART" ? (
@@ -2322,6 +2394,19 @@ export function DatabaseView({
       )}
       </div>
 
+      {rowCursor && activeView?.type !== "FORM" ? (
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={loadMoreRows}
+            disabled={loadingMoreRows}
+            className="focus-ring rounded-control border border-border bg-bg px-3 py-1.5 text-sm text-fg hover:bg-surface-2 disabled:opacity-60"
+          >
+            {loadingMoreRows ? t(locale, "loading") : t(locale, "loadMore")}
+          </button>
+        </div>
+      ) : null}
+
       {addingProperty && (
         <AddPropertyForm
           databasePageId={databasePageId}
@@ -2349,7 +2434,7 @@ export function DatabaseView({
                 databasePageId={databasePageId}
                 currentRowId={shownPeek.id}
                 rows={rows.map((row) => ({ id: row.id, title: row.title }))}
-                edges={dependencyEdges}
+                edges={allDependencyEdges}
               />
             ) : null
           }

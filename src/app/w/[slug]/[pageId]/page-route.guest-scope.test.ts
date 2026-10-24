@@ -335,7 +335,11 @@ describe("the page route — the guest scope for database pages", () => {
 
     const tree = await run("db-1");
 
-    expect(queries.getDatabase).toHaveBeenCalledWith("db-1", expect.any(Set));
+    expect(queries.getDatabase).toHaveBeenCalledWith(
+      "db-1",
+      expect.any(Set),
+      { rowLimit: 100 },
+    );
     // The database view the route renders carries the database's own rows.
     const [view] = elementsOfType(tree, components.DatabaseSurface);
     expect(view).toBeDefined();
@@ -349,7 +353,11 @@ describe("the page route — the guest scope for database pages", () => {
 
     await expect(run("db-3")).resolves.toBeDefined();
 
-    expect(queries.getDatabase).toHaveBeenCalledWith("db-3", expect.any(Set));
+    expect(queries.getDatabase).toHaveBeenCalledWith(
+      "db-3",
+      expect.any(Set),
+      { rowLimit: 100 },
+    );
   });
 
   it("lists only the databases inside the guest's read scope", async () => {
@@ -375,7 +383,9 @@ describe("the page route — the guest scope for database pages", () => {
 
     await expect(run("db-2")).resolves.toBeDefined();
 
-    expect(queries.getDatabase).toHaveBeenCalledWith("db-2", null);
+    expect(queries.getDatabase).toHaveBeenCalledWith("db-2", null, {
+      rowLimit: 100,
+    });
     // A member sees every database of the workspace — no scope filter at all.
     const [listCall] = databaseListCalls();
     expect(listCall?.where?.id).toBeUndefined();

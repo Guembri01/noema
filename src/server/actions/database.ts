@@ -41,6 +41,8 @@ import {
 } from "@/lib/relation-config";
 import { normalizeRollupConfig, validateRollupConfig } from "@/lib/rollup-config";
 import { parseFormula } from "@/lib/formula";
+import { decodeCursor } from "@/lib/cursor-pagination";
+import { getDatabase } from "@/server/queries/database";
 import {
   buildFormSchema,
   isAnswerablePropertyType,
@@ -924,6 +926,48 @@ export async function setPropertyValueAction(
 
   revalidateDatabase(row.workspaceId);
   return { ok: true };
+}
+
+/**
+ * Load the next keyset page of a database's rows.
+ *
+ * The database page is authorized exactly like the initial read, including the
+ * guest read scope used for relation targets. `rows` and `nextRowCursor` are
+ * the same shape the route receives from `getDatabase`, so the client can append
+ * without a second mapping. The activity/dependency projections are refreshed
+ * too, keeping LAST_EDITED_BY and the timeline complete for the new window.
+ */
+export async function loadMoreDatabaseRowsAction(
+  databasePageId: string,
+  cursor: string,
+): Promise<
+  Result<{
+    rows: Awaited<ReturnType<typeof getDatabase>>["rows"];
+    nextRowCursor: string | null;
+    lastEditedBy: Awaited<ReturnType<typeof getDatabase>>["lastEditedBy"];
+    dependencies: Awaited<ReturnType<typeof getDatabase>>["dependencies"];
+  }>
+> {
+  if (!cursor || decodeCursor(cursor) === null) {
+    return { error: "Invalid cursor." };
+  }
+  const auth = await authorizeDatabase(databasePageId);
+  if ("error" in auth) return auth;
+  const readable =
+    auth.access.role === "GUEST"
+      ? await guestReadablePageIds(auth.user.id, auth.page.workspaceId)
+      : null;
+  const page = await getDatabase(databasePageId, readable, {
+    rowLimit: 100,
+    rowCursor: cursor,
+  });
+  return {
+    ok: true,
+    rows: page.rows,
+    nextRowCursor: page.nextRowCursor,
+    lastEditedBy: page.lastEditedBy,
+    dependencies: page.dependencies,
+  };
 }
 
 /**
