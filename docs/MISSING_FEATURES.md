@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 472 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 482 implemented · 61 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **61** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -95,26 +95,15 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 ### 8. Sharing & permissions
 
-20 done · 2 partial · 0 planned
+21 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
 | Move pages across workspaces | Relocate content between workspaces. | 🟡 | Planned; id-remap complexity. |
-
-### 9. Workspaces & structure
-
-20 done · 3 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Trash / recently deleted | Deleted pages list. | 🟡 | Soft delete exists; trash UI partial. |
-| Restore from trash | Undo a deletion. | 🟡 | Planned. |
-| Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
 
 ### 13. Integrations & API
 
-16 done · 6 partial · 0 planned
+18 done · 4 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -122,8 +111,6 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | GitHub integration | Link commits/PRs. | 🟡 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
-| Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
-| Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
 
 ### 14. AI
 
@@ -152,11 +139,10 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 ### 16. Navigation & UX
 
-45 done · 3 partial · 0 planned · 2 out of scope
+46 done · 2 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
@@ -164,11 +150,10 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 ### 17. Data model & platform
 
-23 done · 14 partial · 0 planned
+26 done · 11 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Page snapshots | Versioned page state. | 🟡 | Planned; basis for history. |
 | Incremental syncing | Sync only changed blocks. | 🟡 | Planned; op-log approach. |
 | Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
 | Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
@@ -180,8 +165,6 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions, `?connection=` start/metadata/ACS resolution and `VerifiedDomain` DNS verification are implemented; a verified email domain auto-joins its workspace when the env connection has no fixed workspace. Metadata-URL refresh parses the IdP document and rotates the signing certificate with a 24-hour previous-certificate overlap. SLO validates POST/redirect logout messages while always ending the local session. The **SSO settings section** manages connections, metadata refresh and verified domains (admin-only). SCIM **Users** endpoints are implemented with hashed bearer tokens, JIT user/membership creation, pagination, lookup, active=false deprovisioning and owner protection. SCIM **Groups** map to teamspaces (list/get/create/add/remove/replace members/delete), and group membership recomputes the mapped workspace role from the connection's `roleRules` (OWNER is never demoted). Login email-domain chooser, invite precedence for JIT users and the recent-SSO activity view are implemented. Remaining polish: a dry “Test connection” action and split per-IdP setup pages (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
-| Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
-| GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |
 
 ### 18. Pricing & plan-gated features
 

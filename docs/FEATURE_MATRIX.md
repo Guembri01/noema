@@ -384,7 +384,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Workspace roles | Owner/admin/member/guest roles. | ✅ | Roles modeled; enforcement partial. |
-| Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
+| Owner role | Full control of the workspace. | ✅ | Ownership transfer actions (start/accept/decline/cancel, recipient-only accept, password proof, lazy expiry), owner-only UI in the members manager, audit entry and role guards are implemented and covered by the ownership-transfer and workspace-role suites. |
 | Admin role | Manage members and settings. | ✅ | Modeled; UI partial. |
 | Member role | Standard collaborator. | ✅ | Default role enforced. |
 | Guest role | Limited-scope collaborator. | ✅ | Planned. |
@@ -421,9 +421,9 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Favorites | Pinned pages section. | ✅ | Sidebar section (B44): ordered/deduped list (`orderFavorites` + unit tests), count badge, empty-state hint, hover unfavorite + open-in-new-tab, `t(locale)` wired; reload order stable (targeted e2e). |
 | Recent pages | Recently visited list. | ✅ | Planned. B80: no visit source modeled (0 hits for `visitedAt`/`PageVisit`); server-side recency is R80.11 (schema, M3). Spec: docs/specs/workspaces-structure.md. |
 | Search entry point | Sidebar search. | ✅ | Sidebar search opening quick find, with the Ctrl K hint. |
-| Trash / recently deleted | Deleted pages list. | 🟡 | Soft delete exists; trash UI partial. |
-| Restore from trash | Undo a deletion. | 🟡 | Planned. |
-| Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
+| Trash / recently deleted | Deleted pages list. | ✅ | Soft-deleted pages load through `getTrash` with the guest read scope; `/w/<slug>/trash` renders the grouped list, retention badges, restore and empty-state UI (`trash-list.tsx`, `trash-view.ts`), with unit/render coverage. |
+| Restore from trash | Undo a deletion. | ✅ | `restorePageAction` re-attaches a trashed page at its parent or the workspace root when the parent is still trashed; the trash row restores it and offers Undo. Covered by the action and trash-list suites. |
+| Permanent delete | Permanently remove an item. | ✅ | `deletePageAction` and `emptyTrashAction` purge the explicit subtree in one transaction, clean stale uploads and write `page.deleted`; the trash UI exposes row delete and Empty trash. |
 | Quick find | Ctrl/Cmd+P page switcher. | ✅ | Planned. B80 audit: implemented and guest-scoped (`src/components/quick-find.tsx`, `search.ts:20-36`, sidebar `Ctrl K` at `sidebar.tsx:126-136`) — glyph stale, to reconcile by hand. Spec: docs/specs/workspaces-structure.md. |
 | Backlinks | Pages linking to this page. | ✅ | Planned; derived from page mentions. B80 audit: ships (`getBacklinks` `src/server/queries.ts:369-389`) but the page route omits guest scoping (`[pageId]/page.tsx:56`) — R80.12. Spec: docs/specs/workspaces-structure.md. |
 | Linked references | Grouped backlink list with context. | ✅ | Planned. B80 audit: panel renders (`src/components/backlinks.tsx`, `page.tsx:213`); grouping/context thin, glyph to reconcile. Spec: docs/specs/workspaces-structure.md. |
@@ -520,8 +520,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Google Drive integration | Link/preview Drive files. | ✅ | Planned. |
 | AI connectors | Connect model providers. | ✅ | Planned; BYO key. |
 | MCP server | Expose workspace to AI agents. | ✅ | 43 token-scoped tools over `/api/mcp`; read-first, write/admin opt-in. See `docs/MCP.md`. |
-| Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
-| Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
+| Inbound webhooks | Accept events from outside. | ✅ | Signed inbound route `POST /api/webhooks/inbound` verifies the endpoint secret, refuses sealed/unreadable secrets, plans the stored rule list (never a caller-supplied list) and records bounded outcomes; covered by the route and rules tests. |
+| Public embed oEmbed | Resolve third-party link metadata. | ✅ | `src/lib/oembed.ts` discovers provider/protocol endpoints, validates JSON, sanitizes allow-listed iframe/blockquote HTML, parses OpenGraph and merges layers; the bookmark node uses the engine with a link-preview fallback. Hostile/truncated input degrades safely. |
 
 ## 14. AI
 <!-- AREA: 14. AI -->
@@ -600,7 +600,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Coherent timestamps | Dates that survive hydration. | ✅ | `<LocalTime>` renders a deterministic UTC string on the server and swaps to the reader's locale after mount, so no page ever hydrates with mismatched text (React #418). |
 | Accessibility (WCAG) | Keyboard and screen-reader support. | ✅ | Landmarks, labelled navs/controls, contrast-checked palette; `npm run check:a11y`. |
 | First-run onboarding | Guided path to a useful workspace. | ✅ | The workspace home shows a dismissible checklist for first page, first database, teammate invite and first file, derived from real workspace counts; `User.onboardingDismissedAt` persists dismissal. |
-| Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
+| Focus management | Visible focus and traps. | ✅ | Global `:focus-visible` ring; `ui/dialog` and `ui/dropdown-menu` own focus trap/restore; the hand-rolled `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer` (sheet) and `editor/equation-editor` all use the shared `src/lib/focus-trap.ts` kernel (`trapPlan`, initial focus, wrapping Tab/Shift+Tab, Escape) with `aria-modal` where applicable. Locked by `e2e/focus.spec.ts` and the overlay-wiring tests. |
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Notifications / toasts | Transient status messages. | ✅ | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
@@ -635,7 +635,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | --- | --- | --- | --- |
 | Block-based storage | Content stored as blocks. | ✅ | TipTap JSON persisted per page. |
 | Stable block ids | Every block has a durable id. | ✅ | Ids exist; not enforced on all operations. Spec: docs/specs/engineering-hardening.md. |
-| Page snapshots | Versioned page state. | 🟡 | Planned; basis for history. |
+| Page snapshots | Versioned page state. | ✅ | `PageSnapshot`/page-version helpers, snapshot actions, guest-scoped reads, retention and the version-history panel are implemented and tested (`page-snapshots`, `page-versions`, `snapshots-*` suites). |
 | Incremental syncing | Sync only changed blocks. | 🟡 | Planned; op-log approach. |
 | Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
 | Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
@@ -666,10 +666,10 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Reverse-proxy guidance | nginx/Caddy docs. | ✅ | Planned. Spec: docs/specs/engineering-hardening.md. |
 | Health checks | Liveness/readiness endpoints. | ✅ | Planned. |
 | Feature flags | Gate in-progress features. | ✅ | Planned. |
-| Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
+| Background jobs | Async task runner. | ✅ | `src/lib/job-queue.ts` plus the cron jobs route implement enqueue → claim → complete/retry/dead-letter with backoff and registered-kind dispatch; route lifecycle tests cover success, retry, dead-letter and unregistered kinds. |
 | WebSocket/SSE gateway | Realtime transport. | ✅ | Planned for collaboration. |
 | Data export portability | Take your data out. | ✅ | Planned; see export. |
-| GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |
+| GDPR data controls | Delete/export personal data. | ✅ | `src/lib/gdpr.ts` + `src/server/actions/gdpr.ts` and the Data & privacy settings page implement export, erasure planning, legal holds, subject deletion/anonymisation and related notification/comment/share/link cleanup; covered by the GDPR suites. |
 
 ## 18. Pricing & plan-gated features
 <!-- AREA: 18. Pricing & plan-gated features -->
@@ -778,21 +778,21 @@ The table below summarizes how many feature rows fall into each status, per area
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
-| 8. Sharing & permissions | 20 | 2 | 0 | 0 | 22 |
-| 9. Workspaces & structure | 20 | 3 | 0 | 0 | 23 |
+| 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
+| 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
-| 13. Integrations & API | 16 | 6 | 0 | 0 | 22 |
+| 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
 | 14. AI | 7 | 9 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
-| 16. Navigation & UX | 45 | 3 | 0 | 2 | 50 |
-| 17. Data model & platform | 23 | 14 | 0 | 0 | 37 |
+| 16. Navigation & UX | 46 | 2 | 0 | 2 | 50 |
+| 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **472** | **71** | **0** | **22** | **565** |
+| **Total** | **482** | **61** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
