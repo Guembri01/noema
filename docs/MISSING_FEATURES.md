@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 491 implemented · 52 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 499 implemented · 44 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **52** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **44** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -18,13 +18,10 @@ This file lists the **52** rows that are not finished, area by area, plus 22 int
 
 ### 1. Editor & blocks
 
-90 done · 9 partial · 0 planned · 2 out of scope
+93 done · 6 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
-| Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
-| KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
 | Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
@@ -103,14 +100,10 @@ This file lists the **52** rows that are not finished, area by area, plus 22 int
 
 ### 14. AI
 
-9 done · 7 partial · 0 planned
+13 done · 3 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
 | AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
@@ -186,12 +179,4 @@ This file lists the **52** rows that are not finished, area by area, plus 22 int
 | AI vendor lock-in | AI options tied to one vendor. | ⛔ | Noema supports BYO/local models; divergence. |
 | Third-party tracking | Hosted analytics on public pages. | ⛔ | Noema ships no trackers by default; divergence. |
 | Mandatory accounts for sharing | Viewers may need accounts. | ⛔ | Noema plans lightweight guest viewing. |
-
-### 20. Projects, tickets & planning
-
-31 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
 

@@ -52,9 +52,9 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Syntax highlighting | Tokenizes code by language. | ✅ | lowlight + highlight.js *common* grammars (~30) wired through `@tiptap/extension-code-block-lowlight`; token styles for light/dark themes; unknown fence languages fall back to auto-detect. |
 | Code block line numbers | Optional gutter numbering. | ✅ | Planned as a code-block setting. |
 | Code block caption | Caption text under a code block. | ✅ | Planned. |
-| Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
-| Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
-| KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
+| Inline equation | Small LaTeX expression inside a text line. | ✅ | The dialog keeps one textarea mounted across LaTeX/Preview so caret, selection and undo survive; it captures the live editor selection on open and replaces it on apply, renders a live preview, and reports errors inside a contenteditable=false node view. |
+| Block equation | Centered display equation. | ✅ | Explicit LaTeX/Preview state with a live preview; Escape, Cancel, scrim click and focus-out preserve the existing source. Slash insertion removes the `/equation` query first and replaces the empty paragraph, and auto-detect/paste insert at block level. |
+| KaTeX/LaTeX support | Math syntax engine for equations. | ✅ | One renderer with a documented bounded macro table (`MATH.md`), input/output/depth budgets, KaTeX `maxExpand`/`maxSize`, `trust: false`, banned/unsafe command rejection and non-throwing inline errors. See `src/lib/math-tex.ts`. |
 | Math editor UX | Popover to compose equations with symbols. | ✅ | Planned composer with symbol palette. |
 
 ### Layout blocks
@@ -532,13 +532,13 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Q&A over workspace | Ask questions answered from your content. | ✅ | Prompt → keywords → relevance-scored pages feed the model (`src/lib/retrieval.ts`); verified against the live provider. |
 | AI autofill property | Generate row values. | ✅ | The property editor exposes the prompt/sampling config, the row cell exposes Autofill, and `runAiAutofillAction` validates config, authorizes the row/property, frames other columns as context and writes the generated value. |
 | AI block | Prompt block that generates content. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
-| Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Summarization | Summarize a page or section. | ✅ | `summarize` is reachable from the selection toolbar and the block/page AI menu. Selection/block results append below the target; a page-scoped summary appends at the end so it can never overwrite the page. Chunked map-reduce remains the route's long-text path. |
+| Translation | Translate selection or page. | ✅ | `translate` targets all five shipped locales, rejects unsupported targets with `400`, and is exposed per-locale in both AI menus. Selection/block translation rewrites; page translation appends. |
 | Transcription | Speech-to-text for audio. | ✅ | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
 | Meeting notes | Capture and structure meetings. | ✅ | Create a notes page from a calendar event (meeting template) or from a recording (transcription). |
 | Improve/Shorten/Expand | Tone and length actions. | ✅ | Presets: Improve writing, Make shorter, Reformat, Proofread, Explain, Summarize, Translate. |
-| Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Continue writing | Extend text from context. | ✅ | `continue` joins the continuation inline after the selection/block and appends a paragraph when invoked on the whole page, preserving one separator space. Reachable from both editor AI menus. |
+| Explain/Simplify | Rewrite for clarity. | ✅ | `explain` appends an explanation for the target and `simplify` replaces it with a plain-language rewrite. Both are registry skills and appear in the selection toolbar and block menu. |
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / OpenCode Go / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. Every request carries the product's user agent (`noema/<version>`); OpenCode Go additionally gets a stable `x-opencode-session` per conversation. |
 | Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
 | Prompt library | Reusable saved prompts. | ✅ | `WorkspacePrompt` rows with workspace/personal scope, membership-gated CRUD/clone actions, a persisted settings manager and a chat-composer picker that inserts a prompt body into the draft without discarding typed text. Seven built-in AI skills stay code-owned. Spec: docs/specs/ai-surface.md (R25.22). |
@@ -746,7 +746,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Cycle goal (description) | Time-box description. | ✅ | `Cycle.goal` shown and edited in the cycles UI. |
 | Label description | Description on label catalogue entries. | ✅ | Label manager (Settings) edits name/colour/description. |
 | Milestone description | Note on a checkpoint. | ✅ | Editable in project detail. |
-| Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
+| Recurring tickets | Repeat on a schedule. | ✅ | `Automation` (`kind = recurring_ticket`) and `AutomationRun` persist rules and per-occurrence claims; the cron route materializes due tickets in transactions with a unique `(automationId, occurrenceKey)` key. The tracker exposes create/list/pause/resume/delete in `RecurringTicketsManager`. Spec: docs/specs/automations.md. |
 | Workload & capacity | Per-person load planning. | ✅ | Planned; assignee + estimate data is available. |
 | Per-project role editor | Fine-grained project roles. | ✅ | `ProjectRoleEditor` on the project detail loads the workspace roster projected onto the project-role engine, lets managers re-role/remove members, and every change is re-checked server-side for the role ceiling and last-owner guard (`setProjectRoleAction` / `removeProjectRoleAction`). |
 
@@ -771,7 +771,7 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 90 | 9 | 0 | 2 | 101 |
+| 1. Editor & blocks | 93 | 6 | 0 | 2 | 101 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 35 | 0 | 0 | 1 | 36 |
@@ -784,15 +784,15 @@ The table below summarizes how many feature rows fall into each status, per area
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
-| 14. AI | 9 | 7 | 0 | 0 | 16 |
+| 14. AI | 13 | 3 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
 | 16. Navigation & UX | 47 | 1 | 0 | 2 | 50 |
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
-| 20. Projects, tickets & planning | 31 | 1 | 0 | 0 | 32 |
+| 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **491** | **52** | **0** | **22** | **565** |
+| **Total** | **499** | **44** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
