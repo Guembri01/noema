@@ -9,6 +9,7 @@ import {
   createBlockTemplateAction,
   createGalleryTemplateAction,
   createQuickStartAction,
+  duplicateWorkspaceTemplateAction,
   instantiateWorkspaceTemplateAction,
   listWorkspaceTemplatesAction,
 } from "@/server/actions/home-templates";
@@ -285,26 +286,51 @@ export function HomeGallery({
   );
 
   const workspaceCard = (template: PageTemplate) => (
-    <Card
-      key={template.id}
-      as="button"
-      type="button"
-      variant="interactive"
-      padding="md"
-      aria-label={template.name}
-      aria-disabled={pending || undefined}
-      onClick={() => {
-        if (pending) return;
-        run(() => instantiateWorkspaceTemplateAction({ workspaceId, templateId: template.id }));
-      }}
-      className={GALLERY_CARD_STATE}
-    >
-      <p className="truncate text-sm font-medium text-fg">
-        <span aria-hidden>{template.icon ?? "📄"} </span>
-        {template.name}
-      </p>
-      <p className="mt-0.5 truncate text-xs text-muted">{describeTemplate(template)}</p>
-    </Card>
+    <div key={template.id} className="flex flex-col">
+      <Card
+        as="button"
+        type="button"
+        variant="interactive"
+        padding="md"
+        aria-label={template.name}
+        aria-disabled={pending || undefined}
+        onClick={() => {
+          if (pending) return;
+          run(() => instantiateWorkspaceTemplateAction({ workspaceId, templateId: template.id }));
+        }}
+        className={GALLERY_CARD_STATE}
+      >
+        <p className="truncate text-sm font-medium text-fg">
+          <span aria-hidden>{template.icon ?? "📄"} </span>
+          {template.name}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-muted">{describeTemplate(template)}</p>
+      </Card>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        disabled={pending}
+        className="mt-1 self-end"
+        onClick={() => {
+          if (pending) return;
+          startTransition(async () => {
+            const result = await duplicateWorkspaceTemplateAction({
+              workspaceId,
+              templateId: template.id,
+            });
+            if ("ok" in result) {
+              toast.success("Template duplicated");
+              loadTemplates();
+            } else {
+              toast.error(result.error);
+            }
+          });
+        }}
+      >
+        Duplicate
+      </Button>
+    </div>
   );
 
   const quickStart = (kind: "page" | "database") => {

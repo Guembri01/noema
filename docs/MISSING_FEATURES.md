@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 487 implemented · 56 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 488 implemented · 55 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **56** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **55** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -61,12 +61,11 @@ This file lists the **56** rows that are not finished, area by area, plus 22 int
 
 ### 6. Templates
 
-7 done · 2 partial · 0 planned · 1 out of scope
+8 done · 1 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
-| Template duplication | Clone a template into a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
 
 ### 7. Collaboration

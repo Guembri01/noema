@@ -342,7 +342,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Default template | Auto-apply to new rows. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
 | Save page as template | Convert a page into a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
-| Template duplication | Clone a template into a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
+| Template duplication | Clone a template into a page. | ✅ | `duplicateWorkspaceTemplateAction` clones a row template in its source database (fresh id/position, same content/config, no recurrence/default inheritance), checks workspace + page edit access, and the home gallery exposes a Duplicate button. Covered by the action suite. |
 | Template locking | Keep templates read-only. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
 
@@ -776,7 +776,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 35 | 0 | 0 | 1 | 36 |
 | 5. Formulas | 16 | 0 | 0 | 0 | 16 |
-| 6. Templates | 7 | 2 | 0 | 1 | 10 |
+| 6. Templates | 8 | 1 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
@@ -792,7 +792,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 30 | 2 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **487** | **56** | **0** | **22** | **565** |
+| **Total** | **488** | **55** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 

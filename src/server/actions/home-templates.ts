@@ -521,6 +521,67 @@ export async function listWorkspaceTemplatesAction(input: {
 }
 
 /**
+ * Clone a workspace template (R31.9): same database, content and config, with
+ * a fresh id/name/position. Recurrence is intentionally not copied — a clone
+ * starts unscheduled; default-template status is not copied either.
+ */
+export async function duplicateWorkspaceTemplateAction(input: {
+  workspaceId: string;
+  templateId: string;
+}): Promise<{ ok: true; id: string } | { error: string }> {
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, input.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to duplicate templates." };
+  }
+  const template = await prisma.template.findUnique({
+    where: { id: input.templateId },
+    select: {
+      databasePageId: true,
+      name: true,
+      icon: true,
+      content: true,
+      config: true,
+      position: true,
+      databasePage: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  if (!template || template.databasePage.workspaceId !== input.workspaceId) {
+    return { error: "That template does not exist." };
+  }
+  if (
+    !pageCapabilitiesFromRelation(
+      access.role,
+      template.databasePage.permissions,
+    ).edit
+  ) {
+    return { error: "You do not have permission to duplicate this template." };
+  }
+  const created = await prisma.template.create({
+    data: {
+      databasePageId: template.databasePageId,
+      name: `${template.name} copy`,
+      icon: template.icon,
+      content: template.content ?? undefined,
+      config: template.config ?? undefined,
+      position: template.position + 1000,
+    },
+    select: { id: true },
+  });
+  revalidatePath("/w", "layout");
+  return { ok: true, id: created.id };
+}
+
+/**
  * Apply a workspace template as a new row (R31.10): the planner
  * (`@/lib/database-templates`' `applyTemplate`) merges the template's saved
  * values/body against the database's live properties, then
