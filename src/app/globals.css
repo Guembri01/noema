@@ -2016,6 +2016,12 @@ body {
   border-radius: var(--radius-sm);
   color: var(--muted);
   }
+@utility noema-linked-view{
+  max-width: 10rem;
+  padding-inline: var(--space-1);
+  background: transparent;
+  font-size: var(--text-xs);
+  }
 @utility noema-linked-body{
   overflow-x: auto;
   padding: var(--space-2) 10px;

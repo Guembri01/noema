@@ -103,7 +103,14 @@ beforeEach(() => {
 
   queries.getDatabase.mockResolvedValue({
     properties: [{ id: "prop-1", name: "Name", type: "TEXT" }],
-    views: [{ id: "view-1", name: "All", type: "TABLE" }],
+    views: [
+      {
+        id: "view-1",
+        name: "All",
+        type: "TABLE",
+        config: { filters: [{ propertyId: "prop-1", operator: "is", value: "value" }] },
+      },
+    ],
     rows: [
       {
         id: "row-1",
@@ -126,6 +133,9 @@ describe("getLinkedDatabaseAction — guest scope", () => {
     expect(result.databasePageId).toBe("db-1");
     expect(result.rows.map((row) => row.id)).toEqual(["row-1"]);
     expect(result.properties.map((property) => property.name)).toEqual(["Name"]);
+    expect(result.views[0]?.config).toEqual({
+      filters: [{ propertyId: "prop-1", operator: "is", value: "value" }],
+    });
   });
 
   it("hides a database whose only shared page is one of its rows", async () => {

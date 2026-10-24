@@ -77,9 +77,10 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Row side-peek (labelled property panel with inline editors) · [ ] sub-items,
   dependencies, calculations footer
 - [~] Database templates (create-from-template + template manager wired) — matrix 🧭
-- [~] Linked databases (the editor's linked-database node view renders inline; view
-  identity model pending) · [~] recurring templates (`POST /api/cron/templates`,
-  fail-closed materializer; matrix 🧭 pending scheduler rows) · [x] view config (above)
+- [~] Linked databases (source-view binding, filters/sorts, per-node synced/detached
+  overrides, stale-id fallback; write-through and in-block override editing pending)
+  · [~] recurring templates (`POST /api/cron/templates`, fail-closed materializer;
+  matrix 🧭 pending scheduler rows) · [x] view config (above)
 - [~] CSV import/export (Export/Import CSV live in the full-page database toolbar +
   `src/lib/importers.ts`; matrix section-3 rows 🧭)
 - [ ] Database lock · [~] button properties (per-row button config UI exists) + basic
@@ -207,8 +208,8 @@ Ordered by dependency and impact. Every item maps to rows in
   notes appended — re-verify rows first, then two-way pairs, cell correctness, e2e).
 - [ ] Formula engine M1–M3 per `formula-engine.md` (B22): editor UX + autocomplete,
   function coverage, error states, caching — section 5 reads 0/16 today.
-- [ ] Groups/aggregation + calculations footer, sub-items/dependencies, linked-database
-  view identity, database-template rows.
+- [ ] Groups/aggregation + calculations footer, sub-items/dependencies,
+  linked-database write path, database-template rows.
 - [ ] Closes B17's 13 property partials and flips section 4's remaining 🟡/🧭.
 
 ## Milestone 8 — Platform hardening (Nov–Dec 2026)

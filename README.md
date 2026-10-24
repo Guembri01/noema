@@ -122,7 +122,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Page permissions | Per-member page access (**Can edit / Can view / No access**) that overrides the workspace role for that page |
 | Automations | **Button properties** (set another property to a value on click) and **page locking** (read-only pages/databases) |
 | Importers | **Trello JSON** → database (lists → status options), **Markdown .zip** → nested pages, **Word .docx** → page, Markdown file, **Notion API** (`POST /api/import/notion` — integration token + nested child pages) |
-| Editor blocks | … + **linked database** (embedded read-only view of another database) |
+| Editor blocks | … + **linked database** (source-view-bound, filter/sort-aware, with synced/detached overrides) |
 | Accessibility | Visible focus rings, a **skip-to-content** link, `lang`/`dir` from locale, labelled landmarks/navs/controls, and a **WCAG contrast-audited palette** (`npm run check:a11y`) |
 | Formulas | FORMULA properties with an expression engine (`prop("Name")`, `+ - * / %`, comparisons, `if`, `concat`, `round`, `min/max`, `abs`, `length`, `upper/lower`, `contains`, `empty`, `now/today`) |
 | Quality | **Vitest** unit tests for the pure logic (block serialisation, database query engine), **Playwright** e2e, `tsc --noEmit`, ESLint, `npm run check:fast` inner-loop gate and `npm run check:coherence` drift gate |

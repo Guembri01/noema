@@ -8,7 +8,14 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
-import { formatCell, type QueryProperty, type ViewConfig } from "@/lib/database-query";
+import {
+  applyView,
+  formatCell,
+  normalizeViewConfig,
+  type QueryProperty,
+  type QueryRow,
+  type ViewConfig,
+} from "@/lib/database-query";
 import { t } from "@/lib/i18n";
 import {
   convertMode,
@@ -85,6 +92,8 @@ export const LinkedDatabase = Node.create<LinkedDatabaseOptions>({
       mode: { default: "synced", rendered: false },
       /** The bound source view (`@/lib/linked-view` `sourceViewId`). */
       sourceViewId: { default: null, rendered: false },
+      /** Per-instance display overrides (`@/lib/linked-view` `overrides`). */
+      overrides: { default: null, rendered: false },
       /** Rows the inline shell grows to before scrolling (`@/lib/inline-database`). */
       maxRows: { default: null, rendered: false },
     };
@@ -235,6 +244,40 @@ export function toggleLinkedMode(
   return convertMode(linked, linked.mode === "synced" ? "detached" : "synced", sourceConfig);
 }
 
+/**
+ * Apply a source view's saved filters/sorts to the linked rows, preserving the
+ * original row objects (and their `values` maps) in the returned order. A
+ * linked view is a real view: a filter that hides a row in the database must
+ * hide it in the embed too.
+ */
+export function linkedRowsForView(
+  rows: LinkedDatabaseData["rows"],
+  properties: LinkedDatabaseData["properties"],
+  config: ViewConfig | null,
+): LinkedDatabaseData["rows"] {
+  if (!config) return rows;
+  const queryProperties: QueryProperty[] = properties.map((property) => ({
+    id: property.id,
+    name: property.name,
+    type: property.type,
+    config: (property.config ?? null) as QueryProperty["config"],
+  }));
+  const queryRows: QueryRow[] = rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    icon: row.icon,
+    propertyValues: Object.entries(row.values).map(([propertyId, value]) => ({
+      propertyId,
+      value,
+    })),
+  }));
+  const ordered = applyView(queryRows, queryProperties, config).rows;
+  const byId = new Map(rows.map((row) => [row.id, row] as const));
+  return ordered
+    .map((row) => byId.get(row.id))
+    .filter((row): row is LinkedDatabaseData["rows"][number] => row !== undefined);
+}
+
 function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: NodeViewProps) {
   const options = extension.options as LinkedDatabaseOptions;
   const locale = options.locale ?? "en";
@@ -344,7 +387,13 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
                   // `getLinkedDatabaseAction` once the id lands.
                   setQuery("");
                   setPicking(false);
-                  updateAttributes({ databasePageId: option.id, title: option.title });
+                  updateAttributes({
+                    databasePageId: option.id,
+                    title: option.title,
+                    sourceViewId: null,
+                    mode: "synced",
+                    overrides: null,
+                  });
                 }}
                 className="noema-linked-result"
               >
@@ -368,18 +417,21 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   }
 
   const primary = data?.properties[0];
-  // fix04 — the linked-view identity + inline shell for this instance. Mode and
-  // the bound source view come from the node's attributes; the shell height,
-  // scroll flag and visible row window replace the fixed `slice(0, 20)`.
-  const sourceRows = data?.rows ?? [];
+  // Bind to the node's source view, falling back to the source's first view
+  // when that id is stale or absent. The chosen view's filters/sorts run
+  // through the same `applyView` engine as a full database page.
+  const sourceView =
+    data?.views.find((view) => view.id === node.attrs.sourceViewId) ?? data?.views[0] ?? null;
+  const sourceConfig = sourceView ? normalizeViewConfig(sourceView.config) : null;
+  const sourceRows = linkedRowsForView(data?.rows ?? [], data?.properties ?? [], sourceConfig);
   const embed = linkedEmbedModel({
     instanceId: databasePageId,
     databaseId: databasePageId,
-    sourceViewId: node.attrs.sourceViewId as string | null,
+    sourceViewId: sourceView?.id ?? null,
     mode: node.attrs.mode as string | null,
-    overrides: null,
-    sourceConfig: null,
-    sourceViewType: data?.views[0]?.type ?? null,
+    overrides: node.attrs.overrides,
+    sourceConfig,
+    sourceViewType: sourceView?.type ?? null,
     maxRows: typeof node.attrs.maxRows === "number" ? (node.attrs.maxRows as number) : 20,
     contentHeight: sourceRows.length * DEFAULT_ROW_HEIGHT,
     viewportHeight: 0,
@@ -399,7 +451,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   // `list` get their own read-only renderers below; `gallery` (and any other or
   // absent view type — board, calendar, …) uses the card grid this node has
   // always rendered.
-  const firstViewType = data?.views[0]?.type?.toUpperCase();
+  const firstViewType = sourceView?.type?.toUpperCase();
   const viewMode: "table" | "list" | "gallery" =
     firstViewType === "TABLE" ? "table" : firstViewType === "LIST" ? "list" : "gallery";
   // The shared view-presets engine reads lower-case property types (e.g.
@@ -430,7 +482,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   )
     .map((id) => data?.properties.find((property) => property.id === id))
     .filter(
-      (property): property is { id: string; name: string; type: string } =>
+      (property): property is LinkedDatabaseData["properties"][number] =>
         property !== undefined,
     );
 
@@ -442,12 +494,37 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             {data?.icon ?? "🗂️"}{" "}
             {String(node.attrs.title ?? data?.title ?? t(locale, "linkedDatabaseFallback"))}
           </span>
+          {data && data.views.length > 0 && (
+            <select
+              aria-label={t(locale, "linkedViewLabel")}
+              className="noema-linked-open noema-linked-view"
+              value={sourceView?.id ?? ""}
+              onChange={(event) => {
+                // Rebinding starts from the source again: a detached instance
+                // must not carry the previous view's filters into the new one.
+                updateAttributes({
+                  sourceViewId: event.target.value,
+                  mode: "synced",
+                  overrides: null,
+                });
+              }}
+            >
+              {data.views.map((view) => (
+                <option key={view.id} value={view.id}>
+                  {view.name || t(locale, "untitled")}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             aria-pressed={embed.linked.mode === "detached"}
             aria-label={t(locale, "syncedViewHint")}
             title={t(locale, "syncedViewHint")}
-            onClick={() => updateAttributes({ mode: toggleLinkedMode(embed.linked, null).mode })}
+            onClick={() => {
+              const next = toggleLinkedMode(embed.linked, embed.effective);
+              updateAttributes({ mode: next.mode, overrides: next.overrides });
+            }}
             className="noema-linked-open"
           >
             {embed.linked.mode}
@@ -571,7 +648,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
                                   id: property.id,
                                   name: property.name,
                                   type: property.type,
-                                  config: null,
+                                  config: (property.config ?? null) as QueryProperty["config"],
                                 } as QueryProperty,
                               ) || "—"}
                             </dd>

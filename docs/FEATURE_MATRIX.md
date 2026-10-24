@@ -102,7 +102,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
+| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. Per-instance filter/sort editing and write-through are still pending. |
 | Page link mention | Inline link to another page. | ✅ | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | ✅ | Planned; block-id resolution needed. |
 | Date mention | Inline date chip. | ✅ | Mention menu inserts weekday-style chips; `dateMention` supports short/long/weekday styles + explicit locale, id stays ISO (unit-tested). |
@@ -235,7 +235,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Open row in side peek | Preview row in a side drawer. | ✅ | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
 | Inline database | Database embedded in a page body. | ✅ | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
 | Full-page database | Database as its own page. | ✅ | One toolbar above the table: view tabs + per-view menu (rename / duplicate / change type), Filter, Sort, Group, Colour and Properties controls, New row, Templates, New property, Deleted rows, Export/Import CSV and a live row count. |
-| Linked database | Reuse a database elsewhere. | 🟡 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
+| Linked database | Reuse a database elsewhere. | 🟡 | Source-view binding, filters/sorts, view picker, synced/detached overrides and stale-id fallback shipped; linked-mode row writes and the in-block override editor remain (R89.14/R89.15). Covered by `linked-database.fix04.test.ts` and the guest-scope action test. |
 | Load limit / row pagination | Limit rows shown per view. | ✅ | The ticket tracker loads **100 rows per page** with keyset pagination (`getTicketsPage` + `loadMoreTicketsAction`) and a *Load more* control that disappears at the end; an e2e with 120 tickets proves no row is repeated or dropped. Databases load a bounded set. |
 | Show/hide properties | Choose visible columns. | ✅ | The Properties menu toggles columns per view (primary column pinned, hidden count shown) and the list is stored in the view config, so the same columns come back after a reload. e2e: *persists show/hide properties and filters across a reload* + `visibleColumns` unit tests. |
 | Freeze columns | Pin leading columns while scrolling. | ✅ | First column pinned with `position: sticky` while the table scrolls horizontally — on by default and toggled per view from the Properties menu (multi-column pinning not offered). e2e asserts the sticky header after reload. |
@@ -769,28 +769,28 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 85 | 13 | 0 | 2 | 100 |
-| 2. Text formatting | 19 | 2 | 0 | 1 | 22 |
-| 3. Databases | 42 | 11 | 0 | 0 | 53 |
-| 4. Properties | 25 | 10 | 0 | 1 | 36 |
+| 1. Editor & blocks | 86 | 12 | 0 | 2 | 100 |
+| 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
+| 3. Databases | 44 | 9 | 0 | 0 | 53 |
+| 4. Properties | 27 | 8 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
-| 7. Collaboration | 20 | 6 | 0 | 0 | 26 |
-| 8. Sharing & permissions | 18 | 4 | 0 | 0 | 22 |
-| 9. Workspaces & structure | 19 | 4 | 0 | 0 | 23 |
+| 7. Collaboration | 21 | 5 | 0 | 0 | 26 |
+| 8. Sharing & permissions | 20 | 2 | 0 | 0 | 22 |
+| 9. Workspaces & structure | 20 | 3 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
-| 12. Import & export | 19 | 3 | 0 | 0 | 22 |
-| 13. Integrations & API | 15 | 7 | 0 | 0 | 22 |
+| 12. Import & export | 22 | 0 | 0 | 0 | 22 |
+| 13. Integrations & API | 16 | 6 | 0 | 0 | 22 |
 | 14. AI | 7 | 9 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
 | 16. Navigation & UX | 44 | 3 | 0 | 2 | 49 |
 | 17. Data model & platform | 23 | 14 | 0 | 0 | 37 |
-| 18. Pricing & plan-gated features | 0 | 14 | 0 | 0 | 14 |
+| 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **432** | **109** | **0** | **22** | **563** |
+| **Total** | **455** | **86** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

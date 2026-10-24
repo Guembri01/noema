@@ -10,8 +10,8 @@ export type LinkedDatabaseData = {
   databasePageId: string;
   title: string;
   icon: string | null;
-  properties: { id: string; name: string; type: string }[];
-  views: { id: string; name: string; type: string }[];
+  properties: { id: string; name: string; type: string; config: unknown }[];
+  views: { id: string; name: string; type: string; config: unknown }[];
   rows: { id: string; title: string; icon: string | null; values: Record<string, unknown> }[];
 };
 
@@ -94,11 +94,13 @@ export async function getLinkedDatabaseAction(
       id: property.id,
       name: property.name,
       type: property.type,
+      config: property.config ?? null,
     })),
     views: database.views.map((view) => ({
       id: view.id,
       name: view.name,
       type: view.type,
+      config: view.config ?? null,
     })),
     rows: database.rows.map((row) => ({
       id: row.id,

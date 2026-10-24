@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 454 implemented · 87 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 455 implemented · 86 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **87** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **86** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -13,7 +13,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | 1 | **Filter tree UI** | The AND/OR filter tree already evaluates; the nested group builder UI is not exposed. | 3. Databases |
 | 2 | **Conditional formatting** | ColorRule is modelled and evaluated; the rule-authoring and render path are partial. | 3. Databases |
 | 3 | **Form view** | No ViewType.FORM yet; the builder + public submit path are spec'd but unwired. | 3. Databases |
-| 4 | **Linked database views** | The read-only node exists; view identity and per-instance overrides are missing. | 3. Databases |
+| 4 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
 | 5 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
 | 6 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
 | 7 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
@@ -43,7 +43,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
+| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. Per-instance filter/sort editing and write-through are still pending. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
@@ -66,7 +66,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
 | Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
-| Linked database | Reuse a database elsewhere. | 🟡 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
+| Linked database | Reuse a database elsewhere. | 🟡 | Source-view binding, filters/sorts, view picker, synced/detached overrides and stale-id fallback shipped; linked-mode row writes and the in-block override editor remain (R89.14/R89.15). Covered by `linked-database.fix04.test.ts` and the guest-scope action test. |
 | Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
@@ -140,7 +140,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 
 ### 13. Integrations & API
 
-15 done · 7 partial · 0 planned
+16 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -148,7 +148,6 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | GitHub integration | Link commits/PRs. | 🟡 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
-| MCP server | Expose workspace to AI agents. | ✅ | 43 token-scoped tools over `/api/mcp`; read-first, write/admin opt-in. See `docs/MCP.md`. |
 | Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
 

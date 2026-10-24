@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { inlineDisplayFor, linkedEmbedModel, toggleLinkedMode } from "./linked-database";
+import {
+  inlineDisplayFor,
+  linkedEmbedModel,
+  linkedRowsForView,
+  toggleLinkedMode,
+} from "./linked-database";
 import type { ViewConfig } from "@/lib/database-query";
 import { DEFAULT_ROW_HEIGHT } from "@/lib/inline-database";
 
@@ -165,5 +170,63 @@ describe("toggleLinkedMode — synced ⇄ detached", () => {
     const embed = linkedEmbedModel({ ...base, mode: "synced", sourceViewType: "TABLE" });
     toggleLinkedMode(embed.linked, source);
     expect(embed.linked.mode).toBe("synced");
+  });
+});
+
+describe("linkedRowsForView - source view filters/sorts", () => {
+  const rows = [
+    {
+      id: "r1",
+      title: "Alpha",
+      icon: null,
+      values: { status: { optionId: "todo" }, estimate: { number: 5 } },
+    },
+    {
+      id: "r2",
+      title: "Beta",
+      icon: null,
+      values: { status: { optionId: "done" }, estimate: { number: 2 } },
+    },
+    {
+      id: "r3",
+      title: "Gamma",
+      icon: null,
+      values: { status: { optionId: "todo" }, estimate: { number: 9 } },
+    },
+  ];
+
+  const properties = [
+    {
+      id: "status",
+      name: "Status",
+      type: "STATUS",
+      config: {
+        options: [
+          { id: "todo", name: "To-do", color: "gray" },
+          { id: "done", name: "Done", color: "green" },
+        ],
+      },
+    },
+    { id: "estimate", name: "Estimate", type: "NUMBER", config: null },
+  ];
+
+  it("applies the chosen view's filter and sort to the embedded rows", () => {
+    const out = linkedRowsForView(rows, properties, {
+      filters: [{ propertyId: "estimate", operator: "gt", value: "4" }],
+      sorts: [{ propertyId: "estimate", direction: "desc" }],
+    });
+    expect(out.map((row) => row.id)).toEqual(["r3", "r1"]);
+  });
+
+  it("returns the original row objects (values map preserved) in view order", () => {
+    const out = linkedRowsForView(rows, properties, {
+      sorts: [{ propertyId: "estimate", direction: "asc" }],
+    });
+    expect(out.map((row) => row.id)).toEqual(["r2", "r1", "r3"]);
+    expect(out[0]).toBe(rows[1]);
+  });
+
+  it("is a no-op when the source has no config", () => {
+    expect(linkedRowsForView(rows, properties, null)).toBe(rows);
   });
 });
