@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   AI_SKILLS,
   SELECTION_TAG,
+  SKILL_LOCALE_NAMES,
   aiSkill,
+  aiSkillLocaleName,
   frameRule,
   frameText,
   textFrameTags,
   type AiSkillId,
 } from "./ai-skills";
+import { LOCALES } from "./i18n";
 import { GALLERY_TEMPLATES, OTHER_TEMPLATES, galleryTemplate } from "./workflow-templates";
 
 /** A frame with a fixed id: the tests pin the wording, not the nonce. */
@@ -63,10 +66,25 @@ describe("AI skill selection", () => {
     const rewrites = AI_SKILLS.filter((skill) => skill.replacesSelection)
       .map((skill) => skill.id)
       .sort();
-    // Explain and Summarize answer alongside the text; the rest replace it.
-    expect(appends).toEqual(["explain", "summarize"]);
-    expect(rewrites).toEqual(["improve", "proofread", "reformat", "shorten", "translate"]);
+    // Explain, Summarize and Continue answer alongside the text; the rest
+    // replace it (R25.20/R25.21).
+    expect(appends).toEqual(["continue", "explain", "summarize"]);
+    expect(rewrites).toEqual([
+      "improve",
+      "proofread",
+      "reformat",
+      "shorten",
+      "simplify",
+      "translate",
+    ]);
     expect(appends.length + rewrites.length).toBe(AI_SKILLS.length);
+  });
+
+  it("keeps the content-skill parity entries (R25.20)", () => {
+    expect(aiSkill("simplify")?.replacesSelection).toBe(true);
+    expect(aiSkill("continue")?.replacesSelection).toBe(false);
+    expect(aiSkill("explain")?.replacesSelection).toBe(false);
+    expect(aiSkill("summarize")?.replacesSelection).toBe(false);
   });
 
   it("instructions open with the skill's own action word", () => {
@@ -74,6 +92,42 @@ describe("AI skill selection", () => {
       const action = skill.label.split(" ")[0].toLowerCase();
       expect(skill.prompt("x", FRAME).toLowerCase()).toContain(action);
     }
+  });
+});
+
+describe("translate targets a requested shipped locale (R25.19)", () => {
+  it("declares exactly one locale-taking skill, and it is translate", () => {
+    const localeSkills = AI_SKILLS.filter((skill) => skill.takesTargetLocale);
+    expect(localeSkills.map((skill) => skill.id)).toEqual(["translate"]);
+  });
+
+  it("names every shipped locale when asked for it", () => {
+    const translate = aiSkill("translate");
+    expect(translate).toBeDefined();
+    for (const locale of LOCALES) {
+      const prompt = translate?.prompt("Bonjour le monde", FRAME, {
+        targetLocale: locale.code,
+      });
+      expect(prompt).toContain(SKILL_LOCALE_NAMES[locale.code]);
+      expect(prompt).toContain(`(${locale.code})`);
+      expect(prompt).toContain("Bonjour le monde");
+    }
+  });
+
+  it("defaults to English and ignores an unknown locale", () => {
+    const translate = aiSkill("translate");
+    expect(translate?.prompt("Bonjour", FRAME)).toContain("English (en)");
+    expect(translate?.prompt("Bonjour", FRAME, { targetLocale: "xx" })).toContain(
+      "English (en)",
+    );
+  });
+
+  it("keeps the locale name map in step with the app locales", () => {
+    expect(Object.keys(SKILL_LOCALE_NAMES).sort()).toEqual(
+      LOCALES.map((locale) => locale.code).sort(),
+    );
+    expect(aiSkillLocaleName("fr")).toBe("French");
+    expect(aiSkillLocaleName("xx")).toBe("xx");
   });
 });
 

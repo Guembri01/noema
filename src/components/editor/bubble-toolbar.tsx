@@ -30,7 +30,13 @@ import { toast } from "sonner";
 import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
 import { blockIdAt } from "@/components/editor/page-editor-blockrefs";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
-import { runAiSkill } from "@/lib/ai-client";
+import { aiSkillMenuEntries } from "@/lib/ai-skill-menu";
+import { runAiSkill, type AiSkillRunOptions } from "@/lib/ai-client";
+import {
+  aiInsertMode,
+  applySkillResult,
+  selectionSkillTarget,
+} from "@/components/editor/ai-skill-actions";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -359,32 +365,31 @@ export function BubbleToolbar({
 
   const [aiPending, startAi] = useTransition();
 
-  const applySkill = (id: AiSkillId) => {
-    const { from, to } = editor.state.selection;
-    const text = editor.state.doc.textBetween(from, to, "\n").trim();
-    if (!text) {
+  const applySkill = (id: AiSkillId, options?: AiSkillRunOptions) => {
+    // A real selection is the target; with no selection the skill runs on the
+    // whole page (the spec's "summarize a page", "translate selection or
+    // page"), and the result always appends so it cannot overwrite the page.
+    const target = selectionSkillTarget(editor);
+    if (!target) {
       toast.error(t(locale, "selectTextFirst"));
       return;
     }
     const skill = AI_SKILLS.find((candidate) => candidate.id === id);
     if (!skill) return;
     startAi(async () => {
-      const result = await runAiSkill(id, text, workspaceId);
+      const result = await runAiSkill(id, target.text, workspaceId, options, locale);
       if ("error" in result) {
         toast.error(result.error);
         return;
       }
-      if (result.replacesSelection) {
-        editor.chain().focus().insertContentAt({ from, to }, result.text).run();
-      } else {
-        editor
-          .chain()
-          .focus()
-          .insertContentAt(to, {
-            type: "paragraph",
-            content: [{ type: "text", text: result.text }],
-          })
-          .run();
+      const mode = aiInsertMode({
+        skillId: id,
+        replacesSelection: result.replacesSelection,
+        scope: target.scope,
+      });
+      if (!applySkillResult(editor, { target, mode, text: result.text })) {
+        toast.error(t(locale, "aiRequestFailed"));
+        return;
       }
       toast.success(`${skill.label} applied`);
     });
@@ -623,24 +628,50 @@ export function BubbleToolbar({
             </button>
           </PopoverTrigger>
         </Tooltip>
-        <PopoverContent align="center" className="w-60 p-1">
-          <div className="flex flex-col">
-            {AI_SKILLS.map((skill) => (
-              <button
-                key={skill.id}
-                type="button"
-                disabled={aiPending}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  setPanel(null);
-                  applySkill(skill.id);
-                }}
-                className="focus-ring u-colors flex flex-col rounded-control px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
-              >
-                <span>{skill.label}</span>
-                <span className="text-xs text-muted">{skill.hint}</span>
-              </button>
-            ))}
+        <PopoverContent align="center" className="w-64 p-1">
+          <div className="flex max-h-80 flex-col overflow-y-auto">
+            {aiSkillMenuEntries().map((entry) =>
+              entry.kind === "translate" ? (
+                <div key="translate" className="mt-1 border-t border-border pt-1">
+                  <div className="px-2 py-1 text-xs font-medium text-muted">
+                    {entry.label}
+                  </div>
+                  <div className="flex flex-col">
+                    {entry.locales.map((choice) => (
+                      <button
+                        key={choice.code}
+                        type="button"
+                        disabled={aiPending}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setPanel(null);
+                          applySkill("translate", { targetLocale: choice.code });
+                        }}
+                        className="focus-ring u-colors flex items-center justify-between rounded-control px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
+                      >
+                        <span>{choice.label}</span>
+                        <span className="text-xs text-muted">{choice.code}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  key={entry.id}
+                  type="button"
+                  disabled={aiPending}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setPanel(null);
+                    applySkill(entry.id);
+                  }}
+                  className="focus-ring u-colors flex flex-col rounded-control px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
+                >
+                  <span>{entry.label}</span>
+                  <span className="text-xs text-muted">{entry.hint}</span>
+                </button>
+              ),
+            )}
           </div>
         </PopoverContent>
       </Popover>

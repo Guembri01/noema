@@ -298,6 +298,17 @@ export async function POST(request: Request) {
   const skill = resolveSkill(body.skillId);
   if (!skill) return NextResponse.json({ error: "Unknown skill." }, { status: 400 });
 
+  // Translate must target one of the five shipped locales. An absent value
+  // keeps the spec default (English); a value that is not shipped is refused
+  // instead of silently translating somewhere else (R25.19).
+  if (
+    skill.writing === "translate" &&
+    body.targetLocale !== undefined &&
+    !isLocale(body.targetLocale)
+  ) {
+    return NextResponse.json({ error: "Unsupported target locale." }, { status: 400 });
+  }
+
   const text = (body.text ?? "").trim().slice(0, MAX_TEXT_CHARS);
   if (!text) return NextResponse.json({ error: "text is required." }, { status: 400 });
 

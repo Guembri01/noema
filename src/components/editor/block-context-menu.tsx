@@ -31,7 +31,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PromptDialog } from "@/components/prompt-dialog";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
-import { runAiSkill } from "@/lib/ai-client";
+import { aiSkillMenuEntries } from "@/lib/ai-skill-menu";
+import { runAiSkill, type AiSkillRunOptions } from "@/lib/ai-client";
+import {
+  aiInsertMode,
+  applySkillResult,
+  blockSkillTarget,
+  pageSkillTarget,
+} from "@/components/editor/ai-skill-actions";
 import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
 import {
   BLOCK_COLOR_CATALOGUE,
@@ -697,36 +704,61 @@ export function BlockContextMenu({
     editor.view.dispatch(tr);
     editor.chain().setNodeSelection(insertAt).run();
   };
-  const aiSkill = (id: AiSkillId) => {
+  const aiSkill = (id: AiSkillId, options?: AiSkillRunOptions) => {
     if (pos === null) return;
-    const node = editor.state.doc.nodeAt(pos);
-    if (!node) return;
-    const text = node.textContent.trim();
-    if (!text) {
+    const target = blockSkillTarget(editor, pos);
+    if (!target) {
       toast.error(t(locale, "nothingToWorkWith"));
       return;
     }
     const skill = AI_SKILLS.find((candidate) => candidate.id === id);
     if (!skill) return;
     startTransition(async () => {
-      const result = await runAiSkill(id, text, workspaceId);
+      const result = await runAiSkill(id, target.text, workspaceId, options, locale);
       if ("error" in result) {
         toast.error(result.error);
         return;
       }
-      const range = innerRange(pos);
-      if (!range) return;
-      if (result.replacesSelection) {
-        editor.chain().focus().setTextSelection(range).insertContent(result.text).run();
-      } else {
-        editor
-          .chain()
-          .focus()
-          .insertContentAt(pos + node.nodeSize, {
-            type: "paragraph",
-            content: [{ type: "text", text: result.text }],
-          })
-          .run();
+      const mode = aiInsertMode({
+        skillId: id,
+        replacesSelection: result.replacesSelection,
+        scope: target.scope,
+      });
+      if (!applySkillResult(editor, { target, mode, text: result.text })) {
+        toast.error(t(locale, "aiRequestFailed"));
+        return;
+      }
+      toast.success(`${skill.label} applied`);
+    });
+  };
+
+  /**
+   * Run a skill on the whole page instead of the block under the menu. The
+   * result appends at the end of the document, so "Summarize page" /
+   * "Translate page" can never overwrite the page they describe.
+   */
+  const aiPageSkill = (id: AiSkillId, options?: AiSkillRunOptions) => {
+    const target = pageSkillTarget(editor);
+    if (!target) {
+      toast.error(t(locale, "nothingToWorkWith"));
+      return;
+    }
+    const skill = AI_SKILLS.find((candidate) => candidate.id === id);
+    if (!skill) return;
+    startTransition(async () => {
+      const result = await runAiSkill(id, target.text, workspaceId, options, locale);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      const mode = aiInsertMode({
+        skillId: id,
+        replacesSelection: result.replacesSelection,
+        scope: target.scope,
+      });
+      if (!applySkillResult(editor, { target, mode, text: result.text })) {
+        toast.error(t(locale, "aiRequestFailed"));
+        return;
       }
       toast.success(`${skill.label} applied`);
     });
@@ -850,11 +882,49 @@ export function BlockContextMenu({
               <Sparkles className="h-4 w-4 text-muted" /> {t(locale, "askAI")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
-              {AI_SKILLS.map((skill) => (
-                <DropdownMenuItem key={skill.id} onSelect={() => aiSkill(skill.id)}>
-                  {skill.label}
-                </DropdownMenuItem>
-              ))}
+              {aiSkillMenuEntries().map((entry) =>
+                entry.kind === "translate" ? (
+                  <Fragment key="translate">
+                    {entry.locales.map((choice) => (
+                      <DropdownMenuItem
+                        key={choice.code}
+                        onSelect={() =>
+                          aiSkill("translate", { targetLocale: choice.code })
+                        }
+                      >
+                        {entry.label}: {choice.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </Fragment>
+                ) : (
+                  <DropdownMenuItem key={entry.id} onSelect={() => aiSkill(entry.id)}>
+                    {entry.label}
+                  </DropdownMenuItem>
+                ),
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => aiPageSkill("summarize")}>
+                Summarize page
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => aiPageSkill("continue")}>
+                Continue page
+              </DropdownMenuItem>
+              {aiSkillMenuEntries()
+                .filter((entry) => entry.kind === "translate")
+                .flatMap((entry) =>
+                  entry.kind === "translate"
+                    ? entry.locales.map((choice) => (
+                        <DropdownMenuItem
+                          key={`page-${choice.code}`}
+                          onSelect={() =>
+                            aiPageSkill("translate", { targetLocale: choice.code })
+                          }
+                        >
+                          Translate page: {choice.label}
+                        </DropdownMenuItem>
+                      ))
+                    : [],
+                )}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
 

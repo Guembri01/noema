@@ -23,7 +23,20 @@ export type AiSkillId =
   | "reformat"
   | "summarize"
   | "shorten"
-  | "translate";
+  | "translate"
+  | "continue"
+  | "simplify";
+
+/**
+ * Optional knobs of a skill prompt. `targetLocale` is the only knob the
+ * registry itself needs: translate is the one built-in skill whose instruction
+ * changes with the request (R25.19). The writing builders in `./ai-writing`
+ * expose the richer set (tone, style, audience, maxWords).
+ */
+export type AiSkillPromptOptions = {
+  /** A shipped locale code (`en`, `fr`, `es`, `de`, `ar`). */
+  targetLocale?: string;
+};
 
 export type AiSkill = {
   id: AiSkillId;
@@ -34,10 +47,45 @@ export type AiSkill = {
    * rewrite, not instructions, and the frame names the block (see
    * `frameText`).
    */
-  prompt: (text: string, frame: TextFrame) => string;
+  prompt: (text: string, frame: TextFrame, options?: AiSkillPromptOptions) => string;
   /** Skills that rewrite the selection replace it; the others append. */
   replacesSelection: boolean;
+  /**
+   * Whether the skill needs a target locale. The menus use this to render the
+   * translate locale chooser instead of a single "Translate" row.
+   */
+  takesTargetLocale?: boolean;
 };
+
+/**
+ * English names of the five shipped locales (`./i18n.ts`).
+ *
+ * The registry imports nothing on purpose (`scripts/check-ai.mjs` loads it with
+ * Node's type stripping), so the names live here and `./ai-writing` reuses them
+ * instead of keeping a second copy.
+ */
+export const SKILL_LOCALE_NAMES = {
+  en: "English",
+  fr: "French",
+  es: "Spanish",
+  de: "German",
+  ar: "Arabic",
+} as const;
+
+export type AiSkillLocale = keyof typeof SKILL_LOCALE_NAMES;
+
+/** The English name of a locale code; unknown codes fall back to the code. */
+export function aiSkillLocaleName(code: string): string {
+  return SKILL_LOCALE_NAMES[code as AiSkillLocale] ?? code;
+}
+
+/** The shipped locale a translate request targets; English by default. */
+function translateLocale(options?: AiSkillPromptOptions): AiSkillLocale {
+  const code = options?.targetLocale;
+  return code !== undefined && code in SKILL_LOCALE_NAMES
+    ? (code as AiSkillLocale)
+    : "en";
+}
 
 /* -------------------------------------------------------------------------- *
  * The frame around the caller's text
@@ -163,6 +211,14 @@ export const AI_SKILLS: AiSkill[] = [
       `Make the text below noticeably shorter while keeping every fact. Return only the shortened text.\n\n${frameText(text, frame)}`,
   },
   {
+    id: "simplify",
+    label: "Simplify",
+    hint: "Plain-language rewrite",
+    replacesSelection: true,
+    prompt: (text, frame) =>
+      `Simplify the text below. Keep every fact, use short sentences and plain words, and return only the simplified text.\n\n${frameText(text, frame)}`,
+  },
+  {
     id: "explain",
     label: "Explain",
     hint: "Plain-language explanation",
@@ -179,12 +235,26 @@ export const AI_SKILLS: AiSkill[] = [
       `Summarize the text below as 3–6 short bullet points.\n\n${frameText(text, frame)}`,
   },
   {
+    id: "continue",
+    label: "Continue writing",
+    hint: "Keep the draft going",
+    replacesSelection: false,
+    prompt: (text, frame) =>
+      `Continue writing the text below in the author's own voice. Write at most 120 additional words and return only the continuation, without repeating the original.\n\n${frameText(text, frame)}`,
+  },
+  {
     id: "translate",
     label: "Translate",
-    hint: "Translate to English",
+    hint: "Translate to a shipped locale",
     replacesSelection: true,
-    prompt: (text, frame) =>
-      `Translate the text below into English, preserving formatting and tone. Return only the translation.\n\n${frameText(text, frame)}`,
+    takesTargetLocale: true,
+    prompt: (text, frame, options) => {
+      const code = translateLocale(options);
+      return (
+        `Translate the text below into ${SKILL_LOCALE_NAMES[code]} (${code}), ` +
+        `preserving formatting and tone. Return only the translation.\n\n${frameText(text, frame)}`
+      );
+    },
   },
 ];
 

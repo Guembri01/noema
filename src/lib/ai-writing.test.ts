@@ -97,6 +97,11 @@ describe("buildTranslatePrompt", () => {
     }
   });
 
+  it("defaults to English when no target is requested", () => {
+    const { user } = buildTranslatePrompt({ text: "Bonjour", frame: FRAME });
+    expect(user).toContain("English (en)");
+  });
+
   it("defaults to a neutral tone and allows an override", () => {
     expect(buildTranslatePrompt({ text: "x", targetLocale: "fr", frame: FRAME }).user).toContain("neutral");
     expect(

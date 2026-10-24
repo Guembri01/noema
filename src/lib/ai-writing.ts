@@ -14,7 +14,12 @@
  * is part of the input, so a builder can never produce an unframed prompt.
  */
 
-import { frameRule, frameText, type TextFrame } from "./ai-skills";
+import {
+  SKILL_LOCALE_NAMES,
+  frameRule,
+  frameText,
+  type TextFrame,
+} from "./ai-skills";
 import { isLocale, type LocaleCode } from "./i18n";
 
 export type AiWritingKind = "summarize" | "translate" | "continue" | "simplify" | "explain";
@@ -56,13 +61,7 @@ const MAX_TOKENS_CAP = 4096;
 const BASE_SYSTEM =
   "You are Noema's writing assistant. Follow the instruction exactly and return only the requested output.";
 
-const LOCALE_ENGLISH_NAMES: Record<LocaleCode, string> = {
-  en: "English",
-  fr: "French",
-  es: "Spanish",
-  de: "German",
-  ar: "Arabic",
-};
+const LOCALE_ENGLISH_NAMES: Record<LocaleCode, string> = SKILL_LOCALE_NAMES;
 
 const SUMMARY_INSTRUCTIONS: Record<SummarizeStyle, (maxWords: number) => string> = {
   bullets: (maxWords) => `Summarize the text below as short bullet points (at most ${maxWords} words total).`,
@@ -124,20 +123,22 @@ export function buildSummarizePrompt(input: {
 
 export function buildTranslatePrompt(input: {
   text: string;
-  targetLocale: LocaleCode;
+  /** The shipped locale to translate into; English when omitted. */
+  targetLocale?: LocaleCode;
   tone?: WritingTone;
   /** The frame the text is put into (see `frameText` in `./ai-skills`). */
   frame: TextFrame;
 }): PromptBuild {
-  if (!isLocale(input.targetLocale)) {
-    throw new Error(`Unsupported target locale: ${String(input.targetLocale)}`);
+  const targetLocale = input.targetLocale ?? "en";
+  if (!isLocale(targetLocale)) {
+    throw new Error(`Unsupported target locale: ${String(targetLocale)}`);
   }
   const tone = input.tone ?? "neutral";
-  const name = LOCALE_ENGLISH_NAMES[input.targetLocale];
+  const name = LOCALE_ENGLISH_NAMES[targetLocale];
   return {
     system: `${BASE_SYSTEM} You are a professional translator. ${frameRule(input.frame)}`,
     user:
-      `Translate the text below into ${name} (${input.targetLocale}) with a ${tone} tone, ` +
+      `Translate the text below into ${name} (${targetLocale}) with a ${tone} tone, ` +
       `preserving formatting. Return only the translation.\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("translate", estimateTokens(input.text) * 2 + 64),
   };

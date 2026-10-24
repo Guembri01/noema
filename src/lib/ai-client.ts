@@ -8,6 +8,20 @@ export type AiSkillResponse =
   | { text: string; replacesSelection: boolean; skill: string }
   | { error: string };
 
+/**
+ * Optional per-request knobs of a built-in skill. The route validates every
+ * value again (`src/lib/validation.ts`, `aiSkillRequestSchema`); the client
+ * only forwards the ones the caller set.
+ */
+export type AiSkillRunOptions = {
+  /** Translate target — one of the five shipped locale codes (R25.19). */
+  targetLocale?: string;
+  tone?: string;
+  style?: string;
+  audience?: string;
+  maxWords?: number;
+};
+
 export async function runAiText(
   prompt: string,
   locale: string = "en",
@@ -39,13 +53,14 @@ export async function runAiSkill(
   skillId: string,
   text: string,
   workspaceId?: string,
+  options: AiSkillRunOptions = {},
   locale: string = "en",
 ): Promise<AiSkillResponse> {
   try {
     const response = await fetch("/api/ai/skills", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ skillId, text, workspaceId }),
+      body: JSON.stringify({ skillId, text, workspaceId, ...options }),
     });
     const data = (await response.json().catch(() => null)) as
       | { text?: string; replacesSelection?: boolean; skill?: string; error?: string }
