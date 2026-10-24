@@ -71,11 +71,13 @@ export function SsoSettings({
   locale,
   connections,
   domains,
+  activity = [],
 }: {
   workspaceId: string;
   locale: string;
   connections: SsoConnectionRow[];
   domains: VerifiedDomainRow[];
+  activity?: { id: string; action: string; createdAt: string }[];
 }) {
   const router = useRouter();
   const { run, pending } = useAction(locale);
@@ -350,6 +352,22 @@ export function SsoSettings({
           </Button>
         </div>
       </Card>
+
+      {activity.length > 0 && (
+        <div className="mt-8">
+          <h3 className="text-base font-semibold">Recent SSO activity</h3>
+          <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
+            {activity.map((entry) => (
+              <li key={entry.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <span className="font-mono text-xs">{entry.action}</span>
+                <time dateTime={entry.createdAt} className="text-xs text-muted">
+                  {entry.createdAt}
+                </time>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-8">
         <h3 className="text-base font-semibold">Verified domains</h3>

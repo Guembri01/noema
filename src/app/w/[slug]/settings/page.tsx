@@ -266,6 +266,14 @@ export default async function SettingsPage({
         ? ""
         : JSON.stringify(row.roleRules),
   }));
+  const ssoActivity = manage
+    ? await prisma.activity.findMany({
+        where: { workspaceId: workspace.id, action: { startsWith: "sso." } },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        select: { id: true, action: true, createdAt: true },
+      })
+    : [];
   const verifiedDomains: VerifiedDomainRow[] = verifiedDomainRows.map((row) => ({
     id: row.id,
     domain: row.domain,
@@ -617,6 +625,11 @@ export default async function SettingsPage({
           locale={locale}
           connections={ssoConnections}
           domains={verifiedDomains}
+          activity={ssoActivity.map((entry) => ({
+            id: entry.id,
+            action: entry.action,
+            createdAt: entry.createdAt.toISOString(),
+          }))}
         />
       )}
 

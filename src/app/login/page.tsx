@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { samlEnabled } from "@/lib/sso/saml";
 import { AuthForm } from "@/components/auth-form";
 import { AuthShell } from "@/components/auth-shell";
+import { SamlLoginChooser } from "@/components/saml-login-chooser";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -15,6 +17,29 @@ export default async function LoginPage({
   if (await getCurrentUser()) redirect("/app");
   const { error, next } = await searchParams;
   const saml = samlEnabled(process.env) && Boolean(process.env.AUTH_SAML_CERT?.trim());
+  const samlChoices = (
+    await prisma.ssoConnection.findMany({
+      where: {
+        enabled: true,
+        verifiedDomains: { some: { verifiedAt: { not: null } } },
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        workspace: { select: { name: true } },
+        verifiedDomains: {
+          where: { verifiedAt: { not: null } },
+          select: { domain: true },
+        },
+      },
+    })
+  ).map((connection) => ({
+    id: connection.id,
+    name: connection.name,
+    workspaceName: connection.workspace.name,
+    domains: connection.verifiedDomains.map((domain) => domain.domain),
+  }));
   return (
     <AuthShell
       title="Welcome back"
@@ -41,14 +66,16 @@ export default async function LoginPage({
           Sign in with SSO
         </a>
       )}
-      {saml && (
+      {samlChoices.length > 0 ? (
+        <SamlLoginChooser choices={samlChoices} />
+      ) : saml ? (
         <a
           href="/api/auth/saml/start"
           className="mt-2 block text-center text-sm text-accent hover:underline"
         >
           Sign in with SAML SSO
         </a>
-      )}
+      ) : null}
     </AuthShell>
   );
 }

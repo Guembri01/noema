@@ -17,7 +17,10 @@ import {
   samlIdentityProfile,
   samlStrategy,
 } from "@/lib/sso/saml";
-import { ensureSamlMembership } from "@/server/sso-membership";
+import {
+  ensureSamlMembership,
+  type SamlMembershipRole,
+} from "@/server/sso-membership";
 import { claimSamlAssertion } from "@/server/sso-replay";
 
 export const runtime = "nodejs";
@@ -123,14 +126,32 @@ export async function POST(request: Request) {
     return failure(origin);
   }
 
-  // Optional directory-driven auto-join. The mapping may grant ADMIN/MEMBER,
-  // never OWNER; an existing OWNER is left untouched so a login can never
-  // demote the human who owns the workspace. Without a configured workspace,
-  // a verified email domain can select the workspace instead (R10.9).
+  // Provisioning order: an unaccepted invite wins over directory/domain rules
+  // (R10.10); then the configured/verified-domain workspace; then no join.
+  // The mapping may grant ADMIN/MEMBER, never OWNER; an existing OWNER is left
+  // untouched so a login can never demote the human who owns the workspace.
   const groups = samlGroups(profile, settings.settings);
-  const role = mapSamlGroupsToRole(settings.settings.roleRules, groups);
+  let role: SamlMembershipRole = mapSamlGroupsToRole(
+    settings.settings.roleRules,
+    groups,
+  );
   let workspaceId = settings.settings.workspaceId;
-  if (!workspaceId) {
+  let acceptedInviteId: string | null = null;
+
+  const invite = await prisma.invite.findFirst({
+    where: {
+      email: identity.email,
+      acceptedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, workspaceId: true, role: true },
+  });
+  if (invite) {
+    workspaceId = invite.workspaceId;
+    role = invite.role === "OWNER" ? "ADMIN" : invite.role;
+    acceptedInviteId = invite.id;
+  } else if (!workspaceId) {
     const domain = emailDomain(identity.email);
     if (domain) {
       const verified = await prisma.verifiedDomain.findFirst({
@@ -144,6 +165,12 @@ export async function POST(request: Request) {
   if (workspaceId) {
     try {
       await ensureSamlMembership(workspaceId, userId, role);
+      if (acceptedInviteId) {
+        await prisma.invite.update({
+          where: { id: acceptedInviteId },
+          data: { acceptedAt: new Date() },
+        });
+      }
     } catch {
       return failure(origin);
     }

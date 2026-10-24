@@ -6,7 +6,7 @@
 
 import { prisma } from "@/lib/db";
 
-export type SamlMembershipRole = "MEMBER" | "ADMIN";
+export type SamlMembershipRole = "MEMBER" | "ADMIN" | "GUEST";
 
 export async function ensureSamlMembership(
   workspaceId: string,

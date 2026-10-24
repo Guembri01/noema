@@ -215,8 +215,9 @@ Ordered by dependency and impact. Every item maps to rows in
   pagination, JIT membership, deprovisioning and owner protection.
 - [x] **SAML T10.8 (Groups half)** — SCIM Groups map to teamspaces (list/get/create/member
   add/remove/replace/delete) and recompute the mapped workspace role.
-- [ ] **SAML polish** — login-page domain chooser, invite precedence for JIT users and a
-  per-connection activity view.
+- [x] **SAML polish** — login-page domain chooser, invite precedence for JIT users and a
+  recent-SSO activity view.
+- [ ] **SAML polish** — dry “Test connection” action and split per-IdP setup pages.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

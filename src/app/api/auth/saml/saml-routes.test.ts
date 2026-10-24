@@ -14,6 +14,7 @@ const prismaMock = vi.hoisted(() => ({
   workspaceMember: { findUnique: vi.fn(), upsert: vi.fn() },
   ssoConnection: { findUnique: vi.fn() },
   verifiedDomain: { findFirst: vi.fn() },
+  invite: { findFirst: vi.fn(), update: vi.fn() },
   samlAssertionSeen: { deleteMany: vi.fn(), create: vi.fn() },
 }));
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -113,6 +114,8 @@ beforeEach(async () => {
   prismaMock.workspaceMember.upsert.mockResolvedValue({ id: "member-1" });
   prismaMock.ssoConnection.findUnique.mockResolvedValue(null);
   prismaMock.verifiedDomain.findFirst.mockResolvedValue(null);
+  prismaMock.invite.findFirst.mockResolvedValue(null);
+  prismaMock.invite.update.mockResolvedValue({ id: "invite-1" });
   prismaMock.samlAssertionSeen.deleteMany.mockResolvedValue({ count: 0 });
   prismaMock.samlAssertionSeen.create.mockResolvedValue({ id: "seen" });
 });
@@ -378,6 +381,28 @@ describe("SAML directory auto-join", () => {
     await samlAcs(formRequest({ SAMLResponse: "signed-response", RelayState: relayState }));
     expect(prismaMock.workspaceMember.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.workspaceMember.upsert).not.toHaveBeenCalled();
+  });
+
+  it("honours an unaccepted invite over directory/domain rules", async () => {
+    prismaMock.invite.findFirst.mockResolvedValue({
+      id: "invite-1",
+      workspaceId: "ws-invite",
+      role: "ADMIN",
+    });
+
+    await samlAcs(formRequest({ SAMLResponse: "signed-response", RelayState: relayState }));
+
+    expect(prismaMock.workspaceMember.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId_userId: { workspaceId: "ws-invite", userId: "new-user" } },
+        create: expect.objectContaining({ role: "ADMIN" }),
+      }),
+    );
+    expect(prismaMock.invite.update).toHaveBeenCalledWith({
+      where: { id: "invite-1" },
+      data: { acceptedAt: expect.any(Date) },
+    });
+    expect(prismaMock.verifiedDomain.findFirst).not.toHaveBeenCalled();
   });
 
   it("joins the workspace selected by a verified email domain", async () => {
