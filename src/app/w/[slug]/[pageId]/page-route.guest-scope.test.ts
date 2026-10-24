@@ -252,6 +252,7 @@ beforeEach(() => {
     templates: [],
     relationData: { options: [], valuesByRow: {}, properties: [] },
     lastEditedBy: {},
+    dependencies: [],
   });
   backlinks.getPageReferences.mockResolvedValue({ linked: [], unlinked: [] });
   db.teamspaceMemberFindMany.mockResolvedValue([]);

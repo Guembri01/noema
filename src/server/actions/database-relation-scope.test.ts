@@ -37,6 +37,7 @@ const h = vi.hoisted(() => {
     template: [],
     activity: [],
     workspaceMember: [],
+    rowDependency: [],
   };
   return {
     tables,
@@ -273,6 +274,9 @@ vi.mock("@/lib/db", () => {
     },
     activity: {
       findMany: (args: Record<string, unknown>) => findMany("activity", args),
+    },
+    rowDependency: {
+      findMany: (args: Record<string, unknown>) => findMany("rowDependency", args),
     },
   };
 

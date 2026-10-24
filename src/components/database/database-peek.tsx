@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Ban, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -235,6 +235,7 @@ export function DatabasePeek({
   onClose,
   dependencySummary,
   blockedByTitles,
+  dependencyEditor,
   subItemCount,
   collapsed,
   onToggleCollapse,
@@ -263,6 +264,8 @@ export function DatabasePeek({
   onClose: () => void;
   dependencySummary: string;
   blockedByTitles: string[];
+  /** Editable direct blocker/blocked lists, supplied only for editors. */
+  dependencyEditor?: ReactNode;
   subItemCount: number;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -354,6 +357,7 @@ export function DatabasePeek({
             {t(locale, "relationBlockedBy")}: {blockedByTitles.join(", ")}
           </p>
         )}
+        {dependencyEditor}
         {/* R89.30 — sub-issue controls: fold children, read the rolled-up
             estimate/done state, or promote a nested row to the top level.
             No-ops until rows carry a `parentId`. */}

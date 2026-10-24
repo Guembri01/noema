@@ -7,6 +7,7 @@ import {
   planRelationWrite,
   rollupCellFromPairs,
   toSubIssueEdges,
+  toTimelineEdges,
 } from "./database-view";
 import type { DBProperty, DBRow } from "@/components/database/database-types";
 import type { QueryRow } from "@/lib/database-query";
@@ -47,6 +48,19 @@ describe("toSubIssueEdges — dependency edges into the sub-issues vocabulary", 
       { blockerId: "x", blockedId: "y" },
     ]);
     expect(toSubIssueEdges([])).toEqual([]);
+  });
+});
+
+describe("toTimelineEdges — dependency edges into the arrow router", () => {
+  it("gives every blocking edge a stable, unique id", () => {
+    expect(toTimelineEdges([{ from: "x", to: "y" }])).toEqual([
+      { id: "x:y", from: "x", to: "y" },
+    ]);
+    expect(toTimelineEdges([{ from: "x", to: "y" }, { from: "y", to: "z" }])).toEqual([
+      { id: "x:y", from: "x", to: "y" },
+      { id: "y:z", from: "y", to: "z" },
+    ]);
+    expect(toTimelineEdges([])).toEqual([]);
   });
 });
 

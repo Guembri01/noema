@@ -183,6 +183,17 @@ const LazyChartView = dynamic(
     })),
   { ssr: false, loading: () => <ViewFallback /> },
 );
+/**
+ * The dependency editor is only needed while a row peek is open; keeping it in
+ * its own chunk protects the database route's first-load budget.
+ */
+const LazyRowDependencies = dynamic(
+  () =>
+    import("@/components/database/row-dependencies").then((mod) => ({
+      default: mod.RowDependencies,
+    })),
+  { ssr: false },
+);
 const LazyFormView = dynamic(
   () =>
     import("@/components/database/form-view").then((mod) => ({
@@ -502,6 +513,21 @@ export const SUB_ISSUE_MAX_DEPTH = 1;
 /** `@/lib/dependencies` edges (`from` blocks `to`) → sub-issues blocking edges. */
 export function toSubIssueEdges(edges: readonly DependencyEdge[]): SubIssueDependencyEdge[] {
   return edges.map((edge) => ({ blockerId: edge.from, blockedId: edge.to }));
+}
+
+/**
+ * Give each blocking edge the stable id the timeline arrow router needs. The
+ * pair is unique (`RowDependency` has a compound unique index), so the id is
+ * deterministic across renders and server refreshes.
+ */
+export function toTimelineEdges(
+  edges: readonly DependencyEdge[],
+): { id: string; from: string; to: string }[] {
+  return edges.map((edge) => ({
+    id: `${edge.from}:${edge.to}`,
+    from: edge.from,
+    to: edge.to,
+  }));
 }
 
 export type SubIssueLayout = {
@@ -2187,6 +2213,7 @@ export function DatabaseView({
           workspaceSlug={workspaceSlug}
           properties={properties}
           rows={viewRows}
+          edges={toTimelineEdges(dependencyEdges)}
           editable={editable}
         />
       ) : activeView.type === "CHART" ? (
@@ -2307,6 +2334,17 @@ export function DatabaseView({
           blockedByTitles={(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy ?? []).map(
             (id) => rowsById.get(id)?.title ?? id,
           )}
+          dependencyEditor={
+            editable ? (
+              <LazyRowDependencies
+                locale={locale}
+                databasePageId={databasePageId}
+                currentRowId={shownPeek.id}
+                rows={rows.map((row) => ({ id: row.id, title: row.title }))}
+                edges={dependencyEdges}
+              />
+            ) : null
+          }
           subItemCount={
             nestSubItems ? subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length : 0
           }

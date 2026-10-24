@@ -260,12 +260,30 @@ model Page {
   followers      PageFollow[]
   permissions    PagePermission[]
   assets         Asset[]
+  /** Blocking edges where this row is the blocker / the blocked row. */
+  dependenciesFrom RowDependency[] @relation("DepBlocker")
+  dependenciesTo   RowDependency[] @relation("DepBlocked")
 
   @@index([workspaceId])
   @@index([parentId])
   @@index([subOfId])
   @@index([deletedAt])
   @@index([type])
+}
+
+/// A blocking edge between two rows of the same database (R89.31). `blocker`
+/// must finish before `blocked` can start; the write action rejects cycles and
+/// cross-database or self edges, so the stored graph is a DAG.
+model RowDependency {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  blocker   Page     @relation("DepBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   Page     @relation("DepBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
 }
 
 model PageVersion {

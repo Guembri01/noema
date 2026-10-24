@@ -44,6 +44,7 @@ const h = vi.hoisted(() => {
     databaseView: [],
     template: [],
     activity: [],
+    rowDependency: [],
   };
   /** Every call the mock received — the queries the code under test ran. */
   const calls: { model: string; op: string; args: Row }[] = [];
@@ -263,6 +264,9 @@ vi.mock("@/lib/db", () => {
     },
     activity: {
       findMany: (args: Record<string, unknown>) => findMany("activity", args),
+    },
+    rowDependency: {
+      findMany: (args: Record<string, unknown>) => findMany("rowDependency", args),
     },
     user: {
       findMany: (args: Record<string, unknown>) => findMany("user", args),

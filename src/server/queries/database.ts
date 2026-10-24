@@ -88,6 +88,22 @@ export async function getDatabase(
   // Latest recorded editor per row, newest first, for the LAST_EDITED_BY
   // property. Rows without an activity line fall back to their creator.
   const rowIds = rows.map((row) => row.id);
+
+  // R89.31 - the dependency graph is scoped to this database's visible rows.
+  // Both endpoints are checked, so an edge can never leak a row from another
+  // database (or another workspace) into this timeline.
+  const dependencies =
+    rowIds.length === 0
+      ? []
+      : await prisma.rowDependency.findMany({
+          where: {
+            blockerId: { in: rowIds },
+            blockedId: { in: rowIds },
+          },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, blockerId: true, blockedId: true },
+        });
+
   const lastEditedBy: Record<string, string> = {};
   if (rowIds.length > 0) {
     const edits = await prisma.activity.findMany({
@@ -193,7 +209,7 @@ export async function getDatabase(
     } | null,
   }));
 
-  return { properties, views, rows, templates, relationData, lastEditedBy };
+  return { properties, views, rows, templates, relationData, lastEditedBy, dependencies };
 }
 
 export type DatabaseData = Awaited<ReturnType<typeof getDatabase>>;

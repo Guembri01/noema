@@ -133,6 +133,7 @@ beforeEach(() => {
         propertyValues: [{ propertyId: "prop-1", value: { text: "value" } }],
       },
     ],
+    dependencies: [],
   });
 });
 

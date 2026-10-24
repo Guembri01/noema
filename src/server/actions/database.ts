@@ -15,6 +15,7 @@ import {
 import { pageCapabilitiesFromRelation, type PageCapabilities } from "@/lib/page-access";
 import { guestReadablePageIds } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
+import { wouldCreateCycle, type DependencyEdge } from "@/lib/dependencies";
 import { assertEditableParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
@@ -939,6 +940,112 @@ export async function setSubItemParentAction(
     targetId: rowId,
     meta: { subOfId: parentRowId },
   });
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true };
+}
+
+/** The write-time cap on blocking edges in one database (R89.31). */
+const DEPENDENCY_EDGE_LIMIT = 500;
+
+/**
+ * Add or remove one blocking edge between two rows of a database.
+ *
+ * `blockerId` must finish before `blockedId` can start. Both rows have to be
+ * live pages of `databasePageId` in the database's workspace, and the caller
+ * needs edit rights on the database **and** on both rows. The write-time graph
+ * check rejects self-edges and any edge that would close a loop, and the
+ * per-database edge cap keeps `wouldCreateCycle`'s DFS bounded. The operation
+ * is idempotent: adding an existing edge and removing a missing one both
+ * succeed, so a stale client can safely replay it.
+ */
+export async function setRowDependencyAction(
+  databasePageId: string,
+  blockerId: string,
+  blockedId: string,
+  linked: boolean,
+): Promise<Result> {
+  const auth = await authorizeDatabase(databasePageId);
+  if ("error" in auth) return auth;
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  if (blockerId === blockedId) return { error: "A row cannot depend on itself." };
+
+  const rows = await prisma.page.findMany({
+    where: {
+      parentId: databasePageId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      permissions: {
+        where: { userId: auth.user.id },
+        select: { level: true },
+      },
+    },
+  });
+  const blocker = rows.find((row) => row.id === blockerId);
+  const blocked = rows.find((row) => row.id === blockedId);
+  if (!blocker || !blocked) return { error: "Row not found." };
+  const canEditRow = (row: (typeof rows)[number]) =>
+    pageCapabilitiesFromRelation(auth.access.role, row.permissions).edit;
+  if (!canEditRow(blocker) || !canEditRow(blocked)) return { error: "No permission." };
+
+  if (!linked) {
+    const removed = await prisma.rowDependency.deleteMany({
+      where: { blockerId, blockedId },
+    });
+    if (removed.count > 0) {
+      await logActivity({
+        workspaceId: auth.page.workspaceId,
+        actorId: auth.user.id,
+        action: "row.edited",
+        targetType: "page",
+        targetId: blockedId,
+        meta: { dependency: "removed", blockerId },
+      });
+    }
+    revalidateDatabase(auth.page.workspaceId);
+    return { ok: true };
+  }
+
+  const existing = await prisma.rowDependency.findMany({
+    where: {
+      blockerId: { in: rows.map((row) => row.id) },
+      blockedId: { in: rows.map((row) => row.id) },
+    },
+    select: { blockerId: true, blockedId: true },
+  });
+  const alreadyLinked = existing.some(
+    (edge) => edge.blockerId === blockerId && edge.blockedId === blockedId,
+  );
+  if (!alreadyLinked) {
+    if (existing.length >= DEPENDENCY_EDGE_LIMIT) {
+      return { error: "This database has too many dependencies." };
+    }
+    const edges: DependencyEdge[] = existing.map((edge) => ({
+      from: edge.blockerId,
+      to: edge.blockedId,
+    }));
+    if (wouldCreateCycle(edges, { from: blockerId, to: blockedId })) {
+      return { error: "That would create a dependency cycle." };
+    }
+  }
+
+  await prisma.rowDependency.upsert({
+    where: { blockerId_blockedId: { blockerId, blockedId } },
+    create: { blockerId, blockedId },
+    update: {},
+  });
+  if (!alreadyLinked) {
+    await logActivity({
+      workspaceId: auth.page.workspaceId,
+      actorId: auth.user.id,
+      action: "row.edited",
+      targetType: "page",
+      targetId: blockedId,
+      meta: { dependency: "added", blockerId },
+    });
+  }
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true };
 }

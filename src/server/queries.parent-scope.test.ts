@@ -59,6 +59,7 @@ const db = vi.hoisted(() => ({
   databaseViewFindMany: vi.fn(),
   templateFindMany: vi.fn(),
   activityFindMany: vi.fn(),
+  rowDependencyFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -68,6 +69,7 @@ vi.mock("@/lib/db", () => ({
     databaseView: { findMany: db.databaseViewFindMany },
     template: { findMany: db.templateFindMany },
     activity: { findMany: db.activityFindMany },
+    rowDependency: { findMany: db.rowDependencyFindMany },
   },
 }));
 
@@ -100,6 +102,7 @@ beforeEach(() => {
   db.databaseViewFindMany.mockResolvedValue([]);
   db.templateFindMany.mockResolvedValue([]);
   db.activityFindMany.mockResolvedValue([]);
+  db.rowDependencyFindMany.mockResolvedValue([]);
 });
 
 describe("getDatabase — row scope (B08)", () => {
@@ -123,6 +126,26 @@ describe("getDatabase — row scope (B08)", () => {
       return where?.parentId === DATABASE_A;
     });
     expect(rowQuery?.[0]?.where).toMatchObject({ workspaceId: WORKSPACE_A });
+  });
+
+  it("projects only dependency edges whose endpoints are visible rows", async () => {
+    db.rowDependencyFindMany.mockResolvedValue([
+      { id: "dep-1", blockerId: "row-a", blockedId: "row-a" },
+    ]);
+
+    const database = await getDatabase(DATABASE_A);
+
+    expect(database.dependencies).toEqual([
+      { id: "dep-1", blockerId: "row-a", blockedId: "row-a" },
+    ]);
+    expect(db.rowDependencyFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          blockerId: { in: ["row-a"] },
+          blockedId: { in: ["row-a"] },
+        },
+      }),
+    );
   });
 
   it("scopes an unknown database to the empty workspace, which matches no row", async () => {

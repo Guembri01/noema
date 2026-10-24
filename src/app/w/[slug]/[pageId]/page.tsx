@@ -244,6 +244,10 @@ export default async function PageRoute({
         }
         members={members.map((member) => ({ id: member.id, name: member.name }))}
         editable={editable}
+        dependencyEdges={database.dependencies.map((edge) => ({
+          from: edge.blockerId,
+          to: edge.blockedId,
+        }))}
         schemaLocked={page.schemaLocked}
       />
     );
