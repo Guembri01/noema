@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   BIDI_CONTROL_CHARS,
   applyDirAttr,
+  contentDirProps,
   describeDirection,
   detectDirection,
+  inlineBidiProps,
   isBidiControl,
   isMixed,
   mirrorChar,
@@ -260,6 +262,62 @@ describe("applyDirAttr", () => {
       dir: "ltr",
       className: "dir-ltr dir-auto",
     });
+  });
+});
+
+describe("contentDirProps", () => {
+  it("gives strong text its own direction and the shared class", () => {
+    expect(contentDirProps("Hello, world")).toEqual({
+      dir: "ltr",
+      className: "dir-ltr",
+    });
+    expect(contentDirProps(HEBREW)).toEqual({ dir: "rtl", className: "dir-rtl" });
+    expect(contentDirProps(ARABIC)).toEqual({ dir: "rtl", className: "dir-rtl" });
+  });
+
+  it("keeps auto for empty and number-only fields so they inherit the document", () => {
+    expect(contentDirProps("")).toEqual({ dir: "auto", className: "dir-auto" });
+    expect(contentDirProps("123 456")).toEqual({ dir: "auto", className: "dir-auto" });
+  });
+
+  it("isolates mixed text without changing its resolved base direction", () => {
+    expect(contentDirProps(`hello ${ARABIC}`)).toEqual({
+      dir: "ltr",
+      className: "dir-ltr dir-mixed",
+    });
+    expect(contentDirProps(`${HEBREW} hello`)).toEqual({
+      dir: "rtl",
+      className: "dir-rtl dir-mixed",
+    });
+  });
+});
+
+describe("inlineBidiProps", () => {
+  it("always isolates an inline fragment", () => {
+    expect(inlineBidiProps("Ada").className).toContain("bidi-isolate");
+    expect(inlineBidiProps(HEBREW).className).toContain("bidi-isolate");
+    expect(inlineBidiProps("").className).toContain("bidi-isolate");
+  });
+
+  it("derives the fragment direction from its own first strong character", () => {
+    expect(inlineBidiProps("Ada")).toEqual({
+      dir: "ltr",
+      className: "dir-ltr bidi-isolate",
+    });
+    expect(inlineBidiProps(ARABIC)).toEqual({
+      dir: "rtl",
+      className: "dir-rtl bidi-isolate",
+    });
+    expect(inlineBidiProps("42")).toEqual({
+      dir: "auto",
+      className: "bidi-isolate",
+    });
+  });
+
+  it("keeps the extra mixed marker on a mixed fragment", () => {
+    expect(inlineBidiProps(`abc ${HEBREW}`).className).toBe(
+      "dir-ltr bidi-isolate dir-mixed",
+    );
   });
 });
 

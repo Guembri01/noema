@@ -21,6 +21,7 @@
  *  - {@link toVisual} / {@link toLogical} — a display round-trip that reorders
  *    runs and reverses RTL runs, mirroring their bracket characters.
  *  - {@link isMixed}, {@link normalizeMarks}, {@link applyDirAttr},
+ *    {@link contentDirProps}, {@link inlineBidiProps},
  *    {@link describeDirection} — the small predicates and descriptors an
  *    editor or block renderer needs.
  *
@@ -393,6 +394,54 @@ export function applyDirAttr(source: DirAttrSource | string): DirAttr {
   if (isMixed(text)) classNames.push("dir-mixed");
   if (detected === "auto") classNames.push("dir-auto");
   return { dir, className: classNames.join(" ") };
+}
+
+/** Props for a user-authored text surface: its `dir` value and CSS classes. */
+export interface BidiTextProps {
+  /**
+   * Value for the HTML `dir` attribute. `"auto"` when the text has no strong
+   * character, so an empty/numeric field inherits the surrounding document
+   * direction instead of forcing LTR.
+   */
+  dir: DirectionHint;
+  /** Matching CSS classes (`dir-ltr`/`dir-rtl`/`dir-auto`, plus `dir-mixed`). */
+  className: string;
+}
+
+/**
+ * Resolve the `dir` attribute and classes for a **block** of user-authored
+ * text (a paragraph, heading, page title, comment body, search result).
+ *
+ * This is the content-facing counterpart to {@link applyDirAttr}: it keeps
+ * `"auto"` instead of resolving it to LTR, because a blank or number-only
+ * field must still follow the page/document direction. Strong text gets its
+ * own explicit direction, which is what stops a `Hello مرحبا!` line inside an
+ * Arabic layout from flipping the trailing punctuation to the left edge.
+ * Mixed text additionally carries `dir-mixed` (`unicode-bidi: isolate`), so
+ * the block's internal runs cannot reorder its neighbours.
+ */
+export function contentDirProps(text: string): BidiTextProps {
+  const hint = detectDirection(text);
+  if (hint === "auto") return { dir: "auto", className: "dir-auto" };
+  const classNames = [`dir-${hint}`];
+  if (isMixed(text)) classNames.push("dir-mixed");
+  return { dir: hint, className: classNames.join(" ") };
+}
+
+/**
+ * Resolve the `dir` attribute and classes for an **inline** user-authored
+ * fragment (a page title inside a breadcrumb, a mention, a link, a screenshot
+ * caption). The fragment is always isolated — the same effect as `<bdi>` —
+ * so its punctuation and strong characters cannot reorder the surrounding
+ * sentence. `"auto"` keeps an empty/number-only fragment on the parent's
+ * direction.
+ */
+export function inlineBidiProps(text: string): BidiTextProps {
+  const hint = detectDirection(text);
+  if (hint === "auto") return { dir: "auto", className: "bidi-isolate" };
+  const classNames = [`dir-${hint}`, "bidi-isolate"];
+  if (isMixed(text)) classNames.push("dir-mixed");
+  return { dir: hint, className: classNames.join(" ") };
 }
 
 /** A structured summary of a string's bidi shape. */

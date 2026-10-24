@@ -19,6 +19,7 @@ import {
 } from "@/lib/share-page";
 import { Z } from "@/lib/design-tokens";
 import { isEmoji, pageIconToCss } from "@/lib/page-icon";
+import { contentDirProps } from "@/lib/bidi";
 import { shareUnlockCookieName, verifyShareUnlockToken } from "@/lib/secrets";
 import { cn } from "@/lib/utils";
 
@@ -307,7 +308,10 @@ export default async function PublicSharedPage({
                 </>
               )}
             </p>
-            <h1 className="text-page-title font-semibold tracking-title">
+            <h1
+              dir={contentDirProps(title).dir}
+              className="text-page-title font-semibold tracking-title"
+            >
               {isEmoji(page.icon) ? `${page.icon} ` : ""}
               {title}
             </h1>

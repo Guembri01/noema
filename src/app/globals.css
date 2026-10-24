@@ -1581,6 +1581,22 @@ body {
 .dir-auto {
   unicode-bidi: plaintext;
 }
+/* Inline user fragments (<bdi> / inlineBidiProps): isolate the run so its
+   punctuation and strong characters cannot reorder the surrounding sentence.
+   Direction stays content-derived, exactly like the native <bdi> element. */
+.bidi-isolate {
+  unicode-bidi: isolate;
+}
+
+/* User-authored prose in the editing surface. `plaintext` applies the Unicode
+   P2/P3 first-strong rule per paragraph, so a paragraph or heading typed in
+   Arabic inside an English page (or a Latin path inside an Arabic page) is laid
+   out on its own base direction while the surrounding document/chrome keeps
+   the locale's `dir`. Block placement stays in normal flow — no physical
+   left/right rules are involved. */
+.noema-editor .ProseMirror :is(p, h1, h2, h3, h4, h5, h6, blockquote) {
+  unicode-bidi: plaintext;
+}
 
 /* ---------------------------------------------------------------------------
    Suggestions (track changes)

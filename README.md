@@ -69,7 +69,7 @@ This repository is a **working application plus a complete parity tracker**.
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
   - 565 rows, each with a status and a note explaining the current state. Today:
-  **489 implemented · 54 partial · 0 planned · 22 deliberately out of scope**.
+  **491 implemented · 52 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -351,7 +351,7 @@ dark variants under `.dark`).
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
 (generated from the feature matrix by `npm run docs:gaps`): of 565 tracked rows,
-54 are still partial and 22 are deliberately out of scope - the rest are
+52 are still partial and 22 are deliberately out of scope - the rest are
 implemented — with a priority shortlist at the top.
 
 

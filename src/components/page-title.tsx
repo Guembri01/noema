@@ -105,6 +105,7 @@ import { DUR, Z } from "@/lib/design-tokens";
 import { t } from "@/lib/i18n";
 import { estimateTextWidth } from "@/lib/text-measure";
 import { cn } from "@/lib/utils";
+import { contentDirProps } from "@/lib/bidi";
 import { toast } from "sonner";
 
 import {
@@ -248,6 +249,11 @@ export function PageTitleRow({
 }: PageTitleRowProps) {
   const { visible, overflow } = layoutHeaderBreadcrumbs(crumbs, breadcrumbWidth);
   const displayTitle = title.trim() || "Untitled";
+  // The title is user-authored: lay it out on its own base direction so a
+  // Hebrew/Arabic name in an English page (or a Latin name in `ar`) keeps its
+  // punctuation on the correct side. An empty title stays `auto` and follows
+  // the document direction.
+  const titleDirection = contentDirProps(title);
   const iconStyle = pageIconToCss(icon);
 
   return (
@@ -376,7 +382,13 @@ export function PageTitleRow({
                   {icon.value}
                 </span>
               )}
-              <span className="truncate text-sm font-semibold tracking-title text-fg">
+              <span
+                dir={titleDirection.dir}
+                className={cn(
+                  "truncate text-sm font-semibold tracking-title text-fg",
+                  titleDirection.className,
+                )}
+              >
                 {displayTitle}
               </span>
             </span>
@@ -536,6 +548,7 @@ export function PageTitleRow({
               aria-label={t(locale, "pageTitle")}
               aria-roledescription={t(locale, "pageTitleRoleDescription")}
               value={title}
+              dir={titleDirection.dir}
               readOnly={!canEdit}
               placeholder={t(locale, "untitled")}
               rows={1}

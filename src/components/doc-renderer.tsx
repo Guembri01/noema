@@ -11,6 +11,7 @@ import { embedMeta, resolveEmbed } from "@/lib/embeds";
 import { externalImageSrc } from "@/lib/external-image";
 import { t } from "@/lib/i18n";
 import { alignOf, alignStyle } from "@/lib/media";
+import { contentDirProps, inlineBidiProps } from "@/lib/bidi";
 import {
   blocksToQuote,
   formatPullQuote,
@@ -118,13 +119,21 @@ function renderInline(nodes: PMNode[] = []): ReactNode {
     if (node.type === "mention") {
       const type = String(node.attrs?.type ?? "page");
       const glyph = type === "user" ? "👤" : type === "date" ? "🗓" : "📄";
+      const label = String(node.attrs?.label ?? "");
+      const direction = inlineBidiProps(label);
       return (
         <span
           key={key}
-          className={cn("noema-mention", docClasses("mention"), mentionClass(type))}
+          dir={direction.dir}
+          className={cn(
+            "noema-mention",
+            docClasses("mention"),
+            mentionClass(type),
+            direction.className,
+          )}
           style={mentionStyle(type)}
         >
-          {glyph} {String(node.attrs?.label ?? "")}
+          {glyph} {label}
         </span>
       );
     }
@@ -462,11 +471,17 @@ function resolvePullQuote(
 
 /** Display-scale pull quote — the read-side twin of the editor's decoration. */
 function renderPullQuote(quote: PullQuote, node: PMNode, key: string): ReactNode {
+  const direction = contentDirProps(quote.text);
   return (
     <blockquote
       key={key}
       {...colorProps(node)}
-      className={cn("noema-pull-quote text-[1.5em] font-semibold leading-[1.45]", DOC_PRINT_CLASS.block)}
+      dir={direction.dir}
+      className={cn(
+        "noema-pull-quote text-[1.5em] font-semibold leading-[1.45]",
+        DOC_PRINT_CLASS.block,
+        direction.className,
+      )}
       data-pull-quote=""
       data-size="large"
       title={formatPullQuote(quote)}
@@ -477,7 +492,7 @@ function renderPullQuote(quote: PullQuote, node: PMNode, key: string): ReactNode
           className="noema-pull-quote-attribution text-end text-[0.9em] font-normal opacity-75"
         >
           {"\u2014 "}
-          {quote.attribution}
+          <bdi>{quote.attribution}</bdi>
         </footer>
       )}
     </blockquote>
@@ -673,23 +688,35 @@ function renderBlock(
   quote?: PullQuote,
 ): ReactNode {
   switch (node.type) {
-    case "paragraph":
+    case "paragraph": {
+      // User-authored prose: its own first strong character sets the base
+      // direction, so mixed text never inherits the wrong side from the
+      // document locale. `dir-mixed` isolates the run from its neighbours.
+      const direction = contentDirProps(nodeText(node));
       return (
-        <p key={key} {...colorProps(node)} className={docClasses("paragraph")}>
+        <p
+          key={key}
+          {...colorProps(node)}
+          dir={direction.dir}
+          className={cn(docClasses("paragraph"), direction.className)}
+        >
           {renderInline(node.content)}
         </p>
       );
+    }
     case "heading": {
       const level = Math.min(Math.max(Number(node.attrs?.level ?? 1), 1), 6);
       const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
       // Stamp the view-local anchor so TOC deep links land on the heading; the
       // id is derived at render time and never written back to the document.
       const slug = ctx.headings.slugByNode.get(node);
+      const direction = contentDirProps(nodeText(node));
       return (
         <Tag
           key={key}
           {...colorProps(node)}
-          className={docClasses("heading")}
+          dir={direction.dir}
+          className={cn(docClasses("heading"), direction.className)}
           id={slug ? tocAnchorId(slug) : undefined}
         >
           {renderInline(node.content)}
@@ -731,12 +758,14 @@ function renderBlock(
       // paragraph) renders at display scale; everything else is unchanged.
       const pullQuote = quote ?? pullQuoteOf(node);
       if (pullQuote) return renderPullQuote(pullQuote, node, key);
+      const direction = contentDirProps(nodeText(node));
       return (
         <blockquote
           key={key}
           {...colorProps(node)}
-          className={docClasses("blockquote")}
-          style={{ borderLeft: "3px solid var(--border-strong)", ...colorProps(node).style }}
+          dir={direction.dir}
+          className={cn(docClasses("blockquote"), direction.className)}
+          style={{ borderInlineStart: "3px solid var(--border-strong)", ...colorProps(node).style }}
         >
           {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </blockquote>

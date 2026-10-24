@@ -142,16 +142,16 @@ export function pageTeaser(
  */
 function HighlightedText({ text, query }: { text: string; query: string }) {
   const match = highlightSnippet(text, query, text.length);
-  if (!match) return <>{text}</>;
+  if (!match) return <bdi>{text}</bdi>;
   const { text: excerpt, matchStart, matchEnd } = match;
   return (
-    <>
+    <bdi>
       {excerpt.slice(0, matchStart)}
       <mark className="rounded-xs bg-highlight px-0.5 text-highlight-fg">
         {excerpt.slice(matchStart, matchEnd)}
       </mark>
       {excerpt.slice(matchEnd)}
-    </>
+    </bdi>
   );
 }
 
@@ -357,7 +357,7 @@ export function SearchResults({
   return (
     <>
       <p className="mt-4 text-sm text-muted">
-        {filteredRows.length} result{filteredRows.length === 1 ? "" : "s"} for “{query}”
+        {filteredRows.length} result{filteredRows.length === 1 ? "" : "s"} for “<bdi>{query}</bdi>”
       </p>
 
       {types.length > 1 && (

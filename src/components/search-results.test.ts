@@ -219,6 +219,18 @@ describe("SearchResults — a result row", () => {
     });
     expect(html.match(/data-active="true"/g)).toHaveLength(1);
   });
+
+  it("isolates a mixed-direction title and snippet with bdi", () => {
+    const arabic = "\u0645\u0631\u062D\u0628\u0627"; // مرحبا
+    const html = renderResults({
+      query: "",
+      initial: [row({ title: arabic, snippet: `${arabic} ${"hello"}` })],
+    });
+    expect(html).toContain(`<bdi>${arabic}</bdi>`);
+    expect(html).toContain(`<bdi>${arabic} hello</bdi>`);
+    // The query echo is isolated too, so a RTL query cannot flip the quote.
+    expect(html).toContain("for “<bdi></bdi>”");
+  });
 });
 
 describe("SearchResults — empty / no-result state", () => {

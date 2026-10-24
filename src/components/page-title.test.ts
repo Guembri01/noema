@@ -291,4 +291,16 @@ describe("PageTitleRow render", () => {
     expect(html).toContain('aria-label="Remove from favorites"');
     expect(html).toContain('aria-pressed="true"');
   });
+
+  it("gives the title its own bidi direction", () => {
+    const arabic = "\u0645\u0631\u062D\u0628\u0627"; // مرحبا
+    const rtl = render({ title: arabic, scrolled: true, showStickyTitle: true });
+    // Both the editable field and the compact sticky title follow the content.
+    expect(rtl.match(/dir="rtl"/g)?.length).toBe(2);
+    expect(rtl).toContain("dir-rtl");
+    // An empty title stays auto so it inherits the document direction rather
+    // than forcing LTR inside an Arabic layout.
+    const empty = render({ title: "", scrolled: true, showStickyTitle: true });
+    expect(empty).toContain('dir="auto"');
+  });
 });

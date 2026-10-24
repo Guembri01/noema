@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 489 implemented · 54 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 491 implemented · 52 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **54** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **52** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -103,7 +103,7 @@ This file lists the **54** rows that are not finished, area by area, plus 22 int
 
 ### 14. AI
 
-8 done · 8 partial · 0 planned
+9 done · 7 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -112,7 +112,6 @@ This file lists the **54** rows that are not finished, area by area, plus 22 int
 | Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
-| Prompt library | Reusable saved prompts. | 🟡 | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
 | AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
 
@@ -127,11 +126,10 @@ This file lists the **54** rows that are not finished, area by area, plus 22 int
 
 ### 16. Navigation & UX
 
-46 done · 2 partial · 0 planned · 2 out of scope
+47 done · 1 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
 | Open in desktop app | "Open in Windows app" entry. | ⛔ | No desktop app; N/A for web parity. |

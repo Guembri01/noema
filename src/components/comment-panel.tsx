@@ -50,6 +50,7 @@ import {
 import { actionError, safeAction } from "@/lib/actions-client";
 import { resolveAvatar, type Avatar as ResolvedAvatar } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
+import { contentDirProps } from "@/lib/bidi";
 import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
 import { extractMentions } from "@/lib/comments";
 import { COMMENT_EVENT } from "@/lib/editor-events";
@@ -645,6 +646,9 @@ export function CommentPanel({
                 const resolved = resolveState(comment.resolved) === "resolved";
                 const canReplyToThis = replyableIds.has(comment.id);
                 const commentBlockId = comment.blockId;
+                // Quoted page text is user-authored too: isolate it so a mixed
+                // quote never reorders the comment header around it.
+                const quoteDirection = contentDirProps(comment.quote ?? "");
                 return (
                   <li
                     key={comment.id}
@@ -672,7 +676,7 @@ export function CommentPanel({
                     <div className={cn("min-w-0 flex-1", resolved && "text-muted")}>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium">
-                          {comment.author.name}
+                          <bdi>{comment.author.name}</bdi>
                         </span>
                         <RelativeTime
                           value={comment.createdAt}
@@ -689,7 +693,11 @@ export function CommentPanel({
                       {comment.quote && (
                         <blockquote
                           data-testid="comment-quote"
-                          className="mt-2 rounded-md border-s-2 border-s-accent bg-surface-2 px-2.5 py-1.5 text-xs italic text-muted"
+                          dir={quoteDirection.dir}
+                          className={cn(
+                            "mt-2 rounded-md border-s-2 border-s-accent bg-surface-2 px-2.5 py-1.5 text-xs italic text-muted",
+                            quoteDirection.className,
+                          )}
                         >
                           {comment.quote}
                         </blockquote>
@@ -739,6 +747,7 @@ export function CommentPanel({
                         >
                           <Textarea
                             defaultValue={comment.body}
+                            dir={contentDirProps(comment.body).dir}
                             aria-label={t(locale, "editComment")}
                             onChange={(event) => setEditBody(event.target.value)}
                             size="sm"
@@ -863,7 +872,7 @@ export function CommentPanel({
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="truncate text-sm font-medium">
-                                    {reply.author.name}
+                                    <bdi>{reply.author.name}</bdi>
                                   </span>
                                   <RelativeTime
                                     value={reply.createdAt}
@@ -910,6 +919,7 @@ export function CommentPanel({
                           <Textarea
                             ref={replyArea.ref}
                             value={replyBody}
+                            dir={contentDirProps(replyBody).dir}
                             aria-label={t(locale, "writeReply")}
                             onChange={(event) => {
                               setReplyBody(event.target.value);
@@ -955,7 +965,7 @@ export function CommentPanel({
           {quote && (
             <div className="flex items-start gap-2 rounded-control bg-surface px-2 py-1.5 text-xs text-muted">
               <Quote className="mt-0.5 h-3 w-3 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{quote}</span>
+              <bdi className="min-w-0 flex-1 truncate">{quote}</bdi>
               <button
                 type="button"
                 aria-label={t(locale, "removeQuote")}
@@ -972,6 +982,7 @@ export function CommentPanel({
           <Textarea
             ref={inputRef}
             value={body}
+            dir={contentDirProps(body).dir}
             aria-label={t(locale, "addComment")}
             data-comment-input
             invalid={Boolean(composerError)}
@@ -1054,8 +1065,15 @@ export function CommentPanel({
 function CommentBody({ body, className }: { body: string; className?: string }) {
   const segments = parseCommentBody(body);
   const rich = segments.some((segment) => segment.type !== "text");
+  // A comment can be written in any script (or mix two). Give the paragraph
+  // its own base direction so an Arabic body inside the English UI — and an
+  // English body inside `ar` — keeps its punctuation on the authored side.
+  const direction = contentDirProps(body);
   return (
-    <p className={cn("whitespace-pre-wrap", className)}>
+    <p
+      dir={direction.dir}
+      className={cn("whitespace-pre-wrap", direction.className, className)}
+    >
       {rich
         ? segments.map((segment, index) => (
             <CommentSegmentView key={index} segment={segment} />
@@ -1071,7 +1089,7 @@ function CommentSegmentView({ segment }: { segment: CommentSegment }) {
     case "mention":
       return (
         <span className="rounded-chip bg-surface-2 px-1 font-medium text-fg">
-          @{segment.value}
+          <bdi>@{segment.value}</bdi>
         </span>
       );
     case "link": {
@@ -1087,7 +1105,7 @@ function CommentSegmentView({ segment }: { segment: CommentSegment }) {
           rel="noreferrer noopener"
           className="text-accent underline underline-offset-2"
         >
-          {segment.value}
+          <bdi>{segment.value}</bdi>
         </a>
       ) : (
         <span>{segment.value}</span>

@@ -106,6 +106,67 @@ describe("DocRenderer href scheme gate (H2)", () => {
 });
 
 /**
+ * User-authored prose (the read side of the editor) carries the same bidi
+ * treatment as the editing surface: each block resolves its own direction and
+ * mixed runs are isolated, so an Arabic fragment inside an English paragraph
+ * never reorders the punctuation around it.
+ */
+describe("DocRenderer bidi isolation", () => {
+  const arabic = "\u0645\u0631\u062D\u0628\u0627"; // مرحبا
+  const hebrew = "\u05D0\u05D1\u05D2"; // אבג
+
+  const blockDoc = (type: "paragraph" | "heading", text: string) => ({
+    type: "doc",
+    content: [
+      {
+        type,
+        ...(type === "heading" ? { attrs: { level: 2 } } : {}),
+        content: [{ type: "text", text }],
+      },
+    ],
+  });
+
+  it("resolves a paragraph's base direction from its own first strong character", () => {
+    expect(render(blockDoc("paragraph", "hello"))).toMatch(
+      /<p dir="ltr"[^>]*class="[^"]*dir-ltr/,
+    );
+    expect(render(blockDoc("paragraph", arabic))).toMatch(
+      /<p dir="rtl"[^>]*class="[^"]*dir-rtl/,
+    );
+    // No strong character: defer to the surrounding document direction.
+    expect(render(blockDoc("paragraph", "123"))).toMatch(
+      /<p dir="auto"[^>]*class="[^"]*dir-auto/,
+    );
+  });
+
+  it("isolates mixed prose without flipping its base direction", () => {
+    expect(render(blockDoc("paragraph", `hello ${arabic}`))).toMatch(
+      /<p dir="ltr"[^>]*class="[^"]*dir-mixed/,
+    );
+    expect(render(blockDoc("heading", `${arabic} hello`))).toMatch(
+      /<h2 dir="rtl"[^>]*class="[^"]*dir-rtl dir-mixed/,
+    );
+  });
+
+  it("carries the same treatment to a blockquote", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: hebrew }] },
+          ],
+        },
+      ],
+    });
+    expect(html).toMatch(/<blockquote[^>]*dir="rtl"/);
+    // The quote rail is logical (border-inline-start), so it mirrors in RTL.
+    expect(html).toContain("border-inline-start");
+  });
+});
+
+/**
  * B69 - the read path never points a browser at a third party.
  *
  * The renderer used to emit the stored `src` verbatim, so opening a shared

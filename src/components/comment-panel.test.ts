@@ -175,6 +175,31 @@ describe("CommentPanel markup", () => {
     expect(html).not.toContain('data-testid="comment-c1"');
   });
 
+  it("lays a comment body and its quote out on their own bidi direction", () => {
+    const arabic = "\u0645\u0631\u062D\u0628\u0627"; // مرحبا
+    const html = render({ comments: [makeComment({ body: arabic, quote: arabic })] });
+    // The body paragraph and the quote both resolve RTL from their content,
+    // instead of inheriting the English document direction.
+    expect(html).toMatch(/<p dir="rtl"[^>]*dir-rtl/);
+    expect(html).toMatch(/<blockquote[^>]*dir="rtl"/);
+    expect(html).toContain(arabic);
+  });
+
+  it("isolates rich segments and author names so punctuation cannot jump", () => {
+    const arabic = "\u0645\u0631\u062D\u0628\u0627";
+    const html = render({
+      comments: [
+        makeComment({
+          body: `See @[${arabic}](u2) at https://example.com/${arabic}.`,
+        }),
+      ],
+    });
+    // Mentions and links are native <bdi> isolates; so is the author name.
+    expect(html.match(/<bdi>/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain(`<bdi>@${arabic}</bdi>`);
+    expect(html).toContain(`<bdi>https://example.com/${arabic}</bdi>`);
+  });
+
   it("renders the error state with a retry action", () => {
     const html = render({ loadError: "Could not load comments." });
     expect(html).toContain('data-testid="comment-error"');

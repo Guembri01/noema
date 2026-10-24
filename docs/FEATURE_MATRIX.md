@@ -541,7 +541,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / OpenCode Go / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. Every request carries the product's user agent (`noema/<version>`); OpenCode Go additionally gets a stable `x-opencode-session` per conversation. |
 | Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
-| Prompt library | Reusable saved prompts. | 🟡 | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
+| Prompt library | Reusable saved prompts. | ✅ | `WorkspacePrompt` rows with workspace/personal scope, membership-gated CRUD/clone actions, a persisted settings manager and a chat-composer picker that inserts a prompt body into the draft without discarding typed text. Seven built-in AI skills stay code-owned. Spec: docs/specs/ai-surface.md (R25.22). |
 | AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
 
@@ -602,7 +602,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | First-run onboarding | Guided path to a useful workspace. | ✅ | The workspace home shows a dismissible checklist for first page, first database, teammate invite and first file, derived from real workspace counts; `User.onboardingDismissedAt` persists dismissal. |
 | Focus management | Visible focus and traps. | ✅ | Global `:focus-visible` ring; `ui/dialog` and `ui/dropdown-menu` own focus trap/restore; the hand-rolled `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer` (sheet) and `editor/equation-editor` all use the shared `src/lib/focus-trap.ts` kernel (`trapPlan`, initial focus, wrapping Tab/Shift+Tab, Escape) with `aria-modal` where applicable. Locked by `e2e/focus.spec.ts` and the overlay-wiring tests. |
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
-| RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
+| RTL support | Right-to-left layouts. | ✅ | Arabic sets `dir="rtl"` and logical CSS; user-authored paragraphs, headings, quotes, titles, comments, mentions, links and search snippets now derive their own base direction from content, isolate mixed runs with `<bdi>`/`unicode-bidi`, and use logical borders. Covered by bidi/render tests for doc, title, comment and search surfaces. |
 | Notifications / toasts | Transient status messages. | ✅ | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
 | Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
 | Offline mode | Work without connectivity. | ✅ | Planned; core to local-first goal. |
@@ -784,15 +784,15 @@ The table below summarizes how many feature rows fall into each status, per area
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
-| 14. AI | 8 | 8 | 0 | 0 | 16 |
+| 14. AI | 9 | 7 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
-| 16. Navigation & UX | 46 | 2 | 0 | 2 | 50 |
+| 16. Navigation & UX | 47 | 1 | 0 | 2 | 50 |
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 31 | 1 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **489** | **54** | **0** | **22** | **565** |
+| **Total** | **491** | **52** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
