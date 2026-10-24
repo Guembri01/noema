@@ -38,6 +38,7 @@ export type SsoConnectionView = {
   name: string;
   idpEntityId: string;
   ssoUrl: string;
+  certificate: string;
   metadataUrl: string | null;
   metadataFetchedAt: string | null;
   spEntityId: string | null;
@@ -56,6 +57,7 @@ const SELECT = {
   name: true,
   idpEntityId: true,
   ssoUrl: true,
+  certificate: true,
   metadataUrl: true,
   metadataFetchedAt: true,
   spEntityId: true,
@@ -148,6 +150,7 @@ function toView(row: {
   name: string;
   idpEntityId: string;
   ssoUrl: string;
+  certificate: string;
   metadataUrl: string | null;
   metadataFetchedAt: Date | null;
   spEntityId: string | null;
@@ -165,6 +168,7 @@ function toView(row: {
     name: row.name,
     idpEntityId: row.idpEntityId,
     ssoUrl: row.ssoUrl,
+    certificate: row.certificate,
     metadataUrl: row.metadataUrl,
     metadataFetchedAt: row.metadataFetchedAt?.toISOString() ?? null,
     spEntityId: row.spEntityId,

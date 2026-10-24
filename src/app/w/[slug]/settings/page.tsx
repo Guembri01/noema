@@ -10,6 +10,11 @@ import {
 } from "@/lib/permissions";
 import { getWorkspaceBySlug, getWorkspaceMembers, getRecentActivity, getRecentWebhookDeliveries } from "@/server/queries";
 import { prisma } from "@/lib/db";
+import {
+  SsoSettings,
+  type SsoConnectionRow,
+  type VerifiedDomainRow,
+} from "@/components/sso-settings";
 import { TeamspaceManager, type TeamspaceRow } from "@/components/teamspace-manager";
 import { AiSettings } from "@/components/ai-settings";
 import { EmailSettings } from "@/components/email-settings";
@@ -217,6 +222,58 @@ export default async function SettingsPage({
       invites: { where: { acceptedAt: null }, select: { id: true, email: true, role: true } },
     },
   });
+  const [ssoConnectionRows, verifiedDomainRows] = manage
+    ? await Promise.all([
+        prisma.ssoConnection.findMany({
+          where: { workspaceId: workspace.id },
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            name: true,
+            idpEntityId: true,
+            ssoUrl: true,
+            certificate: true,
+            metadataUrl: true,
+            metadataFetchedAt: true,
+            spEntityId: true,
+            callbackUrl: true,
+            emailAttribute: true,
+            nameAttribute: true,
+            groupsAttribute: true,
+            roleRules: true,
+            enabled: true,
+          },
+        }),
+        prisma.verifiedDomain.findMany({
+          where: { workspaceId: workspace.id },
+          orderBy: { domain: "asc" },
+          select: {
+            id: true,
+            domain: true,
+            verifyToken: true,
+            verifiedAt: true,
+            connectionId: true,
+          },
+        }),
+      ])
+    : [[], []];
+  const ssoConnections: SsoConnectionRow[] = ssoConnectionRows.map((row) => ({
+    ...row,
+    metadataFetchedAt: row.metadataFetchedAt?.toISOString() ?? null,
+    roleRules:
+      row.roleRules === null || row.roleRules === undefined
+        ? ""
+        : JSON.stringify(row.roleRules),
+  }));
+  const verifiedDomains: VerifiedDomainRow[] = verifiedDomainRows.map((row) => ({
+    id: row.id,
+    domain: row.domain,
+    recordName: `_noema-verification.${row.domain}`,
+    verifyToken: row.verifyToken,
+    verifiedAt: row.verifiedAt?.toISOString() ?? null,
+    connectionId: row.connectionId,
+  }));
+
   const teamspaceRows: TeamspaceRow[] = teamspaces.map((teamspace) => ({
     id: teamspace.id,
     name: teamspace.name,
@@ -550,6 +607,15 @@ export default async function SettingsPage({
           }))}
           locale={locale}
           currentUserRole={access.role}
+        />
+      )}
+
+      {manage && (
+        <SsoSettings
+          workspaceId={workspace.id}
+          locale={locale}
+          connections={ssoConnections}
+          domains={verifiedDomains}
         />
       )}
 

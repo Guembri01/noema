@@ -27,9 +27,6 @@ export type VerifiedDomainView = {
   connectionId: string | null;
 };
 
-export const DOMAIN_VERIFICATION_TTL_HINT =
-  "Publish the TXT record, then verify. DNS caches can take a few minutes.";
-
 const SELECT = {
   id: true,
   domain: true,

@@ -209,7 +209,9 @@ Ordered by dependency and impact. Every item maps to rows in
   24-hour previous-certificate overlap.
 - [x] **SAML SLO** — POST/redirect logout-message validation with audit, while always ending
   the local session.
-- [ ] **SAML T10.5/T10.8** — rendered settings UI and SCIM.
+- [x] **SAML T10.5/T10.6** — admin SSO settings section: connection CRUD, metadata refresh and
+  verified-domain TXT workflow.
+- [ ] **SAML T10.8** — SCIM 2.0 provisioning.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 
