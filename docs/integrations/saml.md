@@ -146,7 +146,10 @@ certificates during that window, so an IdP rotation does not lock anyone out.
   role mapped from the group attribute (highest rule wins, default `MEMBER`).
   `OWNER` cannot be granted by a rule and an existing owner is never demoted.
 - `GET|POST /api/auth/saml/slo` always destroys the local session and returns
-  to `/login`. Full SLO request validation is not implemented.
+  to `/login` — a forged request can only end the caller's own session. When a
+  `SAMLRequest`/`SAMLResponse` is present it is validated by `node-saml`
+  (POST binding) or `validateRedirectAsync` (GET binding); a rejection is
+  audited as `sso.logout_failed` but never keeps the session alive.
 
 ## 4. Failure behavior
 

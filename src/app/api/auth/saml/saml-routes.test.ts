@@ -24,6 +24,9 @@ const authMock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/auth", () => authMock);
 
+const activityMock = vi.hoisted(() => ({ logActivity: vi.fn(async () => undefined) }));
+vi.mock("@/lib/activity", () => activityMock);
+
 const samlClientMock = vi.hoisted(() => ({
   createSamlClient: vi.fn(),
   samlMetadata: vi.fn(() => "<EntityDescriptor/>"),
@@ -74,6 +77,8 @@ const client = {
       `https://idp.example.com/sso?SAMLRequest=request&RelayState=${encodeURIComponent(relayState)}`,
   ),
   validatePostResponseAsync: vi.fn(),
+  validatePostRequestAsync: vi.fn(),
+  validateRedirectAsync: vi.fn(),
   generateServiceProviderMetadata: vi.fn(() => "<EntityDescriptor/>"),
 };
 
@@ -100,6 +105,8 @@ beforeEach(async () => {
   relayState = await createSamlRelayState("/app");
   samlClientMock.createSamlClient.mockReturnValue(client);
   client.validatePostResponseAsync.mockResolvedValue({ profile: profile(), loggedOut: false });
+  client.validatePostRequestAsync.mockResolvedValue({ profile: {}, loggedOut: true });
+  client.validateRedirectAsync.mockResolvedValue({ profile: {}, loggedOut: true });
   prismaMock.user.findMany.mockResolvedValue([]);
   prismaMock.user.create.mockResolvedValue({ id: "new-user" });
   prismaMock.workspaceMember.findUnique.mockResolvedValue(null);
@@ -392,10 +399,58 @@ describe("SAML directory auto-join", () => {
   });
 });
 
-describe("GET /api/auth/saml/slo", () => {
+describe("SAML single logout", () => {
   it("destroys the local session and returns to /login", async () => {
     const response = await samlSlo(new Request(`${ORIGIN}/api/auth/saml/slo`));
     expect(authMock.destroySession).toHaveBeenCalled();
     expect(response.headers.get("location")).toBe(`${ORIGIN}/login`);
+  });
+
+  it("validates a signed LogoutRequest for a workspace connection", async () => {
+    prismaMock.ssoConnection.findUnique.mockResolvedValue(CONNECTION);
+    const form = new FormData();
+    form.set("SAMLRequest", "signed-logout-request");
+    const response = await samlSlo(
+      new Request(`${ORIGIN}/api/auth/saml/slo?connection=connection-1`, {
+        method: "POST",
+        body: form,
+      }),
+    );
+    expect(client.validatePostRequestAsync).toHaveBeenCalledWith({
+      SAMLRequest: "signed-logout-request",
+    });
+    expect(authMock.destroySession).toHaveBeenCalled();
+    expect(activityMock.logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sso.logout" }),
+    );
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/login`);
+  });
+
+  it("still destroys the local session when validation fails, but audits the failure", async () => {
+    prismaMock.ssoConnection.findUnique.mockResolvedValue(CONNECTION);
+    client.validatePostRequestAsync.mockRejectedValueOnce(new Error("bad signature"));
+    const form = new FormData();
+    form.set("SAMLRequest", "tampered");
+    await samlSlo(
+      new Request(`${ORIGIN}/api/auth/saml/slo?connection=connection-1`, {
+        method: "POST",
+        body: form,
+      }),
+    );
+    expect(authMock.destroySession).toHaveBeenCalled();
+    expect(activityMock.logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sso.logout_failed" }),
+    );
+  });
+
+  it("validates a redirect-binding LogoutRequest on GET", async () => {
+    prismaMock.ssoConnection.findUnique.mockResolvedValue(CONNECTION);
+    await samlSlo(
+      new Request(
+        `${ORIGIN}/api/auth/saml/slo?connection=connection-1&SAMLRequest=abc&Signature=sig&SigAlg=alg`,
+      ),
+    );
+    expect(client.validateRedirectAsync).toHaveBeenCalled();
+    expect(authMock.destroySession).toHaveBeenCalled();
   });
 });

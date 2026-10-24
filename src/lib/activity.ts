@@ -20,6 +20,8 @@ export type ActivityAction =
   | "sso.connection_updated"
   | "sso.connection_deleted"
   | "sso.metadata_refreshed"
+  | "sso.logout"
+  | "sso.logout_failed"
   | "sso.domain_added"
   | "sso.domain_verified"
   | "sso.domain_deleted"
