@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 507 implemented · 36 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 513 implemented · 30 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **36** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **30** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -18,13 +18,10 @@ This file lists the **36** rows that are not finished, area by area, plus 22 int
 
 ### 1. Editor & blocks
 
-95 done · 4 partial · 0 planned · 2 out of scope
+98 done · 1 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
-| Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
-| Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
@@ -92,23 +89,6 @@ This file lists the **36** rows that are not finished, area by area, plus 22 int
 | GitHub integration | Link commits/PRs. | 🟡 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
-
-### 14. AI
-
-15 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-
-### 15. Media & embeds
-
-19 done · 2 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
-| Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
 
 ### 16. Navigation & UX
 

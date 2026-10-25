@@ -73,8 +73,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Synced block source marker | Visual marker of the canonical source. | ✅ | Each mirror shows a "Synced" badge and a deep link to its source page/block; broken sources keep the last snapshot and show a warning. |
 | Template button block | Reusable set of blocks inserted on click. | ✅ | The node persists its chosen template id/label, lists built-ins plus workspace saved templates, and on click resolves the template server-side (workspace + page-edit + deletion checks), materializes variables and inserts fresh block ids after the button. Missing/foreign templates are disabled with an honest error. |
 | Button block | Interactive button triggering configured actions. | ✅ | Configurable label/style/confirm and the shared ButtonAction vocabulary (`open_url`, `set_property`, `insert_template`, `notify`). Server execution re-checks membership, page edit and lock; property writes delegate to the canonical `setPropertyValueAction`, template inserts re-authorize the template, links re-check the URL allowlist, and unsupported notifications fail explicitly. |
-| Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
-| Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
+| Ask-AI block | Prompt-driven AI block inside a page. | ✅ | Persists mode (ask/summarize), prompt, output destination and page-context source; runs through the existing `/api/ai` transport with inline pending/error states and inserts/replaces per configuration. The route derives page text server-side after membership + page-read + guest-scope checks, ignoring client context when a page id is named. Read-only rendering shows the stored answer. |
+| Two-column page property layout | Place properties side by side. | ✅ | A persisted single/two-column layout with order/full-width/divider controls, responsive collapse on narrow widths, and a shared adapter that reconciles saved order with the live schema without dropping properties. Stored in the active database view config. |
 
 ### Media blocks
 
@@ -102,7 +102,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
+| Inline database block | A database rendered inside a page. | ✅ | Persists display type (table/list/board/gallery), visible properties, group-by, filters and sorts per node; config is resolved against the live source schema with safe stale-view fallback, read-only editors cannot reconfigure, and board rendering is included. |
 | Linked view of a database | Re-display an existing database elsewhere. | ✅ | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. A detached instance has an in-block filter/sort editor, and row create/edit/delete writes through the source database’s authz. |
 | Page link mention | Inline link to another page. | ✅ | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | ✅ | Planned; block-id resolution needed. |
@@ -542,7 +542,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / OpenCode Go / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. Every request carries the product's user agent (`noema/<version>`); OpenCode Go additionally gets a stable `x-opencode-session` per conversation. |
 | Local model support | Run models without a cloud. | ✅ | Local OpenAI-compatible endpoints (loopback/private/`.local`/`host.docker.internal`) can be saved, tested, listed and enabled without an API key; remote providers still require TLS and a key. Workspace → env precedence, key omission and encrypted-key preservation are tested. See `src/lib/ai-providers.ts` and the AI settings UI. |
 | Prompt library | Reusable saved prompts. | ✅ | `WorkspacePrompt` rows with workspace/personal scope, membership-gated CRUD/clone actions, a persisted settings manager and a chat-composer picker that inserts a prompt body into the draft without discarding typed text. Seven built-in AI skills stay code-owned. Spec: docs/specs/ai-surface.md (R25.22). |
-| AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI cost controls | Token budgets per workspace. | ✅ | Durable `AiBudget`/`AiUsage` rows meter per workspace/month/surface. One transport guard refuses over-budget calls with `503 AI_BUDGET_EXCEEDED`, captures JSON/SSE usage (falling back to the documented estimate), records failures, and covers chat, ask, skills, autofill and transcription. Admin settings edit the ceiling/warn/hard-stop and reset/show per-surface usage. |
 | AI data boundaries | Guarantee no training on your data. | ✅ | `docs/AI-BOUNDARIES.md` documents the per-surface data flow. The transport enforces a payload-stripping diagnostic sink (no prompts/responses unless `AI_LOG_PROMPTS=true`), adds no training/telemetry forwarding, refuses providers flagged as training-on-data unless explicitly allowed, and derives local-only processing from the effective endpoint. Transcription uses the same guard. |
 
 ## 15. Media & embeds
@@ -559,7 +559,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Image alt text | Accessibility description. | ✅ | Alt-text editor in the block; uploads still seed it from the filename and the read-only renderer passes it to `alt`. |
 | Image resize | Change displayed dimensions. | ✅ | Drag handle stores a clamped percent `width` on the node (15-100, double-click resets); persists across reload and renders read-only; pure maths red-first in `src/lib/media.ts`. |
 | Alignment controls | Left/center/right media. | ✅ | Align buttons on the image block (the only media node with chrome today) store `align` and apply auto margins in the editor and the doc renderer; survives save/reload. |
-| Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
+| Paste image from clipboard | Insert a copied image. | ✅ | Paste reads `clipboardData.files` and `items`, resolves blank/generic MIME types from the filename, deduplicates a bitmap exposed twice, uploads through the existing pipeline, and inserts at the paste-time selection after async upload. |
 | Drag-drop files | Drop files onto a page. | ✅ | Uploads show a progress indicator: `uploadFile` now drives the request through XHR and a `Uploading <name> — N%` toast from `xhr.upload.onprogress` (dismissed on settle), so drop, paste, the file picker and the database attach flow all report progress. |
 | PDF preview | Inline PDF viewing. | ✅ | Planned. |
 | Code embed | Embed executable snippets. | ✅ | Planned. |
@@ -568,7 +568,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Tweet embed | Embed a post. | ✅ | Planned. |
 | YouTube/Vimeo embeds | Video embeds by URL. | ✅ | Provider-specific path in `src/lib/embeds.ts`: `EMBED_HOST_ALLOWLIST` gates `detectEmbed()`, which canonicalises every YouTube/Vimeo URL shape (incl. start times) and `embedMeta()` feeds the editor iframe and the read-only renderer (title, aspect ratio, `allow`, provider badge). |
 | Figma embeds | Live design embed. | ✅ | Planned. |
-| Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
+| Animated GIF/devices | Play GIFs and device previews. | ✅ | GIF uploads/renders bypass lossy transform params, read-only rendering includes the previously dropped animated-image case, and a server-safe device frame renders live GIF/video/embed children at desktop/tablet/phone/watch sizes with guarded scaling. |
 | Media storage backend | Pluggable object storage. | ✅ | `src/lib/storage.ts`: **local filesystem** (default) or any **S3-compatible** endpoint (AWS, MinIO, R2, Garage) signed with Signature V4 over `fetch` — no SDK. Selected by `S3_BUCKET`; `npm run check:storage` proves the live round trip and `storage.test.ts` proves the signed S3 driver against a fake endpoint. |
 | Media garbage collection | Remove orphaned assets. | ✅ | Planned. |
 
@@ -771,7 +771,7 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 95 | 4 | 0 | 2 | 101 |
+| 1. Editor & blocks | 98 | 1 | 0 | 2 | 101 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 52 | 1 | 0 | 0 | 53 |
 | 4. Properties | 35 | 0 | 0 | 1 | 36 |
@@ -784,15 +784,15 @@ The table below summarizes how many feature rows fall into each status, per area
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
-| 14. AI | 15 | 1 | 0 | 0 | 16 |
-| 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
+| 14. AI | 16 | 0 | 0 | 0 | 16 |
+| 15. Media & embeds | 21 | 0 | 0 | 0 | 21 |
 | 16. Navigation & UX | 48 | 0 | 0 | 2 | 50 |
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **507** | **36** | **0** | **22** | **565** |
+| **Total** | **513** | **30** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
