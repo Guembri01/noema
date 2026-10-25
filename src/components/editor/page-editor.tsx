@@ -11,7 +11,7 @@ import {
   useState
 } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
+import { Extension, type JSONContent } from "@tiptap/core";
 import { BubbleMenu } from "@tiptap/react/menus";
 import DragHandle from "@tiptap/extension-drag-handle-react";
 import StarterKit from "@tiptap/starter-kit";
@@ -20,8 +20,6 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import {
   ImageBlock,
-  mediaKindOf,
-  type MediaKind,
 } from "@/components/editor/extensions/image-block";
 import { BlockColors } from "@/components/editor/extensions/block-colors";
 import { CodeBlock } from "@/components/editor/extensions/code-block";
@@ -56,7 +54,12 @@ import {
 } from "@/components/editor/comment-anchor";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, Selection } from "@tiptap/pm/state";
+import {
+  Plugin,
+  PluginKey,
+  Selection,
+  type SelectionBookmark,
+} from "@tiptap/pm/state";
 import { dropCursor } from "@tiptap/pm/dropcursor";
 import type { EditorView } from "@tiptap/pm/view";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
@@ -133,6 +136,8 @@ import {
 } from "@/lib/draft-store";
 import { updatePageAction } from "@/server/actions/pages";
 import { uploadFile } from "@/lib/upload-client";
+import { planUploadedAssetRender } from "@/lib/uploaded-media";
+import { extractClipboardImageFiles } from "@/lib/clipboard-files";
 import { DUR, EASE, Z } from "@/lib/design-tokens";
 import {
   Callout,
@@ -158,10 +163,8 @@ import {
   AnimatedImage,
   prefersReducedMotion,
   resolveAnimatedMediaAttrs,
-  looksAnimatedByExtension,
 } from "@/components/editor/extensions/animated-image";
 import { LinkedDatabase } from "@/components/editor/extensions/linked-database";
-import { GIF_MIME } from "@/lib/animated-media";
 import {
   collectBlocks,
   copyReference,
@@ -245,19 +248,36 @@ function isOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
 }
 
+/** Resolve a live selection bookmark, clamped to the current document. */
+function resolveInsertion(
+  editor: Editor,
+  marker: SelectionBookmark | null | undefined,
+): { from: number; to: number } | null {
+  if (!marker) return null;
+  try {
+    const selection = marker.resolve(editor.state.doc);
+    const max = editor.state.doc.content.size;
+    const from = Math.min(Math.max(0, selection.from), max);
+    const to = Math.min(Math.max(from, selection.to), max);
+    return { from, to };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Pick the media variant an uploaded asset should render as in the image
- * block. The asset's own MIME type wins (uploads always report one); an
- * untyped asset falls back to the URL-extension inference of `mediaKindOf`,
- * and anything still unrecognised becomes a downloadable file block rather
- * than a broken picture. Images never reach here (the caller keeps the plain
- * `setImage` path).
+ * Snapshot the current selection as a mapped bookmark. The bookmark survives
+ * the asynchronous upload: when it resolves it is mapped through every
+ * transaction that happened meanwhile, so the picture lands where the caret
+ * was at paste/drop time rather than at the caret when the request settles.
  */
-function uploadedMediaKind(asset: { url: string; mimeType: string }): MediaKind {
-  if (asset.mimeType.startsWith("video/")) return "video";
-  if (asset.mimeType.startsWith("audio/")) return "audio";
-  const inferred = mediaKindOf(asset.url);
-  return inferred === "image" ? "file" : inferred;
+function selectionMarker(editor: Editor | null | undefined): SelectionBookmark | null {
+  if (!editor || !editor.state?.selection) return null;
+  try {
+    return editor.state.selection.getBookmark();
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve a presence palette name (`assignColor`) to its avatar CSS colour. */
@@ -795,58 +815,67 @@ function PageEditorBody({
     );
   }, []);
 
-  const insertFiles = useCallback(    async (files: File[]) => {
+  const insertFiles = useCallback(
+    async (files: File[], options: { at?: SelectionBookmark | null } = {}) => {
       const editor = editorRef.current;
       if (!editor) return;
       const reducedMotion = prefersReducedMotion();
+      // Upload first, then insert every successful asset in one transaction at
+      // the selection captured by the caller. Uploads are slow and the caret
+      // may have moved (or the document changed) by the time they settle; a
+      // captured bookmark is mapped through those transactions, so pasted
+      // pictures land where the user pasted them, in paste order, exactly once.
+      const contents: JSONContent[] = [];
       for (const file of files) {
         try {
           const asset = await uploadFile(file, workspaceId);
-          if (asset.mimeType.startsWith("image/")) {
-            if (asset.mimeType === GIF_MIME || looksAnimatedByExtension(asset.url)) {
-              // A GIF is sniffed for real frames (`isAnimatedGif`) and rendered
-              // through the playback policy (`playbackPolicy`), which refuses to
-              // autoplay under `prefers-reduced-motion`.
-              let bytes: Uint8Array | undefined;
-              try {
-                bytes = new Uint8Array(await file.arrayBuffer());
-              } catch {
-                bytes = undefined;
-              }
-              const { attrs } = resolveAnimatedMediaAttrs({
-                src: asset.url,
-                alt: asset.name,
-                mimeType: asset.mimeType,
-                ...(bytes === undefined ? {} : { bytes }),
-                reducedMotion,
-                autoplay: true,
-              });
-              editor.chain().focus().insertContent({ type: "animatedImage", attrs }).run();
-            } else {
-              editor.chain().focus().setImage({ src: asset.url, alt: asset.name }).run();
+          const plan = planUploadedAssetRender(asset);
+          if (plan.type === "animatedImage") {
+            // A GIF keeps its original bytes. The playback decision is made by
+            // `isAnimatedGif` + `playbackPolicy`; the node's `src` is the
+            // original URL with any lossy transform params stripped.
+            let bytes: Uint8Array | undefined;
+            try {
+              bytes = new Uint8Array(await file.arrayBuffer());
+            } catch {
+              bytes = undefined;
             }
+            const { attrs } = resolveAnimatedMediaAttrs({
+              src: plan.src,
+              alt: asset.name,
+              mimeType: plan.mimeType,
+              ...(bytes === undefined ? {} : { bytes }),
+              reducedMotion,
+              autoplay: true,
+            });
+            contents.push({ type: "animatedImage", attrs });
+          } else if (plan.type === "image") {
+            contents.push({ type: "image", attrs: { src: plan.src, alt: asset.name } });
           } else {
             // Non-image uploads render through the image block's media
             // variants (video/audio/file); the explicit `mediaType` keeps the
             // element from being inferred wrong off the stored URL.
-            editor
-              .chain()
-              .focus()
-              .insertContent({
-                type: "image",
-                attrs: {
-                  src: asset.url,
-                  alt: asset.name,
-                  mediaType: uploadedMediaKind(asset),
-                },
-              })
-              .run();
+            contents.push({
+              type: "image",
+              attrs: {
+                src: plan.src,
+                alt: asset.name,
+                mediaType: plan.mediaType,
+              },
+            });
           }
           toast.success(`${t(locale, "uploadedPrefix")} ${asset.name}`);
         } catch (error) {
           toast.error(error instanceof Error ? error.message : t(locale, "uploadFailed"));
         }
       }
+      if (contents.length === 0) return;
+
+      const range = resolveInsertion(editor, options.at);
+      const chain = editor.chain().focus();
+      if (range) chain.insertContentAt(range, contents);
+      else chain.insertContent(contents);
+      chain.run();
     },
     [workspaceId, locale],
   );
@@ -854,18 +883,26 @@ function PageEditorBody({
   /**
    * Upload the images a paste plan accepted (real files first, otherwise the
    * HTML data URL `extractDataUrl` recovered) through the normal attachment
-   * pipeline, and report anything `inspectClipboardItem` refused.
+   * pipeline, and report anything `inspectClipboardItem` refused. All accepted
+   * files are inserted in one batch at the paste-time bookmark, so a clipboard
+   * that exposes the same image through `files` and `items` cannot insert it
+   * twice.
    */
   const uploadClipboardImages = useCallback(
-    async (plan: ClipboardImagePlan, files: File[]) => {
+    async (
+      plan: ClipboardImagePlan,
+      files: File[],
+      at?: SelectionBookmark | null,
+    ) => {
+      const ready: File[] = [];
       for (const upload of plan.uploads) {
         const file =
           upload.source === "data-url"
             ? dataUrlUploadFile(upload)
             : files[upload.fileIndex ?? -1] ?? null;
-        if (!file) continue;
-        await insertFiles([file]);
+        if (file) ready.push(file);
       }
+      if (ready.length > 0) await insertFiles(ready, { at });
       if (plan.skipped.length > 0) {
         toast.error(`${plan.skipped.length} clipboard image(s) skipped`);
       }
@@ -1231,9 +1268,11 @@ function PageEditorBody({
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
 
-        // Clipboard images: gate every real file and any `data:` image embedded
-        // in the HTML flavour through the clipboard-image engine before upload.
-        const files = Array.from(clipboard.files ?? []);
+        // Clipboard images: the bitmap may arrive as `files`, as `items` (some
+        // Safari/WebView shells) or both. Extract/dedupe first, then gate every
+        // real file and any `data:` image embedded in the HTML flavour through
+        // the clipboard-image engine before upload.
+        const files = extractClipboardImageFiles<File>(clipboard);
         const html = clipboard.getData("text/html");
         const imagePlan = planClipboardImages({
           files: files.map((file) => ({
@@ -1244,7 +1283,10 @@ function PageEditorBody({
           html,
         });
         if (files.length > 0 || imagePlan.uploads.length > 0) {
-          void uploadClipboardImages(imagePlan, files);
+          // Snapshot the caret before the async upload: a bookmark is mapped
+          // through later transactions, so the image lands at the paste point.
+          const at = view.state.selection.getBookmark();
+          void uploadClipboardImages(imagePlan, files, at);
           return true;
         }
 
@@ -1290,7 +1332,19 @@ function PageEditorBody({
         const files = Array.from(dragEvent.dataTransfer?.files ?? []);
         if (files.length > 0) {
           event.preventDefault();
-          void insertFiles(files);
+          // Same paste-time guarantee as `handlePaste`: capture a mapped
+          // bookmark at the drop point before the async upload starts.
+          let at: SelectionBookmark | null = null;
+          const found = view.posAtCoords({ left: dragEvent.clientX, top: dragEvent.clientY });
+          if (found) {
+            try {
+              at = Selection.near(view.state.doc.resolve(found.pos)).getBookmark();
+            } catch {
+              at = null;
+            }
+          }
+          if (!at) at = selectionMarker(editorRef.current);
+          void insertFiles(files, { at });
           return true;
         }
         const dragging = view.dragging as {

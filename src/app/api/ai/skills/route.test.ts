@@ -126,6 +126,7 @@ describe("editor skills still use the registry prompts", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("Proofread") }),
       CONFIG,
+      expect.objectContaining({ surface: "skill", userId: "u1" }),
     );
   });
 });
@@ -141,6 +142,7 @@ describe("writing skills route through ai-writing", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("Alpha beta gamma.") }),
       CONFIG,
+      expect.objectContaining({ surface: "skill", userId: "u1" }),
     );
   });
 
@@ -153,6 +155,7 @@ describe("writing skills route through ai-writing", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("English") }),
       CONFIG,
+      expect.objectContaining({ surface: "skill", userId: "u1" }),
     );
   });
 
@@ -166,6 +169,7 @@ describe("writing skills route through ai-writing", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("French (fr)") }),
       CONFIG,
+      expect.objectContaining({ surface: "skill", userId: "u1" }),
     );
   });
 
@@ -182,6 +186,7 @@ describe("writing skills route through ai-writing", () => {
       expect(ai.chatComplete).toHaveBeenLastCalledWith(
         expect.objectContaining({ user: expect.stringContaining(`${name} (${code})`) }),
         CONFIG,
+        expect.objectContaining({ surface: "skill", userId: "u1" }),
       );
     }
   });
@@ -205,6 +210,7 @@ describe("writing skills route through ai-writing", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("Continue") }),
       CONFIG,
+      expect.objectContaining({ surface: "skill", userId: "u1" }),
     );
   });
 

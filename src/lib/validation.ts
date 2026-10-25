@@ -242,6 +242,10 @@ export const aiRequestSchema = z.object({
   // would turn a foreign or malformed id into a 400 instead of the answer the
   // access check gives.
   workspaceId: z.string().min(1).nullish(),
+  // An Ask-AI block names the page it lives in. The route derives the page
+  // text itself after checking access — a client-supplied `context` is never
+  // trusted as a page's content when this id is present.
+  pageId: z.string().min(1).nullish(),
   maxTokens: z.number().int().optional(),
 });
 

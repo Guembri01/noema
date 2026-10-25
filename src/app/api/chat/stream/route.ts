@@ -10,11 +10,12 @@ import {
 import { prisma } from "@/lib/db";
 import {
   AI_BUDGET_EXCEEDED,
-  aiRequestBudgetAllows,
+  aiBudgetGuard,
   chatCompleteStream,
   providerAttribution,
   providerClass,
   resolveAiConfig,
+  type AiCallUsage,
 } from "@/lib/ai-provider";
 import { conversationSessionId } from "@/lib/ai-session";
 import { buildChatRequest } from "@/lib/chat-runtime";
@@ -187,16 +188,22 @@ export async function POST(request: Request) {
   });
 
   if (
-    !aiRequestBudgetAllows(requestConfig, {
-      system: chatRequest.system,
-      context: chatRequest.context,
-      user: chatRequest.user,
-    })
+    !(
+      await aiBudgetGuard(requestConfig, {
+        system: chatRequest.system,
+        context: chatRequest.context,
+        user: chatRequest.user,
+      })
+    ).allowed
   ) {
-    return NextResponse.json({ error: AI_BUDGET_EXCEEDED }, { status: 429 });
+    return NextResponse.json(
+      { error: AI_BUDGET_EXCEEDED, code: "AI_BUDGET_EXCEEDED" },
+      { status: 503 },
+    );
   }
 
   const encoder = new TextEncoder();
+  let capturedUsage: AiCallUsage | null = null;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let answer = "";
@@ -209,6 +216,13 @@ export async function POST(request: Request) {
             temperature: 0.3,
           },
           requestConfig,
+          {
+            surface: "chat-stream",
+            userId: user.id,
+            onUsage: (usage) => {
+              capturedUsage = usage;
+            },
+          },
         )) {
           answer += delta;
           controller.enqueue(encoder.encode(delta));
@@ -226,6 +240,7 @@ export async function POST(request: Request) {
       }
 
       const body = linkifyReferences(answer.trim(), chatRequest.intel.references);
+      const usage = capturedUsage as AiCallUsage | null;
       if (body) {
         await prisma.chatMessage
           .create({
@@ -240,6 +255,15 @@ export async function POST(request: Request) {
                 references: chatRequest.intel.references,
                 model: requestConfig.model,
                 provider: config.source,
+                ...(usage
+                  ? {
+                      usage: {
+                        inputTokens: usage.inputTokens,
+                        outputTokens: usage.outputTokens,
+                        estimated: usage.estimated,
+                      },
+                    }
+                  : {}),
               },
             },
           })

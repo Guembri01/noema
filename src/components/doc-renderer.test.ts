@@ -287,6 +287,53 @@ describe("DocRenderer template button / Button atoms", () => {
   });
 });
 
+describe("DocRenderer Ask AI block", () => {
+  it("renders the prompt and the stored answer, with no interactive control", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "askAi",
+          attrs: {
+            id: "ask1",
+            prompt: "What changed this week?",
+            mode: "ask",
+            answer: "Two releases shipped.",
+            status: "done",
+          },
+        },
+      ],
+    });
+    expect(html).toContain('data-ask-ai=""');
+    expect(html).toContain('data-ask-ai-read=""');
+    expect(html).toContain("What changed this week?");
+    expect(html).toContain("Two releases shipped.");
+    expect(html).not.toContain("<button");
+  });
+
+  it("renders the error honestly and remains readable when AI failed", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "askAi",
+          attrs: {
+            id: "ask2",
+            prompt: "Summarize this page",
+            mode: "summarize",
+            status: "error",
+            error: "AI is not configured.",
+          },
+        },
+      ],
+    });
+    expect(html).toContain('data-mode="summarize"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("AI is not configured.");
+    expect(html).not.toContain("<button");
+  });
+});
+
 describe("DocRenderer Mermaid blocks", () => {
   it("routes Mermaid code to the client diagram renderer", () => {
     const html = render({
@@ -318,6 +365,101 @@ describe("DocRenderer UML blocks", () => {
     });
     expect(html).toContain('data-uml-diagram="loading"');
     expect(html).toContain("UML diagram");
+  });
+});
+
+describe("DocRenderer animated media / device previews", () => {
+  const animatedDoc = (attrs: Record<string, unknown>) => ({
+    type: "doc",
+    content: [{ type: "animatedImage", attrs }],
+  });
+
+  it("renders an animated GIF from its original bytes, never a lossy transform", () => {
+    const html = render(
+      animatedDoc({
+        src: "/api/files/ws-1/token.gif?w=320&format=webp&q=40&v=2",
+        alt: "loop",
+        mediaType: "image",
+        animated: true,
+        staticFallback: false,
+      }),
+    );
+    expect(html).toContain('data-animated-image=""');
+    expect(html).toContain('data-animated="true"');
+    expect(srcsOf(html)).toEqual(["/api/files/ws-1/token.gif?v=2"]);
+    expect(html).not.toContain("format=webp");
+    expect(html).not.toContain("w=320");
+  });
+
+  it("keeps a GIF visible even when its stored playback policy is a static fallback", () => {
+    const html = render(
+      animatedDoc({
+        src: "/api/files/ws-1/still.gif",
+        alt: "still",
+        animated: true,
+        staticFallback: true,
+      }),
+    );
+    expect(html).toContain('data-static-fallback="true"');
+    expect(srcsOf(html)).toEqual(["/api/files/ws-1/still.gif"]);
+  });
+
+  it("proxies an external animated GIF and still renders an image", () => {
+    const html = render(
+      animatedDoc({
+        src: "https://images.example.com/loop.gif?format=webp",
+        alt: "loop",
+        animated: true,
+      }),
+    );
+    expect(srcsOf(html)).toEqual([
+      "/api/external-image?url=https%3A%2F%2Fimages.example.com%2Floop.gif",
+    ]);
+    expect(html).toContain('data-animated-image=""');
+  });
+
+  it("wraps an animated media block in a device frame", () => {
+    const html = render(
+      animatedDoc({
+        src: "/api/files/ws-1/loop.gif",
+        alt: "loop",
+        animated: true,
+        device: "phone",
+      }),
+    );
+    expect(html).toContain('data-device-preview="phone"');
+    expect(html).toContain("max-width:390px");
+    expect(srcsOf(html)).toEqual(["/api/files/ws-1/loop.gif"]);
+  });
+
+  it("wraps a provider embed in a device frame without weakening sandbox policy", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "embed",
+          attrs: { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", device: "phone" },
+        },
+      ],
+    });
+    expect(html).toContain('data-device-preview="phone"');
+    expect(html).toContain('src="https://www.youtube.com/embed/dQw4w9WgXcQ"');
+    expect(html).toContain("sandbox=");
+    expect(html).toContain("allow-scripts");
+  });
+
+  it("unwraps an unknown device id but keeps the provider iframe live", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "embed",
+          attrs: { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", device: "toaster" },
+        },
+      ],
+    });
+    expect(html).not.toContain("data-device-preview");
+    expect(html).toContain('src="https://www.youtube.com/embed/dQw4w9WgXcQ"');
   });
 });
 

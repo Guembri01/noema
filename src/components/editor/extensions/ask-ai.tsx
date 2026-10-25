@@ -15,6 +15,10 @@ import { hasMarkdown, markdownToTipTap } from "@/lib/markdown"
 import { stripLoneSurrogates } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import {
+  ASK_AI_MODES,
+  ASK_AI_OUTPUTS,
+  ASK_AI_SOURCES,
+  ASK_AI_SUMMARIZE_PROMPT,
   applyAnswer,
   applyError,
   buildAskAiRequest,
@@ -24,15 +28,23 @@ import {
   type AskAiBlock,
   type AskAiContext,
   type AskAiIssue,
+  type AskAiMode,
+  type AskAiOutput,
   type AskAiPageContext,
   type AskAiRequest,
+  type AskAiSource,
   type AskAiStatus,
 } from "@/lib/ask-ai-block";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     askAi: {
-      setAskAi: (attrs?: { prompt?: string }) => ReturnType;
+      setAskAi: (attrs?: {
+        prompt?: string;
+        mode?: AskAiMode;
+        output?: AskAiOutput;
+        source?: AskAiSource;
+      }) => ReturnType;
     };
   }
 }
@@ -40,11 +52,11 @@ declare module "@tiptap/core" {
 /** Character cap the editor validates a stored prompt against (route cap). */
 export const ASK_AI_PROMPT_MAX_CHARS = 4000;
 
-/** The prompt the "Summarize page" button grounds a summarize request in. */
-export const ASK_AI_SUMMARIZE_PROMPT = "Summarize this page";
+/** Re-export the shared default so the slash menu and the node agree. */
+export { ASK_AI_SUMMARIZE_PROMPT };
 
-/** Which `/api/ai` mode a request runs in. */
-export type AskAiMode = "ask" | "summarize";
+/** Which `/api/ai` mode a request runs in (kept for existing imports). */
+export type { AskAiMode };
 
 let askAiSeed = 0;
 
@@ -79,6 +91,21 @@ export function askAiBlockFromAttrs(attrs: Record<string, unknown>): AskAiBlock 
     id:
       typeof attrs.id === "string" && attrs.id.trim() !== "" ? attrs.id.trim() : mintAskAiId(),
     prompt: typeof attrs.prompt === "string" ? attrs.prompt : "",
+    mode:
+      typeof attrs.mode === "string" &&
+      (ASK_AI_MODES as readonly string[]).includes(attrs.mode)
+        ? (attrs.mode as AskAiMode)
+        : "ask",
+    output:
+      typeof attrs.output === "string" &&
+      (ASK_AI_OUTPUTS as readonly string[]).includes(attrs.output)
+        ? (attrs.output as AskAiOutput)
+        : "answer",
+    source:
+      typeof attrs.source === "string" &&
+      (ASK_AI_SOURCES as readonly string[]).includes(attrs.source)
+        ? (attrs.source as AskAiSource)
+        : "page",
     status: (typeof attrs.status === "string" ? attrs.status : "idle") as AskAiStatus,
     updatedAt: typeof attrs.updatedAt === "string" ? attrs.updatedAt : "",
   };
@@ -95,6 +122,9 @@ export function askAiAttrsFromBlock(block: AskAiBlock): Record<string, unknown> 
   return {
     id: block.id,
     prompt: block.prompt,
+    mode: block.mode ?? "ask",
+    output: block.output ?? "answer",
+    source: block.source ?? "page",
     answer: block.answer ?? "",
     model: block.model ?? null,
     context: block.context ?? null,
@@ -148,6 +178,7 @@ export type AskAiPlan = {
     prompt: string;
     context: string;
     workspaceId: string;
+    pageId?: string;
     mode: AskAiMode;
     maxTokens: number;
   };
@@ -160,24 +191,36 @@ export type AskAiPlan = {
  * validates the block, refreshes the context hashes, builds the deterministic
  * request and derives the `/api/ai` body from it. Pure: no clock is read unless
  * `now` is supplied, and nothing is mutated.
+ *
+ * `pageId` is the page the block lives in — supplied by the editor (the page
+ * route's id), never read out of the block's attributes. The route re-checks
+ * access and derives the page text server-side; the `context` sent here is a
+ * fallback/display preview only.
  */
 export function planAskAiRequest(input: {
   block: AskAiBlock;
   pageContext?: AskAiPageContext;
   workspaceId: string;
+  pageId?: string;
   mode?: AskAiMode;
   now?: string | Date;
   maxPromptChars?: number;
   modelAllowlist?: readonly string[];
 }): AskAiPlan {
-  const mode: AskAiMode = input.mode ?? "ask";
-  const pageContext = input.pageContext;
-  const stale = isStale(input.block, pageContext);
-  const issues = validateAskAiBlock(input.block, {
+  const mode: AskAiMode = input.mode ?? input.block.mode ?? "ask";
+  const source: AskAiSource = input.block.source ?? "page";
+  const requested: AskAiBlock =
+    mode === "summarize" && input.block.prompt.trim() === ""
+      ? { ...input.block, prompt: ASK_AI_SUMMARIZE_PROMPT }
+      : input.block;
+  const usePageContext = source === "page" && input.pageContext !== undefined;
+  const pageContext = usePageContext ? input.pageContext : undefined;
+  const stale = usePageContext ? isStale(requested, pageContext) : false;
+  const issues = validateAskAiBlock(requested, {
     maxPromptChars: input.maxPromptChars ?? ASK_AI_PROMPT_MAX_CHARS,
     ...(input.modelAllowlist === undefined ? {} : { modelAllowlist: input.modelAllowlist }),
   });
-  const block = refreshContext(input.block, pageContext);
+  const block = usePageContext ? refreshContext(requested, pageContext) : requested;
   const request = buildAskAiRequest(block, {
     ...(pageContext === undefined ? {} : { pageContext }),
     ...(input.now === undefined ? {} : { now: input.now }),
@@ -192,8 +235,11 @@ export function planAskAiRequest(input: {
     issues,
     body: {
       prompt: block.prompt,
-      context,
+      context: usePageContext ? context : "",
       workspaceId: input.workspaceId,
+      ...(typeof input.pageId === "string" && input.pageId.trim() !== ""
+        ? { pageId: input.pageId.trim() }
+        : {}),
       mode,
       maxTokens: request.params.maxTokens,
     },
@@ -228,6 +274,50 @@ export function askAiIsStale(block: AskAiBlock, pageContext?: AskAiPageContext):
   return isStale(block, pageContext);
 }
 
+/** Convert an answer into editor blocks (Markdown when it looks like Markdown). */
+export function askAiAnswerContent(answer: string): Array<Record<string, unknown>> {
+  if (typeof answer !== "string" || answer.trim() === "") return [];
+  // Convert Markdown to real blocks (headings, lists, code) instead of
+  // flattening every line into a paragraph.
+  if (hasMarkdown(answer)) return markdownToTipTap(answer) as Array<Record<string, unknown>>;
+  return answer
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => ({ type: "paragraph", content: [{ type: "text", text: line }] }));
+}
+
+/** Where a configured output writes the answer, relative to the block node. */
+export type AskAiInsertion = { from: number; to?: number };
+
+/**
+ * The argument `insertContentAt` takes for an insertion: a bare position for
+ * an insert, a `{from,to}` range for a replacement.
+ */
+export function askAiInsertTarget(
+  insertion: AskAiInsertion,
+): number | { from: number; to: number } {
+  return insertion.to === undefined
+    ? insertion.from
+    : { from: insertion.from, to: insertion.to };
+}
+
+/**
+ * The document range an answer is written into for a configured output.
+ * `answer` keeps the text in the card (nothing to insert) and a non-finite
+ * position is ignored, so a detached node never corrupts the document.
+ */
+export function askAiInsertionFor(
+  pos: number | undefined,
+  nodeSize: number,
+  output: AskAiOutput,
+): AskAiInsertion | null {
+  if (typeof pos !== "number" || !Number.isFinite(pos) || pos < 0) return null;
+  if (!Number.isFinite(nodeSize) || nodeSize <= 0) return null;
+  if (output === "insert") return { from: pos + nodeSize };
+  if (output === "replace") return { from: pos, to: pos + nodeSize };
+  return null;
+}
+
 /** A block that asks the configured AI provider and can insert the answer. */
 export const AskAi = Node.create<{ workspaceId: string; locale: string; pageId?: string }>({
   name: "askAi",
@@ -245,6 +335,11 @@ export const AskAi = Node.create<{ workspaceId: string; locale: string; pageId?:
       // from the original atom so stored documents keep loading.
       id: { default: null },
       prompt: { default: "" },
+      // The configured action and where its output goes, persisted so a
+      // reloaded page runs the block the author set up.
+      mode: { default: "ask" },
+      output: { default: "answer" },
+      source: { default: "page" },
       answer: { default: "" },
       model: { default: null },
       context: { default: null },
@@ -285,6 +380,7 @@ export const AskAi = Node.create<{ workspaceId: string; locale: string; pageId?:
 function AskAiView({
   node,
   editor,
+  getPos,
   updateAttributes,
   deleteNode,
   workspaceId,
@@ -295,65 +391,101 @@ function AskAiView({
   const block = askAiBlockFromAttrs(node.attrs as Record<string, unknown>);
   const prompt = block.prompt;
   const answer = block.answer ?? "";
+  const mode = block.mode ?? "ask";
+  const output = block.output ?? "answer";
+  const source = block.source ?? "page";
+  // Pending is an in-flight request, not a stored flag: a page reloaded after
+  // a crash mid-request should not claim to still be thinking.
+  const pending = loading;
 
-  const run = useCallback(
-    async (mode: AskAiMode) => {
-      const requested: AskAiBlock =
-        mode === "summarize" && block.prompt.trim() === ""
-          ? { ...block, prompt: ASK_AI_SUMMARIZE_PROMPT }
-          : block;
-      const plan = planAskAiRequest({
-        block: requested,
-        pageContext: askAiContextFromEditor(editor, pageId),
-        workspaceId: workspaceId ?? "",
-        mode,
-        now: new Date(),
+  /** The node's live position, or `undefined` when it has been detached. */
+  const currentPos = (): number | undefined => {
+    try {
+      return getPos();
+    } catch {
+      return undefined;
+    }
+  };
+
+  const run = useCallback(async () => {
+    const plan = planAskAiRequest({
+      block,
+      pageContext: source === "page" ? askAiContextFromEditor(editor, pageId) : undefined,
+      workspaceId: workspaceId ?? "",
+      ...(pageId === undefined ? {} : { pageId }),
+      mode,
+    });
+    if (plan.issues.length > 0) {
+      toast.error(plan.issues[0]?.message ?? t(locale, "aiRequestFailed"));
+      return;
+    }
+    setLoading(true);
+    // Persist the refreshed context hashes (and the pending status) before the
+    // request leaves, so a reload mid-flight still shows the right baseline.
+    updateAttributes(askAiAttrsFromBlock({ ...plan.block, status: "pending" }));
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(plan.body),
       });
-      if (plan.issues.length > 0) {
-        toast.error(plan.issues[0]?.message ?? t(locale, "aiRequestFailed"));
+      const data = (await response.json().catch(() => null)) as
+        | { text?: string; error?: string }
+        | null;
+      if (!response.ok) {
+        const message = data?.error ?? `${t(locale, "aiRequestFailed")} (${response.status})`;
+        updateAttributes(askAiFailedAttrs(plan.block, message));
+        toast.error(message);
         return;
       }
-      setLoading(true);
-      // Persist the refreshed context hashes (and the pending status) before the
-      // request leaves, so a reload mid-flight still shows the right baseline.
-      updateAttributes(askAiAttrsFromBlock({ ...plan.block, status: "pending" }));
-      try {
-        const response = await fetch("/api/ai", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(plan.body),
-        });
-        const data = (await response.json()) as { text?: string; error?: string };
-        if (!response.ok) {
-          updateAttributes(
-            askAiFailedAttrs(plan.block, data.error ?? t(locale, "aiRequestFailed")),
-          );
-          toast.error(data.error ?? t(locale, "aiRequestFailed"));
-          return;
+      const text = stripLoneSurrogates(data?.text ?? "");
+      if (output === "replace") {
+        // Replace the block itself; there is no card left to update when the
+        // replacement succeeded. With no live position, keep the answer in the
+        // card rather than dropping it.
+        const content = askAiAnswerContent(text);
+        const insertion = askAiInsertionFor(currentPos(), node.nodeSize, output);
+        if (insertion && content.length > 0) {
+          editor.chain().focus().insertContentAt(askAiInsertTarget(insertion), content).run();
+        } else {
+          updateAttributes(askAiAnsweredAttrs(plan.block, text));
         }
-        updateAttributes(askAiAnsweredAttrs(plan.block, stripLoneSurrogates(data.text ?? "")));
-      } catch {
-        updateAttributes(askAiFailedAttrs(plan.block, t(locale, "aiRequestFailed")));
-        toast.error(t(locale, "aiRequestFailed"));
-      } finally {
-        setLoading(false);
+        return;
       }
-    },
-    [block, editor, locale, pageId, updateAttributes, workspaceId],
-  );
+      updateAttributes(askAiAnsweredAttrs(plan.block, text));
+      if (output === "insert") {
+        const content = askAiAnswerContent(text);
+        const insertion = askAiInsertionFor(currentPos(), node.nodeSize, output);
+        if (insertion && content.length > 0) {
+          editor.chain().focus().insertContentAt(askAiInsertTarget(insertion), content).run();
+        }
+      }
+    } catch {
+      updateAttributes(askAiFailedAttrs(plan.block, t(locale, "aiRequestFailed")));
+      toast.error(t(locale, "aiRequestFailed"));
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    block,
+    editor,
+    getPos,
+    locale,
+    mode,
+    node.nodeSize,
+    output,
+    pageId,
+    source,
+    updateAttributes,
+    workspaceId,
+  ]);
 
   const insertAnswer = () => {
-    if (!answer.trim()) return;
-    // Convert Markdown to real blocks (headings, lists, code) instead of
-    // flattening every line into a paragraph.
-    const content = hasMarkdown(answer)
-      ? markdownToTipTap(answer)
-      : answer
-          .split("\n")
-          .filter((line) => line.trim() !== "")
-          .map((line) => ({ type: "paragraph", content: [{ type: "text", text: line }] }));
+    const content = askAiAnswerContent(answer);
     if (content.length === 0) return;
-    editor.chain().focus().insertContent(content).run();
+    const insertion = askAiInsertionFor(currentPos(), node.nodeSize, "insert");
+    if (insertion) editor.chain().focus().insertContentAt(askAiInsertTarget(insertion), content).run();
+    else editor.chain().focus().insertContent(content).run();
   };
 
   return (
@@ -362,10 +494,51 @@ function AskAiView({
         <div className="noema-ask-head">
           <Sparkles className="h-3.5 w-3.5" /> {t(locale, "askAI")}
           {block.stale === true && (
-            <span className="noema-ask-stale" data-stale="true" title={t(locale, "askWord")}>
+            <span className="noema-ask-stale" data-stale="true" title={t(locale, "askAiStale")}>
               <RefreshCw className="h-3 w-3" />
             </span>
           )}
+        </div>
+        <div className="noema-ask-config">
+          <select
+            value={mode}
+            aria-label={t(locale, "askAiMode")}
+            onChange={(e) => {
+              const nextMode = e.target.value as AskAiMode;
+              // A summary with no page has nothing to summarize; keep the
+              // selector honest instead of letting the run fail on validation.
+              updateAttributes(
+                nextMode === "summarize"
+                  ? { mode: nextMode, source: "page" }
+                  : { mode: nextMode },
+              );
+            }}
+            className="noema-ask-select"
+          >
+            <option value="ask">{t(locale, "askWord")}</option>
+            <option value="summarize">{t(locale, "askSummarizePage")}</option>
+          </select>
+          <select
+            value={output}
+            aria-label={t(locale, "askAiOutput")}
+            onChange={(e) => updateAttributes({ output: e.target.value as AskAiOutput })}
+            className="noema-ask-select"
+          >
+            <option value="answer">{t(locale, "askAiOutputAnswer")}</option>
+            <option value="insert">{t(locale, "askAiOutputInsert")}</option>
+            <option value="replace">{t(locale, "askAiOutputReplace")}</option>
+          </select>
+          <label className="noema-ask-source">
+            <input
+              type="checkbox"
+              checked={source === "page"}
+              disabled={mode === "summarize"}
+              onChange={(e) =>
+                updateAttributes({ source: e.target.checked ? "page" : "none" })
+              }
+            />
+            {t(locale, "askAiUsePage")}
+          </label>
         </div>
         <input
           value={prompt}
@@ -373,7 +546,7 @@ function AskAiView({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              void run("ask");
+              void run();
             }
           }}
           placeholder={t(locale, "askAiPlaceholder")}
@@ -382,22 +555,23 @@ function AskAiView({
         <div className="noema-ask-actions">
           <button
             type="button"
-            disabled={loading}
-            onClick={() => void run("ask")}
+            disabled={loading || !workspaceId}
+            onClick={() => void run()}
             className="noema-ask-btn focus-ring u-interactive"
           >
-            {loading ? t(locale, "chatThinking") : t(locale, "askWord")}
+            {loading
+              ? t(locale, "chatThinking")
+              : mode === "summarize"
+                ? t(locale, "askSummarizePage")
+                : t(locale, "askWord")}
           </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => void run("summarize")}
-            className="noema-ask-btn focus-ring u-interactive"
-          >
-            {t(locale, "askSummarizePage")}
-          </button>
-          {answer && (
-            <button type="button" onClick={insertAnswer} aria-label={t(locale, "insertWord")} className="noema-ask-btn focus-ring u-interactive">
+          {answer && output === "answer" && (
+            <button
+              type="button"
+              onClick={insertAnswer}
+              aria-label={t(locale, "insertWord")}
+              className="noema-ask-btn focus-ring u-interactive"
+            >
               <CornerDownLeft className="h-3.5 w-3.5" /> {t(locale, "insertWord")}
             </button>
           )}
@@ -410,7 +584,16 @@ function AskAiView({
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
-        {block.error && <div className="noema-ask-error">{block.error}</div>}
+        {pending && (
+          <div className="noema-ask-pending" role="status">
+            {t(locale, "chatThinking")}
+          </div>
+        )}
+        {block.error && (
+          <div className="noema-ask-error" role="alert">
+            {block.error}
+          </div>
+        )}
         {answer && (
           <div className="noema-ask-answer">
             <Markdown text={answer} />

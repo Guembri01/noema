@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  LinkedDatabase,
   inlineDisplayFor,
   linkedEmbedModel,
   linkedRowsForView,
@@ -228,5 +229,20 @@ describe("linkedRowsForView - source view filters/sorts", () => {
 
   it("is a no-op when the source has no config", () => {
     expect(linkedRowsForView(rows, properties, null)).toBe(rows);
+  });
+});
+
+describe("linked-database node attrs — persisted view configuration", () => {
+  it("declares the per-node view id, mode, overrides and display attrs", () => {
+    const attrs = (LinkedDatabase.config.addAttributes as () => Record<string, unknown>)();
+    expect(Object.keys(attrs)).toEqual(
+      expect.arrayContaining([
+        "databasePageId",
+        "sourceViewId",
+        "mode",
+        "overrides",
+        "display",
+      ]),
+    );
   });
 });

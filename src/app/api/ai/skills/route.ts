@@ -37,6 +37,7 @@ import {
   AI_NOT_CONFIGURED,
   chatComplete,
   resolveAiConfigForUser,
+  type AiCallOptions,
   type AiRuntimeConfig,
   type ChatResult,
 } from "@/lib/ai-provider";
@@ -178,6 +179,7 @@ async function runWritingSkill(
   body: SkillBody,
   config: AiRuntimeConfig,
   frame: TextFrame,
+  options: AiCallOptions,
 ): Promise<ChatResult> {
   const budgeted = truncateToBudget(text, MAX_INPUT_TOKENS);
 
@@ -195,6 +197,7 @@ async function runWritingSkill(
             maxTokens: build.params.maxTokens,
           },
           config,
+          options,
         );
         if (!result.ok) return result;
         partials.push(postProcess("summarize", result.text));
@@ -209,9 +212,10 @@ async function runWritingSkill(
           maxTokens: reduceParams.maxTokens,
         },
         config,
+        options,
       );
       if (!reduced.ok) return reduced;
-      return { ok: true, text: postProcess("summarize", reduced.text) };
+      return { ok: true, text: postProcess("summarize", reduced.text), usage: reduced.usage };
     }
   }
 
@@ -222,18 +226,22 @@ async function runWritingSkill(
     temperature: build.params.temperature,
     maxTokens: build.params.maxTokens,
   };
-  const result = await chatComplete(request, config);
+  const result = await chatComplete(request, config, options);
   if (!result.ok) return result;
   const cleaned = postProcess(kind, result.text);
-  if (cleaned.trim() !== "") return { ok: true, text: cleaned };
+  if (cleaned.trim() !== "") return { ...result, text: cleaned };
 
   // A provider can occasionally answer with nothing. Retry once at a slightly
   // higher temperature before surfacing an error, so a blank reply never
   // silently reaches the editor as an empty result.
-  const retry = await chatComplete({ ...request, temperature: Math.min(1, request.temperature + 0.2) }, config);
+  const retry = await chatComplete(
+    { ...request, temperature: Math.min(1, request.temperature + 0.2) },
+    config,
+    options,
+  );
   if (!retry.ok) return retry;
   const retried = postProcess(kind, retry.text);
-  if (retried.trim() !== "") return { ok: true, text: retried };
+  if (retried.trim() !== "") return { ...retry, text: retried };
 
   return { ok: false, status: 502, error: "The model returned an empty reply. Please try again." };
 }
@@ -327,7 +335,10 @@ export async function POST(request: Request) {
 
   const result =
     skill.writing !== undefined
-      ? await runWritingSkill(skill.writing, text, body, config, frame)
+      ? await runWritingSkill(skill.writing, text, body, config, frame, {
+          surface: "skill",
+          userId: user.id,
+        })
       : await chatComplete(
           {
             system: systemPrompt(frame),
@@ -335,6 +346,7 @@ export async function POST(request: Request) {
             temperature: skill.replacesSelection ? 0.2 : 0.5,
           },
           config,
+          { surface: "skill", userId: user.id },
         );
   if (!result.ok) {
     // The provider already reduced its failure to a class (status + code); the
@@ -343,12 +355,16 @@ export async function POST(request: Request) {
     const detail = redactSecrets(result.error);
     const error =
       typeof detail === "string" && detail !== "" ? detail : "AI request failed";
-    return NextResponse.json({ error }, { status: result.status });
+    return NextResponse.json(
+      { error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
 
   return NextResponse.json({
     skill: skill.id,
     replacesSelection: skill.replacesSelection,
     text: result.text,
+    ...(result.usage ? { usage: result.usage } : {}),
   });
 }

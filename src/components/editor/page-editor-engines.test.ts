@@ -99,6 +99,25 @@ describe("planClipboardImages (clipboard-image engine)", () => {
     expect(plan.skipped.map((skip) => skip.reason)).toContain("unsupported-type");
   });
 
+  it("resolves a blank/generic MIME from the file-name extension", () => {
+    const gif = planClipboardImages({
+      files: [{ name: "animation.gif", mimeType: "", size: 2048 }],
+      now: new Date("2026-01-02T15:30:00Z"),
+    });
+    expect(gif.skipped).toEqual([]);
+    expect(gif.uploads[0]).toMatchObject({
+      source: "file",
+      fileIndex: 0,
+      mimeType: "image/gif",
+      name: "pasted-animation-2026-01-02-1530.gif",
+    });
+
+    const generic = planClipboardImages({
+      files: [{ name: "shot.png", mimeType: "application/octet-stream", size: 1 }],
+    });
+    expect(generic.uploads[0]).toMatchObject({ mimeType: "image/png", fileIndex: 0 });
+  });
+
   it("extracts an embedded data: image from the HTML flavour", () => {
     const plan = planClipboardImages({
       files: [],

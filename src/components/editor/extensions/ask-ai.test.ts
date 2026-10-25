@@ -4,9 +4,11 @@ import {
   ASK_AI_PROMPT_MAX_CHARS,
   ASK_AI_SUMMARIZE_PROMPT,
   askAiAnsweredAttrs,
+  askAiAnswerContent,
   askAiAttrsFromBlock,
   askAiBlockFromAttrs,
   askAiFailedAttrs,
+  askAiInsertionFor,
   askAiIsStale,
   askAiPageContext,
   planAskAiRequest,
@@ -22,6 +24,9 @@ import {
 const nodeAttrs = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: "q1",
   prompt: "What changed?",
+  mode: "ask",
+  output: "answer",
+  source: "page",
   answer: "",
   model: null,
   context: null,
@@ -49,6 +54,9 @@ describe("askAiBlockFromAttrs / askAiAttrsFromBlock (attrs ⇄ engine)", () => {
     expect(block).toEqual({
       id: "q1",
       prompt: "What changed?",
+      mode: "ask",
+      output: "answer",
+      source: "page",
       model: "gpt-4o",
       context: { pageId: "p1", blockIds: ["a"] },
       answer: "A",
@@ -176,5 +184,127 @@ describe("askAiAnsweredAttrs / askAiFailedAttrs (applyAnswer / applyError)", () 
     const attrs = askAiAnsweredAttrs(base, "   ");
     expect(attrs.status).toBe("idle");
     expect(attrs.answer).toBe("");
+  });
+});
+
+describe("persisted action, output and source", () => {
+  it("round-trips the configured action through the node attributes", () => {
+    const attrs = nodeAttrs({ mode: "summarize", output: "replace", source: "none" });
+    const block = askAiBlockFromAttrs(attrs);
+    expect(block.mode).toBe("summarize");
+    expect(block.output).toBe("replace");
+    expect(block.source).toBe("none");
+    const round = askAiAttrsFromBlock(block);
+    expect(round.mode).toBe("summarize");
+    expect(round.output).toBe("replace");
+    expect(round.source).toBe("none");
+  });
+
+  it("defaults a legacy node (no action attrs) to ask / answer / page", () => {
+    const block = askAiBlockFromAttrs({
+      id: "legacy",
+      prompt: "What changed?",
+      status: "idle",
+    });
+    expect(block.mode).toBe("ask");
+    expect(block.output).toBe("answer");
+    expect(block.source).toBe("page");
+  });
+
+  it("uses the stored mode without an explicit run argument", () => {
+    const plan = planAskAiRequest({
+      block: askAiBlockFromAttrs(
+        nodeAttrs({ prompt: ASK_AI_SUMMARIZE_PROMPT, mode: "summarize" }),
+      ),
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+    });
+    expect(plan.body.mode).toBe("summarize");
+    expect(plan.issues).toEqual([]);
+  });
+
+  it("fills the summarize prompt when the stored prompt is blank", () => {
+    const plan = planAskAiRequest({
+      block: askAiBlockFromAttrs(nodeAttrs({ prompt: "   ", mode: "summarize" })),
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+    });
+    expect(plan.body.prompt).toBe(ASK_AI_SUMMARIZE_PROMPT);
+    expect(plan.issues).toEqual([]);
+  });
+
+  it("sends the pageId from the editor, never from block attributes", () => {
+    const plan = planAskAiRequest({
+      block: askAiBlockFromAttrs(nodeAttrs()),
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+      pageId: "p1",
+    });
+    expect(plan.body.pageId).toBe("p1");
+    const withoutPage = planAskAiRequest({
+      block: askAiBlockFromAttrs(nodeAttrs()),
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+    });
+    expect(withoutPage.body.pageId).toBeUndefined();
+  });
+
+  it("ignores workspaceId/pageId smuggled into the block's stored attrs", () => {
+    const block = askAiBlockFromAttrs({
+      ...nodeAttrs(),
+      workspaceId: "foreign-workspace",
+      pageId: "foreign-page",
+    });
+    expect(block).not.toHaveProperty("workspaceId");
+    expect(block).not.toHaveProperty("pageId");
+    const plan = planAskAiRequest({
+      block,
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+      pageId: "p1",
+    });
+    expect(plan.body.workspaceId).toBe("ws1");
+    expect(plan.body.pageId).toBe("p1");
+  });
+
+  it("sends no context when the author turned page grounding off", () => {
+    const plan = planAskAiRequest({
+      block: askAiBlockFromAttrs(nodeAttrs({ source: "none" })),
+      pageContext: pageContext(),
+      workspaceId: "ws1",
+      pageId: "p1",
+    });
+    expect(plan.body.context).toBe("");
+    expect(plan.body.prompt).toBe("What changed?");
+  });
+});
+
+describe("askAiInsertionFor / askAiAnswerContent (output insertion)", () => {
+  it("keeps the answer in the card for output=answer", () => {
+    expect(askAiInsertionFor(10, 5, "answer")).toBeNull();
+  });
+
+  it("inserts below the block for output=insert", () => {
+    expect(askAiInsertionFor(10, 5, "insert")).toEqual({ from: 15 });
+  });
+
+  it("replaces the block for output=replace", () => {
+    expect(askAiInsertionFor(10, 5, "replace")).toEqual({ from: 10, to: 15 });
+  });
+
+  it("never inserts into a detached or malformed position", () => {
+    expect(askAiInsertionFor(undefined, 5, "insert")).toBeNull();
+    expect(askAiInsertionFor(Number.NaN, 5, "insert")).toBeNull();
+    expect(askAiInsertionFor(-1, 5, "insert")).toBeNull();
+    expect(askAiInsertionFor(10, 0, "replace")).toBeNull();
+  });
+
+  it("turns a plain answer into paragraphs and Markdown into real blocks", () => {
+    const plain = askAiAnswerContent("First line\nSecond line");
+    expect(plain).toHaveLength(2);
+    expect(plain[0]).toMatchObject({ type: "paragraph" });
+    const markdown = askAiAnswerContent("## Heading\n\n- one\n- two");
+    expect(markdown.some((node) => node.type === "heading")).toBe(true);
+    expect(askAiAnswerContent("   ")).toEqual([]);
   });
 });

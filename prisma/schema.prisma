@@ -171,6 +171,8 @@ model Workspace {
   verifiedDomains VerifiedDomain[]
   prompts        WorkspacePrompt[]
   automations    Automation[]
+  aiBudget       AiBudget?
+  aiUsage        AiUsage[]
 
   @@index([ownerId])
 }
@@ -741,6 +743,53 @@ model AiProviderConfig {
   updatedAt       DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// Per-workspace monthly AI token budget (R25.13). One row per workspace;
+/// `monthlyTokenLimit = 0` disables the ceiling. `warnPercent` is the soft
+/// warning threshold and `hardStop` decides whether the transport refuses a
+/// dispatch once the period is over the limit (it may also be switched off to
+/// observe spend without blocking work). The window is the UTC calendar month.
+model AiBudget {
+  id                String   @id @default(cuid())
+  workspaceId       String   @unique
+  monthlyTokenLimit Int      @default(0)
+  warnPercent       Int      @default(80)
+  hardStop          Boolean  @default(true)
+  /// The admin who last changed the ceiling, for the audit trail.
+  updatedById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+/// Durable token usage counters (R25.12), keyed by workspace, UTC calendar
+/// month and surface. The unique key makes accumulation atomic: every call
+/// increments its row in place, so concurrent instances cannot lose a write.
+/// `failures` counts calls that ended in an error and therefore contributed no
+/// tokens. Transcription reports characters rather than tokens, so its output
+/// is the documented `chars / 4` estimate.
+model AiUsage {
+  id          String   @id @default(cuid())
+  workspaceId String
+  /// `YYYY-MM` in UTC — the same period key the budget window uses.
+  period      String
+  /// chat | chat-stream | ask | summarize | skill | autofill | transcribe | test
+  surface     String
+  tokensIn    Int      @default(0)
+  tokensOut   Int      @default(0)
+  requests    Int      @default(0)
+  failures    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, period, surface])
+  @@index([workspaceId, period])
 }
 
 /// A reusable prompt template (R25.22). `scope = "workspace"` rows are shared

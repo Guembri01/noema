@@ -263,6 +263,103 @@ export function resetBudget(budget: BudgetRecord, options: { period: string }): 
   };
 }
 
+/** The soft-warning / hard-stop state of a budget at one point in time. */
+export type BudgetState = "ok" | "warn" | "over";
+
+/** A single prospective request evaluated against a workspace budget. */
+export type BudgetEvaluation = {
+  /** Whether the transport may dispatch the request. */
+  allowed: boolean;
+  state: BudgetState;
+  limitTokens: number;
+  usedTokens: number;
+  estimatedTokens: number;
+  projectedTokens: number;
+  /** Headroom before the request, clamped at 0. */
+  remainingTokens: number;
+  /** Whole-number share of the limit already used, clamped 0–100. */
+  percent: number;
+  warnPercent: number;
+  hardStop: boolean;
+};
+
+/** Normalize an operator-supplied warning threshold (invalid → 80). */
+function warningPercent(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 1 ||
+    value > 100
+  ) {
+    return 80;
+  }
+  return Math.floor(value);
+}
+
+/**
+ * Evaluate a prospective request against a budget in one place, for both the
+ * transport guard and the settings dashboard.
+ *
+ * - `limitTokens <= 0` means "no ceiling": always allowed, state `ok`, 0%.
+ * - A request that lands **exactly** on the limit is allowed (the limit is a
+ *   ceiling, not a wall), but reads `warn` when `warnPercent == 100`.
+ * - `state` is `over` when the used tokens already exceed the limit, or when
+ *   this request would push the projection past it. `allowed` follows
+ *   `hardStop`: a soft budget still reports `over` but dispatches, so the
+ *   workspace can observe spend without blocking work.
+ * - `remainingTokens` reports headroom *before* this request and never goes
+ *   negative.
+ */
+export function evaluateBudget(input: {
+  usedTokens?: number;
+  limitTokens?: number;
+  warnPercent?: number;
+  estimateTokens?: number;
+  hardStop?: boolean;
+}): BudgetEvaluation {
+  const limit = nonNegative(input?.limitTokens);
+  const used = nonNegative(input?.usedTokens);
+  const estimated = nonNegative(input?.estimateTokens);
+  const warnPercent = warningPercent(input?.warnPercent);
+  const hardStop = input?.hardStop !== false;
+  const projected = used + estimated;
+
+  if (limit === 0) {
+    return {
+      allowed: true,
+      state: "ok",
+      limitTokens: 0,
+      usedTokens: used,
+      estimatedTokens: estimated,
+      projectedTokens: projected,
+      remainingTokens: 0,
+      percent: 0,
+      warnPercent,
+      hardStop,
+    };
+  }
+
+  const over = projected > limit;
+  // Compare the exact share before rounding: 799/1000 is below an 80% warning
+  // even though it displays as 80%.
+  const share = (used / limit) * 100;
+  const percent = Math.min(100, Math.round(share));
+  const state: BudgetState = over ? "over" : share >= warnPercent ? "warn" : "ok";
+
+  return {
+    allowed: hardStop ? !over : true,
+    state,
+    limitTokens: limit,
+    usedTokens: used,
+    estimatedTokens: estimated,
+    projectedTokens: projected,
+    remainingTokens: Math.max(0, limit - used),
+    percent,
+    warnPercent,
+    hardStop,
+  };
+}
+
 /** The summary key of an event for the chosen grouping. */
 function groupKey(event: UsageEvent, groupBy: UsageGroupBy): string {
   const raw =

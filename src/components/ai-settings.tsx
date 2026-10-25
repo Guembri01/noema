@@ -13,8 +13,11 @@ import { toast } from "sonner";
 import {
   clearAiProviderAction,
   listAiModelsAction,
+  resetAiUsageAction,
+  saveAiBudgetAction,
   saveAiProviderAction,
   testAiProviderAction,
+  type AiBudgetSummary,
   type AiProviderSummary,
 } from "@/server/actions/ai-settings";
 import { runAiAutofillAction } from "@/server/actions/ai-autofill";
@@ -46,6 +49,7 @@ import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { Tag } from "@/components/ui/tag";
 import {
+  AiBudgetPanel,
   BudgetUsageBar,
   ProviderCard,
   providerRowStatus,
@@ -89,7 +93,7 @@ const DEFAULT_CONTEXT_BUDGET = 2048;
 const MAX_CONTEXT_BUDGET = 200_000;
 
 /** Which async action is in flight, so only its control shows a spinner. */
-type BusyAction = "models" | "test" | "save" | "clear" | "local" | "autofill" | null;
+type BusyAction = "models" | "test" | "save" | "clear" | "local" | "autofill" | "budget" | "reset" | null;
 
 /** The result of the last action, tagged with the action that produced it. */
 type ActionStatus = { ok: boolean; message: string; action: Exclude<BusyAction, null> };
@@ -107,10 +111,12 @@ type ActionStatus = { ok: boolean; message: string; action: Exclude<BusyAction, 
 export function AiSettings({
   workspaceId,
   summary,
+  budget,
   locale,
 }: {
   workspaceId: string;
   summary: AiProviderSummary;
+  budget?: AiBudgetSummary | null;
   locale: string;
 }) {
   const router = useRouter();
@@ -137,6 +143,11 @@ export function AiSettings({
   const [localApiKey, setLocalApiKey] = useState("");
   const [autofillPropertyId, setAutofillPropertyId] = useState("");
   const [autofillRowId, setAutofillRowId] = useState("");
+  const [monthlyTokenLimit, setMonthlyTokenLimit] = useState(
+    String(budget?.monthlyTokenLimit ?? 0),
+  );
+  const [warnPercent, setWarnPercent] = useState(String(budget?.warnPercent ?? 80));
+  const [hardStop, setHardStop] = useState(budget?.hardStop ?? true);
 
   // Preview the sizing layer (`@/lib/ai-context`) for the current sample/budget.
   const contextPreview = useMemo(() => {
@@ -387,6 +398,38 @@ export function AiSettings({
     });
   };
 
+  // Save the monthly token budget (R25.13). The server validates the numbers
+  // again; the client only parses the two text fields into integers.
+  const saveBudget = () =>
+    run("budget", "AI budget saved", async () => {
+      const limit = Number(monthlyTokenLimit.replace(/[\s,]/g, ""));
+      const warn = Number(warnPercent);
+      const result = await saveAiBudgetAction({
+        workspaceId,
+        monthlyTokenLimit: limit,
+        warnPercent: warn,
+        hardStop,
+      });
+      if ("error" in result) return { ok: false, message: result.error };
+      if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
+      router.refresh();
+      return { ok: true, message: "AI budget saved" };
+    });
+
+  // Reset this month's counters only (period-keyed rows, so the next month
+  // starts at zero on its own).
+  const resetUsage = () =>
+    run("reset", "AI usage reset", async () => {
+      const result = await resetAiUsageAction(workspaceId);
+      if ("error" in result) return { ok: false, message: result.error };
+      if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
+      router.refresh();
+      return {
+        ok: true,
+        message: `AI usage reset (${result.removed} counter${result.removed === 1 ? "" : "s"} cleared)`,
+      };
+    });
+
   const providerOptions: SelectOption[] = useMemo(
     () =>
       AI_PROVIDERS.map((entry) => ({
@@ -457,6 +500,16 @@ export function AiSettings({
     testStatus === null ? "idle" : testStatus.ok ? "success" : "error";
   const sourceStatus: ProviderStatus =
     summary.source === "workspace" || summary.source === "env" ? "configured" : "unconfigured";
+
+  const budgetLimitNumber = Number(monthlyTokenLimit.replace(/[\s,]/g, ""));
+  const budgetWarnNumber = Number(warnPercent);
+  const budgetInvalid =
+    !Number.isInteger(budgetLimitNumber) ||
+    budgetLimitNumber < 0 ||
+    budgetLimitNumber > 1_000_000_000 ||
+    !Number.isInteger(budgetWarnNumber) ||
+    budgetWarnNumber < 1 ||
+    budgetWarnNumber > 100;
 
   return (
     <div className="mt-10 flex flex-col gap-12">
@@ -671,6 +724,90 @@ export function AiSettings({
           ) : null}
         </Section>
       )}
+
+      {/* AI usage & budget — the durable meter and the ceiling (R25.12–R25.14). */}
+      <Section
+        level={2}
+        title="AI usage & budget"
+        description="Every model call is metered against the workspace's monthly token budget (UTC calendar month). The guard runs in the transport before dispatch, so an exhausted budget refuses new calls instead of discovering the overspend afterwards."
+      >
+        {budget ? (
+          <AiBudgetPanel summary={budget} locale={locale} />
+        ) : (
+          <p className="text-xs text-muted">
+            Usage is not available yet. Save a budget to create the workspace meter.
+          </p>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field
+            id="ai-budget-limit"
+            label="Monthly token limit"
+            hint="0 disables the ceiling; usage is still recorded."
+          >
+            <Input
+              id="ai-budget-limit"
+              inputMode="numeric"
+              value={monthlyTokenLimit}
+              aria-label="Monthly token limit"
+              onChange={(event) => setMonthlyTokenLimit(event.target.value)}
+            />
+          </Field>
+          <Field
+            id="ai-budget-warn"
+            label="Warn at %"
+            hint="Amber from this share of the limit."
+          >
+            <Input
+              id="ai-budget-warn"
+              inputMode="numeric"
+              value={warnPercent}
+              aria-label="Warning threshold percent"
+              onChange={(event) => setWarnPercent(event.target.value)}
+            />
+          </Field>
+          <div className="flex items-end">
+            <Switch
+              checked={hardStop}
+              onCheckedChange={setHardStop}
+              label="Refuse calls over budget"
+              aria-label="Refuse AI calls over budget"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            loading={busy === "budget"}
+            disabled={(busy !== null && busy !== "budget") || budgetInvalid}
+            onClick={saveBudget}
+          >
+            Save budget
+          </Button>
+          <Button
+            variant="danger"
+            tone="soft"
+            loading={busy === "reset"}
+            disabled={busy !== null && busy !== "reset"}
+            onClick={resetUsage}
+          >
+            Reset this month
+          </Button>
+        </div>
+
+        {budgetInvalid ? (
+          <p role="status" className="flex items-center gap-1.5 text-xs text-muted">
+            <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Use a whole number ≥ 0 for the
+            limit and a whole number from 1 to 100 for the warning threshold.
+          </p>
+        ) : (
+          <p className="text-xs text-muted">
+            {hardStop
+              ? "Calls are refused once this month's tokens would exceed the limit."
+              : "Soft mode: calls still run over the limit; the dashboard turns red."}
+          </p>
+        )}
+      </Section>
 
       {/* Budget — a Stepper bound to a usage Progress bar. */}
       <Section

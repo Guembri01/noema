@@ -10,6 +10,7 @@ import {
   readJsonBody,
 } from "@/lib/body-limit";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfigForUser } from "@/lib/ai-provider";
+import { aiPageContextText, resolveAiPageForUser } from "@/lib/ai-page-access";
 import { redactSecrets } from "@/lib/error-reporting";
 import {
   assembleContext,
@@ -89,7 +90,28 @@ export async function POST(request: Request) {
 
   const mode = body.mode ?? "ask";
   const prompt = (body.prompt ?? "").trim().slice(0, 4000);
-  const context = (body.context ?? "").slice(0, MAX_CONTEXT_CHARS);
+  const pageId = typeof body.pageId === "string" ? body.pageId.trim() : "";
+
+  /**
+   * `pageId` is the Ask-AI block's page. The page row — not the request body —
+   * decides its workspace, and the caller must be able to read that page. When
+   * a page is named, its text is derived here and the client-supplied
+   * `context` is ignored: accepting it would let a caller read (or fabricate)
+   * any page's content through their own block.
+   */
+  let workspaceId = body.workspaceId ?? null;
+  let context = (body.context ?? "").slice(0, MAX_CONTEXT_CHARS);
+  if (pageId !== "") {
+    const resolved = await resolveAiPageForUser(user.id, pageId, body.workspaceId);
+    if (!resolved.ok) {
+      return NextResponse.json(
+        { error: resolved.error, code: resolved.status === 404 ? "not_found" : "forbidden" },
+        { status: resolved.status },
+      );
+    }
+    workspaceId = resolved.page.workspaceId;
+    context = aiPageContextText(resolved.page).slice(0, MAX_CONTEXT_CHARS);
+  }
 
   if (mode === "summarize" && !context) {
     return NextResponse.json({ error: "context is required to summarize" }, { status: 400 });
@@ -105,15 +127,15 @@ export async function POST(request: Request) {
   // grounding is workspace content and therefore untrusted: it is framed
   // below and declared as data in the system prompt (audit B74).
   let grounding = "";
-  if (mode === "ask" && body.workspaceId) {
-    const access = await getWorkspaceAccess(user.id, body.workspaceId);
+  if (mode === "ask" && workspaceId) {
+    const access = await getWorkspaceAccess(user.id, workspaceId);
     if (access && prompt) {
       // Ground only in the pages the caller may open: a guest gets the pages
       // shared with them, a member the whole workspace. An empty guest scope
       // grounds in nothing rather than in everything.
-      const visiblePageIds = await pageScopeFor(user.id, body.workspaceId, access.role);
+      const visiblePageIds = await pageScopeFor(user.id, workspaceId, access.role);
       const results = await searchPagesForPrompt(
-        body.workspaceId,
+        workspaceId,
         prompt,
         visiblePageIds,
         5,
@@ -200,9 +222,12 @@ export async function POST(request: Request) {
   // The provider (endpoint + API key) belongs to the workspace it is stored
   // for, so it is only used when the caller has access to the workspace it
   // names; otherwise the environment defaults apply (audit B13).
-  const config = await resolveAiConfigForUser(user.id, body.workspaceId);
+  const config = await resolveAiConfigForUser(user.id, workspaceId);
   if (!config) {
-    return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
+    return NextResponse.json(
+      { error: AI_NOT_CONFIGURED, code: "not_configured" },
+      { status: 503 },
+    );
   }
 
   const result = await chatComplete(
@@ -214,6 +239,7 @@ export async function POST(request: Request) {
       ...(mode === "autofill" ? { maxTokens: 60 } : {}),
     },
     config,
+    { surface: mode, userId: user.id },
   );
   if (!result.ok) {
     // The provider already reduced its failure to a class (status + code); the
@@ -222,7 +248,13 @@ export async function POST(request: Request) {
     const detail = redactSecrets(result.error);
     const error =
       typeof detail === "string" && detail !== "" ? detail : "AI request failed";
-    return NextResponse.json({ error }, { status: result.status });
+    return NextResponse.json(
+      { error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
-  return NextResponse.json({ text: result.text });
+  return NextResponse.json({
+    text: result.text,
+    ...(result.usage ? { usage: result.usage } : {}),
+  });
 }

@@ -25,7 +25,7 @@ import {
   listEmailDeliveries,
   listWorkspaceInvites,
 } from "@/server/actions/email";
-import { getAiProviderSummary } from "@/server/actions/ai-settings";
+import { getAiBudgetSummary, getAiProviderSummary } from "@/server/actions/ai-settings";
 import {
   ApiTokenManager,
   type ApiTokenRow,
@@ -313,7 +313,8 @@ export default async function SettingsPage({
   const firstActivityDay = dailyActivity.at(0)?.date ?? "";
   const lastActivityDay = dailyActivity.at(-1)?.date ?? "";
 
-  const [aiProvider, emailSummary, workspaceInvites, emailDeliveries, labels] = await Promise.all([    getAiProviderSummary(workspace.id),
+  const [aiProvider, aiBudget, emailSummary, workspaceInvites, emailDeliveries, labels] = await Promise.all([    getAiProviderSummary(workspace.id),
+    getAiBudgetSummary(workspace.id),
     getEmailSummary(workspace.id),
     listWorkspaceInvites(workspace.id),
     listEmailDeliveries(workspace.id),
@@ -583,7 +584,12 @@ export default async function SettingsPage({
       )}
 
       {manage && aiProvider && (
-        <AiSettings workspaceId={workspace.id} summary={aiProvider} locale={locale} />
+        <AiSettings
+          workspaceId={workspace.id}
+          summary={aiProvider}
+          budget={aiBudget}
+          locale={locale}
+        />
       )}
 
       {manage && (

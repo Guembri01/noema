@@ -170,6 +170,7 @@ describe("the workspace key never reaches a client", () => {
     expect(raw).not.toContain("Incorrect API key provided");
     expect(JSON.parse(raw)).toEqual({
       error: "AI provider error (401): invalid_api_key",
+      code: "invalid_api_key",
     });
   });
 
@@ -184,6 +185,7 @@ describe("the workspace key never reaches a client", () => {
     expect(raw).not.toContain("Incorrect API key provided");
     expect(JSON.parse(raw)).toEqual({
       error: "AI provider error (401): invalid_api_key",
+      code: "invalid_api_key",
     });
   });
 

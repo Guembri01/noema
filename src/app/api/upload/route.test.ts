@@ -223,3 +223,44 @@ describe("POST /api/upload — the SVG safety rule (B56)", () => {
     expect(smil.reason).toBe("unsafe-svg");
   });
 });
+
+describe("POST /api/upload — animated GIFs are stored, not re-encoded", () => {
+  it("stores the GIF bytes unchanged under a .gif name and MIME", async () => {
+    // A minimal GIF89a: header + logical screen descriptor + trailer.
+    const gif = new Uint8Array([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+      0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+      0x3b,
+    ]);
+    const file = new File([gif], "loop.gif", { type: "image/gif" });
+
+    const res = await POST(uploadRequest(file));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string; mimeType: string };
+    expect(body.url).toMatch(/^\/api\/files\/ws-1\/.+\.gif$/);
+    expect(body.mimeType).toBe("image/gif");
+
+    expect(edge.put).toHaveBeenCalledTimes(1);
+    const [, storedBytes, storedMime] = edge.put.mock.calls[0] as [
+      string,
+      Uint8Array,
+      string,
+    ];
+    // Byte-for-byte, not a decoded first frame or a lossy WebP.
+    expect(storedBytes).toEqual(gif);
+    expect(storedMime).toBe("image/gif");
+  });
+
+  it("resolves a GIF from the filename when the part declares no type", async () => {
+    const res = await POST(
+      rawUploadRequest([
+        { name: "workspaceId", body: "ws-1" },
+        { name: "file", filename: "loop.gif", type: "", body: "GIF89a" },
+      ]),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string; mimeType: string };
+    expect(body.url).toMatch(/\.gif$/);
+    expect(body.mimeType).toBe("image/gif");
+  });
+});

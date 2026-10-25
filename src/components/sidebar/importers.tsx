@@ -1946,6 +1946,7 @@ async function executeImport(
       const file = draft.payload.file;
       if (!file) return { error: "Pick an audio file first." };
       const form = new FormData();
+      form.append("workspaceId", workspaceId);
       form.append("file", file);
       const response = await fetch("/api/ai/transcribe", { method: "POST", body: form });
       if (!response.ok) {

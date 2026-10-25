@@ -2033,6 +2033,36 @@ body {
   align-items: center;
   gap: 6px;
   }
+@utility noema-ask-config{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  }
+@utility noema-ask-select{
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  }
+@utility noema-ask-source{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  }
+@utility noema-ask-pending{
+  color: var(--muted);
+  font-size: 12px;
+  }
+@utility noema-ask-error{
+  color: var(--danger);
+  font-size: 13px;
+  }
 @utility noema-ask-btn{
   display: inline-flex;
   align-items: center;

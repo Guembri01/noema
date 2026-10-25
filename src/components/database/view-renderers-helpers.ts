@@ -69,6 +69,7 @@ import {
   resolveLayout as resolvePropertyPlacements,
   type PropertyPlacement,
 } from "@/lib/property-layout-engine";
+import { propertyPanelLayout } from "@/lib/page-property-layout";
 import {
   deleteColumn as deleteTableColumn,
   deleteRow as deleteTableRow,
@@ -640,13 +641,9 @@ export function propertyPlacements(
   raw: unknown,
   properties: readonly DBProperty[],
 ): PropertyPlacement[] {
-  const knownIds = properties.map((property) => property.id);
-  const parsed = parseLegacyPropertyLayout(raw, knownIds);
-  const columns: 1 | 2 = parsed.columns.length >= 2 ? 2 : 1;
-  return resolvePropertyPlacements(
-    { columns, order: flattenLayout(parsed), spans: {}, dividers: false },
-    { properties },
-  );
+  return resolvePropertyPlacements(propertyPanelLayout(raw, properties), {
+    properties,
+  });
 }
 
 /** A column's `PropertyType` (Prisma, upper-case) → the sort engine's kind. */

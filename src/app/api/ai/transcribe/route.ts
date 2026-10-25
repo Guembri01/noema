@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { logProviderFailure, providerFailure, transportFailure } from "@/lib/ai-provider";
+import {
+  AI_BUDGET_EXCEEDED,
+  logProviderFailure,
+  providerFailure,
+  transportFailure,
+} from "@/lib/ai-provider";
 import { assertAiDataBoundary } from "@/lib/ai-boundary";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { estimateTokens } from "@/lib/ai-cost";
+import { checkWorkspaceBudget, recordAiUsage } from "@/lib/ai-metering";
 
 export const runtime = "nodejs";
 
@@ -61,6 +69,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
+  // Transcription is optional workspace-metered: the import UI supplies the
+  // workspace id so the audio call is bounded by the same budget and counted
+  // in the same usage table as the chat surfaces. Without one (env-only
+  // transcription) the call is not metered, exactly as before.
+  const workspaceIdValue = form.get("workspaceId");
+  const workspaceId =
+    typeof workspaceIdValue === "string" ? workspaceIdValue.trim() : "";
+  if (workspaceId) {
+    const access = await getWorkspaceAccess(user.id, workspaceId);
+    if (!access) {
+      return NextResponse.json(
+        { error: "You do not have access to that workspace." },
+        { status: 403 },
+      );
+    }
+    // Audio has no token count before it is transcribed, so the guard uses a
+    // zero estimate: it still refuses a workspace that is already over its
+    // ceiling, and the actual transcript is recorded afterwards.
+    const budget = await checkWorkspaceBudget(workspaceId, 0);
+    if (!budget.allowed) {
+      return NextResponse.json(
+        { error: AI_BUDGET_EXCEEDED, code: "AI_BUDGET_EXCEEDED" },
+        { status: 503 },
+      );
+    }
+  }
+
   const body = new FormData();
   body.append("file", file);
   body.append("model", MODEL);
@@ -79,19 +114,49 @@ export async function POST(request: Request) {
       // class reaches the log.
       const failure = providerFailure(response.status, text, KEY);
       logProviderFailure(failure);
+      await recordAiUsage({
+        workspaceId,
+        surface: "transcribe",
+        inputTokens: 0,
+        outputTokens: 0,
+        ok: false,
+      });
       return NextResponse.json(
         { error: `Transcription failed (${response.status}): ${failure.code}` },
         { status: 502 },
       );
     }
     const data = (await response.json()) as { text?: string };
-    return NextResponse.json({ text: data.text ?? "" });
+    const transcript = data.text ?? "";
+    // A transcript has no token accounting of its own; the documented
+    // `chars / 4` estimate keeps the dashboard honest without inventing a
+    // provider-side count.
+    const outputTokens = estimateTokens(transcript);
+    await recordAiUsage({
+      workspaceId,
+      surface: "transcribe",
+      inputTokens: 0,
+      outputTokens,
+      ok: true,
+    });
+    return NextResponse.json({
+      text: transcript,
+      ...(workspaceId ? { usage: { inputTokens: 0, outputTokens } } : {}),
+    });
   } catch {
     // A transport failure: the runtime's message can carry the request header,
     // and the header carries the workspace's key. It is never forwarded — not
     // even scrubbed, since a scrubber only knows credential *shapes* and the
     // tail of a key with an interior newline is no shape at all. The class
-    // goes to the client, the class goes to the log.
+    // goes to the client, the class goes to the log. The failure is metered
+    // (zero tokens) when the caller named a workspace.
+    await recordAiUsage({
+      workspaceId,
+      surface: "transcribe",
+      inputTokens: 0,
+      outputTokens: 0,
+      ok: false,
+    });
     return NextResponse.json({ error: transportFailure() }, { status: 502 });
   }
 }

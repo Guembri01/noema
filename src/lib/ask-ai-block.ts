@@ -4,15 +4,17 @@
  * requirements R25.2 "streaming parity for the selection surfaces" and R25.3
  * "Stop control").
  *
- * An `AskAiBlock` is a single question card dropped into a page: a prompt, an
- * optional pinned model, an optional reference to the page context the answer
- * is grounded in, the last answer (or error) and a status. This module owns
- * every decision that has to be provable without a provider — parsing the
- * block from untrusted stored JSON, validating it against a model allowlist and
- * a prompt cap, building the deterministic request, folding answer/error
- * transitions, and detecting that the page context changed since the answer was
- * produced (staleness, by content hash) — mirroring the contract of
- * `ai-autofill.ts` / `ai-context.ts`.
+ * An `AskAiBlock` is a single question card dropped into a page: a prompt, the
+ * action it runs (`ask` / `summarize`), where its answer goes (`answer` /
+ * `insert` / `replace`), whether it is grounded in the page, an optional pinned
+ * model, an optional reference to the page context the answer is grounded in,
+ * the last answer (or error) and a status. This module owns every decision that
+ * has to be provable without a provider — parsing the block from untrusted
+ * stored JSON, validating it against a model allowlist and a prompt cap,
+ * building the deterministic request, folding answer/error transitions, and
+ * detecting that the page context changed since the answer was produced
+ * (staleness, by content hash) — mirroring the contract of `ai-autofill.ts` /
+ * `ai-context.ts`.
  *
  * Design rules (same contract as the other `src/lib` helpers):
  *
@@ -35,6 +37,37 @@ export type AskAiStatus = "idle" | "pending" | "done" | "error";
 
 /** Every legal status, in lifecycle order. */
 export const ASK_AI_STATUSES = ["idle", "pending", "done", "error"] as const;
+
+/**
+ * What the block asks the provider to do — persisted as the `mode` node attr so
+ * a reloaded page runs the same action the author chose.
+ */
+export type AskAiMode = "ask" | "summarize";
+
+/** Every legal request mode. */
+export const ASK_AI_MODES = ["ask", "summarize"] as const;
+
+/**
+ * What happens to a successful answer — persisted as `output`. `answer` keeps
+ * it in the card, `insert` writes it below the block, `replace` replaces the
+ * block with it.
+ */
+export type AskAiOutput = "answer" | "insert" | "replace";
+
+/** Every legal answer destination. */
+export const ASK_AI_OUTPUTS = ["answer", "insert", "replace"] as const;
+
+/**
+ * Where an ask request is grounded. `page` sends this page's content (derived
+ * server-side from the page the caller may read); `none` asks the bare prompt.
+ */
+export type AskAiSource = "page" | "none";
+
+/** Every legal grounding selector. */
+export const ASK_AI_SOURCES = ["page", "none"] as const;
+
+/** The default prompt a summarize block runs when the author wrote none. */
+export const ASK_AI_SUMMARIZE_PROMPT = "Summarize this page";
 
 /** A single page block offered to the block as grounding context. */
 export type AskAiContextBlock = {
@@ -65,6 +98,12 @@ export type AskAiContext = {
 export type AskAiBlock = {
   id: string;
   prompt: string;
+  /** The action the block runs; asks a custom prompt when omitted. */
+  mode?: AskAiMode;
+  /** Where a successful answer goes; the card when omitted. */
+  output?: AskAiOutput;
+  /** What the ask prompt is grounded in; this page when omitted. */
+  source?: AskAiSource;
   /** Pinned model id; the workspace default is used when omitted. */
   model?: string;
   context?: AskAiContext;
@@ -107,7 +146,11 @@ export type AskAiIssueCode =
   | "PROMPT_TOO_LONG"
   | "MODEL_NOT_ALLOWED"
   | "INVALID_STATUS"
-  | "INVALID_MAX_TOKENS";
+  | "INVALID_MAX_TOKENS"
+  | "INVALID_MODE"
+  | "INVALID_OUTPUT"
+  | "INVALID_SOURCE"
+  | "SUMMARIZE_NEEDS_PAGE";
 
 /** One problem with an Ask-AI block. */
 export type AskAiIssue = {
@@ -274,6 +317,27 @@ export function parseAskAiBlock(raw: unknown): AskAiParseResult {
     }
   }
 
+  const mode = source.mode;
+  if (mode !== undefined && mode !== null) {
+    if (typeof mode !== "string" || !(ASK_AI_MODES as readonly string[]).includes(mode)) {
+      return { ok: false, error: "mode must be ask or summarize." };
+    }
+  }
+
+  const output = source.output;
+  if (output !== undefined && output !== null) {
+    if (typeof output !== "string" || !(ASK_AI_OUTPUTS as readonly string[]).includes(output)) {
+      return { ok: false, error: "output must be answer, insert or replace." };
+    }
+  }
+
+  const askSource = source.source;
+  if (askSource !== undefined && askSource !== null) {
+    if (typeof askSource !== "string" || !(ASK_AI_SOURCES as readonly string[]).includes(askSource)) {
+      return { ok: false, error: "source must be page or none." };
+    }
+  }
+
   const context = parseContext(source.context);
   if (context === false) {
     return { ok: false, error: "context must be an object with pageId/blockIds/maxTokens/hashes." };
@@ -285,6 +349,9 @@ export function parseAskAiBlock(raw: unknown): AskAiParseResult {
     status: (typeof status === "string" ? status : "idle") as AskAiStatus,
     updatedAt: typeof updatedAt === "string" ? updatedAt : "",
   };
+  if (typeof mode === "string") block.mode = mode as AskAiMode;
+  if (typeof output === "string") block.output = output as AskAiOutput;
+  if (typeof askSource === "string") block.source = askSource as AskAiSource;
   const trimmedModel = typeof model === "string" ? model.trim() : "";
   if (trimmedModel !== "") block.model = trimmedModel;
   if (typeof answer === "string") block.answer = answer;
@@ -378,6 +445,49 @@ export function validateAskAiBlock(
       issues.push({
         code: "INVALID_STATUS",
         message: "Status must be idle, pending, done or error.",
+      });
+    }
+
+    const mode = record.mode;
+    if (
+      mode !== undefined &&
+      mode !== null &&
+      (typeof mode !== "string" || !(ASK_AI_MODES as readonly string[]).includes(mode))
+    ) {
+      issues.push({
+        code: "INVALID_MODE",
+        message: "Action must be ask or summarize.",
+      });
+    }
+
+    const output = record.output;
+    if (
+      output !== undefined &&
+      output !== null &&
+      (typeof output !== "string" || !(ASK_AI_OUTPUTS as readonly string[]).includes(output))
+    ) {
+      issues.push({
+        code: "INVALID_OUTPUT",
+        message: "Output must be answer, insert or replace.",
+      });
+    }
+
+    const source = record.source;
+    if (
+      source !== undefined &&
+      source !== null &&
+      (typeof source !== "string" || !(ASK_AI_SOURCES as readonly string[]).includes(source))
+    ) {
+      issues.push({
+        code: "INVALID_SOURCE",
+        message: "Context source must be page or none.",
+      });
+    } else if (mode === "summarize" && source === "none") {
+      // A summary with no page to summarize has nothing to run on; refusing it
+      // up front is more honest than a provider error after the request.
+      issues.push({
+        code: "SUMMARIZE_NEEDS_PAGE",
+        message: "Summarizing needs this page as context.",
       });
     }
 

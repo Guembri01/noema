@@ -190,6 +190,7 @@ export async function discussPageAction(
     activePageId: activePageId ?? null,
     question,
     model,
+    userId: user.id,
   });
 
   revalidatePath("/w", "layout");
@@ -211,6 +212,8 @@ async function replyAsAssistant(
     question: string;
     /** The model chosen for this conversation; the configured one when omitted. */
     model?: string | null;
+    /** The caller, for usage attribution. */
+    userId?: string;
   },
 ): Promise<boolean> {
   const config = await resolveAiConfig(input.workspaceId);
@@ -240,6 +243,7 @@ async function replyAsAssistant(
     // The session is the discussion's own id, so the provider can route and
     // cache per conversation.
     { ...config, model: chosenModel, sessionId: conversationSessionId(threadId) },
+    { surface: "chat", userId: input.userId },
   );
   if (!result.ok) return false;
   const answer = linkifyReferences(result.text.trim(), request.intel.references);
@@ -257,6 +261,15 @@ async function replyAsAssistant(
         references: request.intel.references,
         model: chosenModel,
         provider: config.source,
+        ...(result.usage
+          ? {
+              usage: {
+                inputTokens: result.usage.inputTokens,
+                outputTokens: result.usage.outputTokens,
+                estimated: result.usage.estimated,
+              },
+            }
+          : {}),
       },
     },
   });

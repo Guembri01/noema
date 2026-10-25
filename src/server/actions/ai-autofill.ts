@@ -12,7 +12,7 @@ import { foldToLine, frameRowContext } from "@/lib/ai-row-context";
 
 export type AiAutofillRunResult =
   | { ok: true; propertyId: string; value: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string };
 
 /** Render one stored property value as a line of model context. */
 function describeValue(value: unknown): string {
@@ -183,8 +183,15 @@ export async function runAiAutofillAction(input: {
       maxTokens: config.maxTokens ?? undefined,
     },
     runtime,
+    { surface: "autofill", userId: user.id },
   );
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error,
+      ...(result.code ? { code: result.code } : {}),
+    };
+  }
 
   const value = result.text.trim();
   await prisma.propertyValue.upsert({

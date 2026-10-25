@@ -52,6 +52,7 @@ import { MERMAID_TEMPLATES } from "@/lib/diagrams/mermaid-policy";
 import { starterUmlDiagram } from "@/lib/diagrams/uml";
 import { PLANTUML_TEMPLATES } from "@/lib/diagrams/plantuml-policy";
 import { t } from "@/lib/i18n";
+import { ASK_AI_SUMMARIZE_PROMPT } from "@/lib/ask-ai-block";
 import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {
   filterCommands,
@@ -243,6 +244,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { label: "Template button", labelKey: "blockTemplateButton", hint: "Insert a template", hintKey: "templateButtonHint", icon: <Copy className="h-4 w-4" />, keywords: "template button snippet meeting tasks", group: "database", run: (c) => c.setTemplateButton({ templateId: "meeting" }).run() },
   { label: "Button", labelKey: "blockButton", hint: "Run an action on click", hintKey: "buttonHint", icon: <MousePointerClick className="h-4 w-4" />, keywords: "button action click run open link template notify", group: "advanced", run: (c) => c.setButton({}).run() },
   { label: "Ask AI", labelKey: "askAI", hint: "Prompt the assistant", hintKey: "askAiHint", icon: <Sparkles className="h-4 w-4" />, keywords: "ai ask assistant generate", group: "advanced", run: (c) => c.setAskAi({}).run() },
+  { label: "Summarize page", labelKey: "askSummarizePage", hint: "Let AI summarize this page", hintKey: "askAiHint", icon: <Sparkles className="h-4 w-4" />, keywords: "ai summarize summary recap page", group: "advanced", run: (c) => c.setAskAi({ mode: "summarize", prompt: ASK_AI_SUMMARIZE_PROMPT }).run() },
   {
     label: "Equation",
     labelKey: "blockEquation",

@@ -111,6 +111,7 @@ import { AGGREGATION_FUNCTIONS, type AggregationFn } from "@/lib/aggregations";
 import type { ChartType } from "@/lib/charts";
 import type { RowColorRule } from "@/lib/row-color-rules";
 import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
+import type { PropertyLayout } from "@/lib/property-layout-engine";
 import type { DependencyEdge } from "@/lib/dependencies";
 import {
   buildSubIssueTree,
@@ -2634,6 +2635,13 @@ export function DatabaseView({
           peopleOptions={members ?? []}
           workspaceId={workspaceId}
           editable={editable}
+          layout={viewConfig.propertyLayout}
+          {...(editable
+            ? {
+                onLayoutChange: (next: PropertyLayout) =>
+                  setViewConfig({ propertyLayout: next }),
+              }
+            : {})}
           onChange={(propertyId, value) => setValue(shownPeek.id, propertyId, value)}
           onRenamePrimary={(text) => setPrimary(shownPeek, text)}
         />

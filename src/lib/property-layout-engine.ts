@@ -301,6 +301,41 @@ export function resolveLayout(
 }
 
 /**
+ * Return a copy of `layout` whose `order` contains every property in the schema
+ * exactly once: the saved order first (unknown ids dropped), then ids the schema
+ * gained appended in schema order. This is the layout a layout editor shows, so
+ * its reorder controls can reach properties the saved layout never listed.
+ *
+ * Placement is unchanged for one column; for two columns it is the row-major
+ * order `resolveLayout` would produce. Immutable: the input is never mutated.
+ */
+export function orderLayout(
+  layout: PropertyLayout,
+  options: LayoutSchemaOptions,
+): PropertyLayout {
+  const base = normalizePropertyLayout(layout);
+  const schema = schemaIds(options?.properties);
+  const schemaSet = new Set(schema);
+  const order: string[] = [];
+  const taken = new Set<string>();
+
+  for (const id of base.order) {
+    if (schemaSet.has(id) && !taken.has(id)) {
+      taken.add(id);
+      order.push(id);
+    }
+  }
+  for (const id of schema) {
+    if (!taken.has(id)) {
+      taken.add(id);
+      order.push(id);
+    }
+  }
+
+  return toPropertyLayout({ ...base, order });
+}
+
+/**
  * Move `propertyId` to `index` in the saved order (index clamped into range).
  *
  * Immutable: returns a new layout. An unknown id is a no-op, and a non-finite

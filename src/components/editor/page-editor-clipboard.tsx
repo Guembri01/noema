@@ -25,6 +25,7 @@ import {
   type PasteSkip,
   type PasteUpload,
 } from "@/lib/clipboard-image";
+import { resolveClipboardFileMime } from "@/lib/clipboard-files";
 
 /* --------------------------------------------------------------- paste engines */
 
@@ -104,7 +105,8 @@ export function cleanClipboardHtml(html: string): CleanedClipboardHtml {
 /** One clipboard file the editor can upload, described without the blob. */
 export type ClipboardFileDescriptor = {
   name: string;
-  mimeType: string;
+  /** Declared `File.type`; blank/generic values fall back to the name's extension. */
+  mimeType?: string;
   size: number;
 };
 
@@ -140,7 +142,10 @@ export function planClipboardImages(options: {
 }): ClipboardImagePlan {
   type Candidate = ClipboardItem & { source: "file" | "data-url"; fileIndex?: number };
   const candidates: Candidate[] = options.files.map((file, fileIndex) => ({
-    mimeType: file.mimeType,
+    // A blank `File.type` is common (clipboard shells, some Linux desktops);
+    // `resolveClipboardFileMime` fills it from the name so a `.gif`/`.png`
+    // paste is not rejected as an unknown type.
+    mimeType: resolveClipboardFileMime({ name: file.name, type: file.mimeType }),
     size: file.size,
     name: file.name,
     source: "file",

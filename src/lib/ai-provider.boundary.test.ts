@@ -61,7 +61,7 @@ describe("chatComplete training boundary", () => {
 
     const result = await chatComplete({ system: "s", user: "private" }, CONFIG);
 
-    expect(result).toEqual({ ok: true, text: "ok" });
+    expect(result).toMatchObject({ ok: true, text: "ok" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

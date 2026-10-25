@@ -318,6 +318,19 @@ export const deviceFrames: Readonly<Record<DeviceId, DeviceFrame>> = Object.free
   custom: customFrame,
 });
 
+/**
+ * Normalise a stored/user-supplied device id. Unknown values return `null`
+ * (rather than silently selecting `custom`), so a malformed attribute unwraps
+ * its content instead of painting a misleading device frame.
+ */
+export function resolveDeviceId(value: unknown): DeviceId | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return id !== "" && Object.prototype.hasOwnProperty.call(deviceFrames, id)
+    ? (id as DeviceId)
+    : null;
+}
+
 /** Resolve a frame by id (unknown ids fall back to `custom`) or pass one through. */
 function resolveFrame(device: DeviceId | DeviceFrame): DeviceFrame {
   if (typeof device === "string") return deviceFrames[device] ?? deviceFrames.custom;
@@ -417,6 +430,70 @@ export function fitDevice(
     height,
     scale,
     offset: { x: round((frame.width - width) / 2), y: round((frame.height - height) / 2) },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Device preview rendering                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Widest a preview frame is allowed to paint inside the reading column. */
+export const DEFAULT_PREVIEW_MAX_WIDTH = 720;
+
+/** The geometry + CSS values a device-preview surface renders from. */
+export type DevicePreviewPlan = {
+  frame: DeviceFrame;
+  /** The image's placement inside the frame, when an image size was supplied. */
+  fit: FitResult | null;
+  style: {
+    maxWidth: string;
+    aspectRatio: string;
+    borderRadius: string;
+  };
+};
+
+/** Input for {@link devicePreviewPlan}; every field is validated. */
+export type DevicePreviewInput = {
+  /** A stored/user-supplied device id; unknown values produce `null`. */
+  device: unknown;
+  /** Zoom multiplier; non-positive/non-finite values mean identity. */
+  scale?: unknown;
+  /** Natural size of the content, for the fit math. */
+  image?: MediaSize;
+  /** `object-fit` mode for `image`; defaults to `contain`. */
+  fit?: FitMode;
+  /** Reading-column cap in pixels; defaults to {@link DEFAULT_PREVIEW_MAX_WIDTH}. */
+  maxWidth?: unknown;
+};
+
+/**
+ * Resolve a device id into the concrete frame, optional image fit and inline
+ * style a preview surface needs. Returns `null` for an unknown device so
+ * callers can render their content unwrapped (never a blank fallback block).
+ * Scale is clamped to the shared `[0.25, 4]` guard rail; the frame is capped to
+ * `maxWidth` so it cannot overflow the reading column.
+ */
+export function devicePreviewPlan(input: DevicePreviewInput): DevicePreviewPlan | null {
+  const id = resolveDeviceId(input?.device);
+  if (!id) return null;
+
+  const requested = typeof input.scale === "number" ? input.scale : 1;
+  const scale = isPositive(requested) ? clampScale(requested) : 1;
+  const frame = frameFor(id, { scale });
+  const requestedMaxWidth =
+    typeof input.maxWidth === "number" && isPositive(input.maxWidth)
+      ? Math.round(input.maxWidth)
+      : DEFAULT_PREVIEW_MAX_WIDTH;
+  const fit = input.image ? fitDevice(input.image, frame, { mode: input.fit ?? "contain" }) : null;
+
+  return {
+    frame,
+    fit,
+    style: {
+      maxWidth: `${Math.min(frame.width, requestedMaxWidth)}px`,
+      aspectRatio: `${frame.width} / ${frame.height}`,
+      borderRadius: `${frame.radius}px`,
+    },
   };
 }
 

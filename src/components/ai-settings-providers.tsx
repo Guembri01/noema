@@ -103,15 +103,25 @@ export type BudgetUsage = {
 
 /**
  * Map a used/budget token pair onto the usage bar: the clamped percentage, the
- * tone (danger once over budget, accent past {@link BUDGET_WARN_PERCENT},
- * success while there is comfortable headroom) and the remaining tokens.
+ * tone (danger once over budget, accent past `warnPercent`, success while there
+ * is comfortable headroom) and the remaining tokens. `warnPercent` defaults to
+ * {@link BUDGET_WARN_PERCENT} so the existing caller keeps its behaviour; the
+ * AI settings panel passes the workspace's own threshold.
  */
-export function budgetUsage(used: number, budget: number): BudgetUsage {
+export function budgetUsage(
+  used: number,
+  budget: number,
+  warnPercent: number = BUDGET_WARN_PERCENT,
+): BudgetUsage {
   const percent = progressPercent(used, budget);
   const overBudget = Number.isFinite(budget) && budget > 0 && used > budget;
+  const warn =
+    Number.isFinite(warnPercent) && warnPercent > 0
+      ? Math.min(100, Math.max(1, warnPercent))
+      : BUDGET_WARN_PERCENT;
   const tone: ProgressTone = overBudget
     ? "danger"
-    : percent >= BUDGET_WARN_PERCENT
+    : percent >= warn
       ? "accent"
       : "success";
   const remaining =
@@ -475,5 +485,202 @@ export function BudgetUsageBar({ used, budget, label = "Context usage" }: Budget
       data-over-budget={usage.overBudget ? "true" : undefined}
       className="tabular-nums"
     />
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * AiBudgetPanel
+ * -------------------------------------------------------------------------- */
+
+/** The four states the workspace spend can be in. */
+export type AiBudgetState = "unset" | "ok" | "warn" | "over";
+
+/** One surface's slice of the month. */
+export type AiBudgetSurfaceData = {
+  surface: string;
+  tokensIn: number;
+  tokensOut: number;
+  requests: number;
+  failures: number;
+};
+
+/** The read model the settings dashboard renders (R25.12–R25.14). */
+export type AiBudgetPanelData = {
+  period: string;
+  configured: boolean;
+  monthlyTokenLimit: number;
+  warnPercent: number;
+  hardStop: boolean;
+  tokensIn: number;
+  tokensOut: number;
+  usedTokens: number;
+  requests: number;
+  failures: number;
+  remainingTokens: number;
+  percent: number;
+  state: AiBudgetState;
+  bySurface: readonly AiBudgetSurfaceData[];
+};
+
+const BUDGET_STATE_BADGE: Record<AiBudgetState, { tone: BadgeTone; label: string }> = {
+  unset: { tone: "neutral", label: "No limit" },
+  ok: { tone: "success", label: "Within budget" },
+  warn: { tone: "warning", label: "Warning" },
+  over: { tone: "danger", label: "Over budget" },
+};
+
+/** Locale-aware, thousands-separated token count with a safe fallback. */
+export function formatTokens(value: number, locale = "en"): string {
+  const number = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+  try {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(number);
+  } catch {
+    return new Intl.NumberFormat("en", { maximumFractionDigits: 0 }).format(number);
+  }
+}
+
+/**
+ * The AI usage dashboard (settings → AI). Pure presentational: it takes the
+ * summary `getAiBudgetSummary` returns and renders the month's totals, the
+ * budget state (amber at `warnPercent`, red when over) and the per-surface
+ * breakdown. The editable controls live in `AiSettings`, which is why this
+ * piece can be statically rendered in `ai-settings-providers.test.ts`.
+ */
+export function AiBudgetPanel({
+  summary,
+  locale = "en",
+}: {
+  summary: AiBudgetPanelData;
+  locale?: string;
+}) {
+  const state = BUDGET_STATE_BADGE[summary.state] ?? BUDGET_STATE_BADGE.unset;
+  const usage = budgetUsage(summary.usedTokens, summary.monthlyTokenLimit, summary.warnPercent);
+  const limitLabel = summary.monthlyTokenLimit > 0 ? formatTokens(summary.monthlyTokenLimit, locale) : "—";
+
+  return (
+    <Card
+      variant="flat"
+      padding="md"
+      data-budget-panel="true"
+      data-budget-state={summary.state}
+      data-budget-period={summary.period}
+      data-budget-warn-percent={summary.warnPercent}
+      className="flex flex-col gap-3"
+    >
+      <CardHeader
+        title={`AI usage · ${summary.period}`}
+        subtitle="Tokens spent this calendar month (UTC) across every AI surface."
+        actions={<Badge tone={state.tone}>{state.label}</Badge>}
+      />
+
+      <Progress
+        label="Monthly token budget"
+        value={summary.usedTokens}
+        max={summary.monthlyTokenLimit > 0 ? summary.monthlyTokenLimit : 1}
+        tone={usage.tone}
+        showValue
+        data-over-budget={summary.state === "over" ? "true" : undefined}
+        className="tabular-nums"
+      />
+
+      <dl className="grid gap-1 text-xs text-muted sm:grid-cols-2" data-budget-totals="true">
+        <div>
+          <dt className="inline">Tokens used: </dt>
+          <dd className="inline text-fg">
+            {formatTokens(summary.usedTokens, locale)}
+            {summary.monthlyTokenLimit > 0 ? ` / ${limitLabel} (${summary.percent}%)` : ""}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline">Calls: </dt>
+          <dd className="inline text-fg">
+            {formatTokens(summary.requests, locale)} call
+            {summary.requests === 1 ? "" : "s"}
+            {summary.failures > 0 ? ` · ${formatTokens(summary.failures, locale)} failed` : ""}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline">Input / output: </dt>
+          <dd className="inline text-fg">
+            {formatTokens(summary.tokensIn, locale)} / {formatTokens(summary.tokensOut, locale)}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline">Remaining: </dt>
+          <dd className="inline text-fg">
+            {summary.monthlyTokenLimit > 0
+              ? formatTokens(summary.remainingTokens, locale)
+              : "Unlimited"}
+          </dd>
+        </div>
+      </dl>
+
+      {summary.state === "over" ? (
+        <p role="status" className="flex items-start gap-1.5 text-xs text-danger">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>
+            The monthly budget is exhausted
+            {summary.hardStop ? " — new AI calls are refused" : " (soft limit — calls still run)"}.
+            Raise the limit, reset this month, or wait for {summary.period} to end.
+          </span>
+        </p>
+      ) : summary.state === "warn" ? (
+        <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>
+            {summary.percent}% of this month&apos;s AI token budget is used (warning at{" "}
+            {summary.warnPercent}%).
+          </span>
+        </p>
+      ) : summary.state === "unset" ? (
+        <p className="text-xs text-muted">
+          {summary.configured
+            ? "The token ceiling is disabled (0). Usage is still metered but calls are never refused."
+            : "No monthly token budget is set. Calls are metered but never refused."}
+        </p>
+      ) : (
+        <p className="flex items-center gap-1.5 text-xs text-success">
+          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+          {summary.percent}% of this month&apos;s budget used.
+        </p>
+      )}
+
+      {summary.bySurface.length > 0 ? (
+        <div className="overflow-hidden rounded-control border border-border">
+          <table className="w-full text-xs">
+            <caption className="sr-only">AI usage by surface</caption>
+            <thead className="bg-surface-2 text-fg-subtle">
+              <tr>
+                <th scope="col" className="px-2 py-1 text-left font-medium">
+                  Surface
+                </th>
+                <th scope="col" className="px-2 py-1 text-right font-medium">
+                  Tokens
+                </th>
+                <th scope="col" className="px-2 py-1 text-right font-medium">
+                  Calls
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.bySurface.map((row) => (
+                <tr key={row.surface} className="border-t border-border" data-budget-surface={row.surface}>
+                  <td className="px-2 py-1">{row.surface}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    {formatTokens(row.tokensIn + row.tokensOut, locale)}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    {formatTokens(row.requests, locale)}
+                    {row.failures > 0 ? ` (${formatTokens(row.failures, locale)} failed)` : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-xs text-muted">No AI calls have been recorded this month yet.</p>
+      )}
+    </Card>
   );
 }

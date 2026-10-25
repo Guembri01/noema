@@ -510,6 +510,13 @@ const NODE_VIEW_KEYS = [
   "askAiPlaceholder",
   "askWord",
   "askSummarizePage",
+  "askAiMode",
+  "askAiOutput",
+  "askAiOutputAnswer",
+  "askAiOutputInsert",
+  "askAiOutputReplace",
+  "askAiUsePage",
+  "askAiStale",
   "breadcrumbNoParents",
 ] as const satisfies readonly I18nKey[];
 

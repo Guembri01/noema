@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Ban, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,9 @@ import {
 } from "@/components/database/database-types";
 import { FloatingHostProvider } from "@/components/ui/floating-layer";
 import { Cell, icon as propertyIcon } from "./view-parts";
+import { pagePropertyPlan } from "@/lib/page-property-layout";
+import type { PropertyLayout } from "@/lib/property-layout-engine";
+import { PropertyLayoutControl } from "./property-layout-control";
 
 /*
  * dw07 — the side peek's design-system layer.
@@ -159,6 +162,7 @@ export function PeekRow({
   peopleOptions,
   workspaceId,
   editable,
+  compact = false,
   onChange,
   onRenamePrimary,
 }: {
@@ -172,6 +176,8 @@ export function PeekRow({
   peopleOptions: { id: string; name: string }[];
   workspaceId: string;
   editable: boolean;
+  /** Stack label above value, for a two-column property grid. */
+  compact?: boolean;
   onChange: (value: unknown) => void;
   onRenamePrimary: (text: string) => void;
 }) {
@@ -179,7 +185,8 @@ export function PeekRow({
     <div
       data-testid={`peek-row-${property.id}`}
       className={cn(
-        "-mx-1 grid grid-cols-[7.5rem_1fr] items-start gap-3 rounded-control px-1 py-2",
+        "-mx-1 grid items-start gap-3 rounded-control px-1 py-2",
+        compact ? "grid-cols-1 gap-1" : "grid-cols-[7.5rem_1fr]",
         peekRowClass(),
       )}
     >
@@ -253,6 +260,8 @@ export function DatabasePeek({
   peopleOptions,
   workspaceId,
   editable,
+  layout,
+  onLayoutChange,
   onChange,
   onRenamePrimary,
 }: {
@@ -284,12 +293,28 @@ export function DatabasePeek({
   peopleOptions: { id: string; name: string }[];
   workspaceId: string;
   editable: boolean;
+  /** Persisted page-property layout for this view (`config.propertyLayout`). */
+  layout?: unknown;
+  /** Persist a layout change; omitted for readers without edit access. */
+  onLayoutChange?: (layout: PropertyLayout) => void;
   onChange: (propertyId: string, value: unknown) => void;
   onRenamePrimary: (text: string) => void;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState<number | undefined>(undefined);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const element = panelRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number" && width > 0) setLayoutWidth(width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   // A dialog must own Escape even when focus has not moved inside it yet (the
   // row trigger keeps focus after the click). Focusing the panel also gives
@@ -302,6 +327,16 @@ export function DatabasePeek({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  const propertyPlan = pagePropertyPlan(layout, properties, {
+    widthBucket: layoutWidth === undefined ? "medium" : "narrow",
+    ...(layoutWidth === undefined ? {} : { availableWidth: layoutWidth }),
+  });
+  const propertyById = new Map(properties.map((property) => [property.id, property]));
+  const layoutRows = propertyPlan.placements.flatMap((placement) => {
+    const property = propertyById.get(placement.propertyId);
+    return property ? [{ placement, property }] : [];
+  });
 
   return (
     <FloatingHostProvider>
@@ -404,24 +439,63 @@ export function DatabasePeek({
         )}
         {/* Properties panel: one labelled row per property, editable in
             place — computed values (formula, rollup, system) stay read-only.
-            Each row carries the same hover tint + rail as a table body row. */}
-        <dl className="divide-y divide-border border-t border-border text-sm">
-          {properties.map((property) => (
-            <PeekRow
-              key={property.id}
+            Each row carries the same hover tint + rail as a table body row.
+            The layout is the view's persisted `propertyLayout`: a two-column
+            layout is grouped row-major here and collapses to one column when
+            the drawer is narrower than two usable columns. */}
+        {onLayoutChange && editable && (
+          <div className="mb-2 flex justify-end border-t border-border pt-2">
+            <PropertyLayoutControl
+              compact
+              layout={propertyPlan.baseLayout}
+              properties={properties}
               locale={locale}
-              property={property}
-              row={row}
-              isPrimary={property.id === primaryId}
-              computed={computedFor(property)}
-              value={valueFor(property.id)}
-              relationOptions={relationOptionsFor(property.id)}
-              peopleOptions={peopleOptions}
-              workspaceId={workspaceId}
-              editable={editable}
-              onChange={(value) => onChange(property.id, value)}
-              onRenamePrimary={onRenamePrimary}
+              onChange={onLayoutChange}
             />
+          </div>
+        )}
+        <dl
+          data-testid="peek-property-grid"
+          data-columns={propertyPlan.plan.columns}
+          className="grid gap-x-4 border-t border-border text-sm"
+          style={{
+            gridTemplateColumns: `repeat(${propertyPlan.plan.columns}, minmax(0, 1fr))`,
+          }}
+        >
+          {layoutRows.map(({ placement, property }) => (
+            <div
+              key={property.id}
+              data-column={placement.column}
+              data-row={placement.row}
+              className={cn(
+                "min-w-0 border-b border-border",
+                placement.column > 0 &&
+                  propertyPlan.plan.columns === 2 &&
+                  propertyPlan.layout.dividers &&
+                  "border-l pl-4",
+              )}
+              style={
+                placement.span === 2 && propertyPlan.plan.columns === 2
+                  ? { gridColumn: "1 / -1" }
+                  : undefined
+              }
+            >
+              <PeekRow
+                locale={locale}
+                property={property}
+                row={row}
+                isPrimary={property.id === primaryId}
+                computed={computedFor(property)}
+                value={valueFor(property.id)}
+                relationOptions={relationOptionsFor(property.id)}
+                peopleOptions={peopleOptions}
+                workspaceId={workspaceId}
+                editable={editable}
+                compact={propertyPlan.plan.columns === 2}
+                onChange={(value) => onChange(property.id, value)}
+                onRenamePrimary={onRenamePrimary}
+              />
+            </div>
           ))}
         </dl>
       </aside>

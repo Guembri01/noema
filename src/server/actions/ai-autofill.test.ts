@@ -268,6 +268,7 @@ describe("writing the target property", () => {
     expect(ai.chatComplete).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("Body text") }),
       CONFIG,
+      expect.objectContaining({ surface: "autofill", userId: "u1" }),
     );
   });
 

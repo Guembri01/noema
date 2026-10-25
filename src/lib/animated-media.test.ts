@@ -10,10 +10,12 @@ import {
   describeDevice,
   deviceFrames,
   deviceOptionsFor,
+  devicePreviewPlan,
   fitDevice,
   frameFor,
   isAnimatedGif,
   playbackPolicy,
+  resolveDeviceId,
   type DeviceFrame,
   type DeviceId,
   type MediaSize,
@@ -467,5 +469,49 @@ describe("describeDevice — one-line frame summary", () => {
   it("describes the desktop and watch frames", () => {
     expect(describeDevice(deviceFrames.desktop)).toBe("Desktop (1440x900, radius 12)");
     expect(describeDevice(deviceFrames.watch)).toBe("Watch (198x242, radius 44)");
+  });
+});
+
+describe("resolveDeviceId / devicePreviewPlan — render-time guard rails", () => {
+  it("accepts known ids case-insensitively and rejects malformed ones", () => {
+    expect(resolveDeviceId(" phone ")).toBe("phone");
+    expect(resolveDeviceId("WATCH")).toBe("watch");
+    expect(resolveDeviceId("toaster")).toBeNull();
+    expect(resolveDeviceId(42)).toBeNull();
+    expect(resolveDeviceId(null)).toBeNull();
+  });
+
+  it("builds a capped frame with a fit result", () => {
+    const plan = devicePreviewPlan({
+      device: "phone",
+      image: { width: 390, height: 844 },
+      fit: "contain",
+    });
+    expect(plan).not.toBeNull();
+    expect(plan?.frame).toMatchObject({ id: "phone", width: 390, height: 844 });
+    expect(plan?.fit).toMatchObject({ width: 390, height: 844, scale: 1 });
+    expect(plan?.style).toEqual({
+      maxWidth: "390px",
+      aspectRatio: "390 / 844",
+      borderRadius: "40px",
+    });
+  });
+
+  it("caps a wide frame to the reading column but keeps its aspect", () => {
+    const plan = devicePreviewPlan({ device: "desktop" });
+    expect(plan?.style.maxWidth).toBe("720px");
+    expect(plan?.style.aspectRatio).toBe("1440 / 900");
+  });
+
+  it("clamps zoom and ignores non-positive/invalid scales", () => {
+    expect(devicePreviewPlan({ device: "phone", scale: 0.01 })?.frame.width).toBe(98);
+    expect(devicePreviewPlan({ device: "phone", scale: 10 })?.frame.width).toBe(1560);
+    expect(devicePreviewPlan({ device: "phone", scale: 0 })?.frame.width).toBe(390);
+    expect(devicePreviewPlan({ device: "phone", scale: Number.NaN })?.frame.width).toBe(390);
+  });
+
+  it("returns null for an unknown device so callers can unwrap their content", () => {
+    expect(devicePreviewPlan({ device: "toaster" })).toBeNull();
+    expect(devicePreviewPlan({ device: null })).toBeNull();
   });
 });

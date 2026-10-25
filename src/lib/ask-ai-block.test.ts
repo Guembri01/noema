@@ -117,6 +117,31 @@ describe("parseAskAiBlock (§1 Ask-AI block — strict structural parse)", () =>
     if (!second.ok) return;
     expect(second.block).toEqual(first.block);
   });
+
+  it("parses and preserves the configured action, output and source", () => {
+    const result = parseAskAiBlock({
+      id: "q1",
+      prompt: "Summarize this page",
+      mode: "summarize",
+      output: "replace",
+      source: "none",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.block.mode).toBe("summarize");
+    expect(result.block.output).toBe("replace");
+    expect(result.block.source).toBe("none");
+  });
+
+  it("rejects an unknown mode, output or source", () => {
+    for (const raw of [
+      { id: "q1", prompt: "Hi", mode: "translate" },
+      { id: "q1", prompt: "Hi", output: "append" },
+      { id: "q1", prompt: "Hi", source: "workspace" },
+    ]) {
+      expect(parseAskAiBlock(raw).ok).toBe(false);
+    }
+  });
 });
 
 describe("validateAskAiBlock (§1 — issues, not booleans)", () => {
@@ -161,6 +186,27 @@ describe("validateAskAiBlock (§1 — issues, not booleans)", () => {
     expect(validateAskAiBlock(bad).map((i) => i.code)).toContain("INVALID_MAX_TOKENS");
     const fractional = block({ context: { maxTokens: 1.5 } });
     expect(validateAskAiBlock(fractional).map((i) => i.code)).toContain("INVALID_MAX_TOKENS");
+  });
+
+  it("flags an unknown action, output or source", () => {
+    const badMode = { ...block(), mode: "translate" } as unknown as AskAiBlock;
+    const badOutput = { ...block(), output: "append" } as unknown as AskAiBlock;
+    const badSource = { ...block(), source: "workspace" } as unknown as AskAiBlock;
+    expect(validateAskAiBlock(badMode).map((i) => i.code)).toContain("INVALID_MODE");
+    expect(validateAskAiBlock(badOutput).map((i) => i.code)).toContain("INVALID_OUTPUT");
+    expect(validateAskAiBlock(badSource).map((i) => i.code)).toContain("INVALID_SOURCE");
+  });
+
+  it("refuses to summarize with no page to summarize", () => {
+    const issue = validateAskAiBlock(
+      block({ mode: "summarize", source: "none", prompt: "Summarize this page" }),
+    );
+    expect(issue.map((i) => i.code)).toContain("SUMMARIZE_NEEDS_PAGE");
+    expect(
+      validateAskAiBlock(
+        block({ mode: "summarize", source: "page", prompt: "Summarize this page" }),
+      ),
+    ).toEqual([]);
   });
 
   it("never throws on exotic input", () => {

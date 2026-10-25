@@ -8,9 +8,12 @@ import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { embedMeta, resolveEmbed } from "@/lib/embeds";
+import { resolveDeviceId } from "@/lib/animated-media";
+import { DevicePreview } from "@/components/device-preview";
 import { externalImageSrc } from "@/lib/external-image";
 import { t } from "@/lib/i18n";
 import { alignOf, alignStyle } from "@/lib/media";
+import { mediaKindOfSource, planUploadedAssetRender } from "@/lib/uploaded-media";
 import { contentDirProps, inlineBidiProps } from "@/lib/bidi";
 import {
   blocksToQuote,
@@ -690,6 +693,64 @@ function renderTable(node: PMNode, key: string, locale: string, ctx: RenderConte
   );
 }
 
+/**
+ * Read-only twin of the editor's Ask-AI atom. The read path cannot run a
+ * provider, so it shows the configured prompt, the last answer (or the error)
+ * and nothing clickable — an unconfigured or unavailable AI leaves a readable
+ * record instead of an empty gap.
+ */
+function renderAskAiBlock(node: PMNode, key: string, locale: string): ReactNode {
+  const prompt = String(node.attrs?.prompt ?? "").trim();
+  const answer = String(node.attrs?.answer ?? "").trim();
+  const error = String(node.attrs?.error ?? "").trim();
+  const status = String(node.attrs?.status ?? "idle");
+  const mode = node.attrs?.mode === "summarize" ? "summarize" : "ask";
+  const direction = contentDirProps(answer);
+  return (
+    <div
+      key={key}
+      className={cn(
+        DOC_PRINT_CLASS.block,
+        "my-2 rounded-card border border-border bg-surface p-4",
+      )}
+      data-ask-ai=""
+      data-ask-ai-read=""
+      data-mode={mode}
+      data-status={status}
+    >
+      <p className="mb-1 text-xs font-semibold uppercase tracking-[0.04em] text-muted">
+        {t(locale, "askAI")} ·{" "}
+        {mode === "summarize" ? t(locale, "askSummarizePage") : t(locale, "askWord")}
+        {node.attrs?.stale === true ? ` · ${t(locale, "askAiStale")}` : ""}
+      </p>
+      <p className="my-1 whitespace-pre-wrap text-sm text-fg">
+        {prompt === "" ? t(locale, "askAiPlaceholder") : prompt}
+      </p>
+      {status === "pending" && (
+        <p role="status" className="mt-1 text-xs text-muted">
+          {t(locale, "chatThinking")}
+        </p>
+      )}
+      {error !== "" && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+      {answer !== "" && (
+        <div
+          dir={direction.dir}
+          className={cn(
+            "mt-2 whitespace-pre-wrap border-t border-border pt-2 text-sm leading-[1.6] text-fg",
+            direction.className,
+          )}
+        >
+          {answer}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function renderBlock(
   node: PMNode,
   key: string,
@@ -866,6 +927,91 @@ function renderBlock(
       return <UmlDiagramView key={key} data={node.attrs?.data} diagramId={String(node.attrs?.id ?? key)} readOnly />;
     case "horizontalRule":
       return <hr key={key} className={docClasses("divider")} />;
+    case "animatedImage": {
+      // Animated-media blocks were silently dropped here because the node type
+      // had no read-side case. Resolve the stored source through the same
+      // upload policy the editor uses: a GIF keeps its original URL (transform
+      // params stripped) and is painted by a plain <img>, so the browser runs
+      // the animation; the frame never re-encodes it.
+      const plan = planUploadedAssetRender({
+        url: String(node.attrs?.src ?? ""),
+        name: String(node.attrs?.alt ?? ""),
+      });
+      const src = externalImageSrc(plan.src);
+      if (src === "") return null;
+
+      const alt = String(node.attrs?.alt ?? "");
+      const mediaType = mediaKindOfSource(plan.src, node.attrs?.mediaType);
+      let media: ReactNode = null;
+      if (mediaType === "image") {
+        media = (
+          /* eslint-disable-next-line @next/next/no-img-element -- user upload; animation must stay on the original bytes */
+          <img
+            src={src}
+            alt={alt}
+            className="noema-image"
+            style={{ maxWidth: "100%", height: "auto", borderRadius: "var(--radius-md)" }}
+          />
+        );
+      } else if (mediaType === "video") {
+        media = (
+          <video
+            src={src}
+            controls
+            preload="metadata"
+            className="noema-media-video block max-w-full rounded-md"
+            aria-label={alt || undefined}
+          />
+        );
+      } else if (mediaType === "audio") {
+        media = (
+          <audio
+            src={src}
+            controls
+            preload="metadata"
+            className="noema-media-audio block w-full max-w-full"
+            aria-label={alt || undefined}
+          />
+        );
+      } else {
+        const href = sanitizeHref(src);
+        const name =
+          alt ||
+          plan.src.split(/[?#]/)[0].split("/").filter(Boolean).pop() ||
+          plan.mimeType;
+        media =
+          href === null ? null : (
+            <a
+              href={href}
+              download={name}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-control border border-border px-3 py-2 text-sm text-fg"
+            >
+              {name}
+            </a>
+          );
+      }
+      if (media === null) return null;
+
+      return (
+        <figure
+          key={key}
+          className={cn("noema-animated-block", docClasses("image"))}
+          data-animated-image=""
+          data-animated={node.attrs?.animated === true ? "true" : "false"}
+          data-static-fallback={node.attrs?.staticFallback === true ? "true" : "false"}
+        >
+          <DevicePreview
+            device={node.attrs?.device}
+            scale={node.attrs?.deviceScale}
+            label={alt || undefined}
+          >
+            {media}
+          </DevicePreview>
+        </figure>
+      );
+    }
     case "image": {
       const caption = String(node.attrs?.caption ?? "").trim();
       const width = typeof node.attrs?.width === "number" ? node.attrs.width : null;
@@ -967,6 +1113,8 @@ function renderBlock(
       const crumbs = attrsCrumbs.length > 0 ? attrsCrumbs : ctx.breadcrumb.trail;
       return renderBreadcrumb(crumbs, ctx.breadcrumb.workspaceSlug, locale, key);
     }
+    case "askAi":
+      return renderAskAiBlock(node, key, locale);
     case "templateButton": {
       // Read-only twin of the editor atom. There is no editor to insert into
       // here, so the card shows what the button would insert instead of
@@ -1087,20 +1235,37 @@ function renderBlock(
         );
       }
       const meta = embedMeta(resolved.provider);
+      const device = resolveDeviceId(node.attrs?.device);
+      // A stored device preview renders the live provider iframe inside the
+      // frame registry; the sandbox/allow/src still come from `resolveEmbed`
+      // above, so no third-party embed escapes the existing policy.
       return (
-        <iframe
+        <DevicePreview
           key={key}
-          src={resolved.embedUrl}
-          data-provider={resolved.provider}
-          title={meta?.title ?? t(locale, "embeddedContent")}
-          className={cn("noema-embed-frame", DOC_PRINT_CLASS.hide)}
-          loading="lazy"
-          referrerPolicy="strict-origin-when-cross-origin"
-          sandbox={resolved.sandbox}
-          allow={resolved.allow}
-          allowFullScreen
-          style={meta ? { aspectRatio: meta.aspectRatio } : undefined}
-        />
+          device={device}
+          scale={node.attrs?.deviceScale}
+          label={meta?.title ?? t(locale, "embeddedContent")}
+          className={DOC_PRINT_CLASS.hide}
+        >
+          <iframe
+            src={resolved.embedUrl}
+            data-provider={resolved.provider}
+            title={meta?.title ?? t(locale, "embeddedContent")}
+            className={cn("noema-embed-frame", DOC_PRINT_CLASS.hide)}
+            loading="lazy"
+            referrerPolicy="strict-origin-when-cross-origin"
+            sandbox={resolved.sandbox}
+            allow={resolved.allow}
+            allowFullScreen
+            style={
+              device
+                ? { width: "100%", height: "100%", aspectRatio: "auto" }
+                : meta
+                  ? { aspectRatio: meta.aspectRatio }
+                  : undefined
+            }
+          />
+        </DevicePreview>
       );
     }
     default:
