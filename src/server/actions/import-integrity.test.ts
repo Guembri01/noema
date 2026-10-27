@@ -244,10 +244,14 @@ async function makeZipFile(): Promise<File> {
   return new File([buffer], "archive.zip", { type: "application/zip" });
 }
 
-function docxForm(): FormData {
+async function docxForm(): Promise<FormData> {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  zip.file("word/document.xml", "<w:document></w:document>");
+  const bytes = await zip.generateAsync({ type: "uint8array" });
   const form = new FormData();
   form.append("workspaceId", "ws-1");
-  form.append("file", new File([new Uint8Array([1, 2, 3])], "notes.docx"));
+  form.append("file", new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], "notes.docx"));
   return form;
 }
 
@@ -312,7 +316,7 @@ describe("R23.6 — mid-import failure rolls back every write", () => {
   it("importDocxAction reports a failed create as an error instead of rejecting, with no residue", async () => {
     mock.fault.failPageCreateAt = 1;
 
-    const result = await importDocxAction(docxForm());
+    const result = await importDocxAction(await docxForm());
 
     expect(result).toEqual({ error: expect.any(String) });
     expect(mock.state.pages).toHaveLength(0);
@@ -346,7 +350,7 @@ describe("ImportResult counts (D23.4)", () => {
   });
 
   it("importDocxAction reports counts", async () => {
-    const result = await importDocxAction(docxForm());
+    const result = await importDocxAction(await docxForm());
 
     expect(result).toMatchObject({ ok: true, counts: { imported: 1, ...ZERO_COUNTS } });
   });
@@ -547,6 +551,10 @@ describe("B22 — the archive import has a budget", () => {
   it("refuses an archive that under-declares the size of its entry", async () => {
     // The archive claims 16 bytes; the entry really holds 5 MiB.
     const bytes = underDeclare(await zipBytes({ "big.md": "x".repeat(5 * 1024 * 1024) }), 16);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let offset = 0; offset + 30 <= bytes.length; offset += 1) {
+      if (view.getUint32(offset, true) === 0x04034b50) { view.setUint32(offset + 22, 16, true); break; }
+    }
 
     const result = await importZipAction(zipForm(bytes));
 
