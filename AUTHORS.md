@@ -11,6 +11,7 @@ Everyone who contributes is credited here. The list is maintained by hand — if
 you have contributed and are missing, open a pull request that adds you.
 
 - **Florian Reisinger**
+- **Ugochukwu Chidera**
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for how to get involved, and
 [`CHANGELOG.md`](./CHANGELOG.md) for what has shipped.

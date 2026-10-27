@@ -110,6 +110,19 @@ describe("the authoring-window gate (B85)", () => {
     expect(result.code).toBe(0);
   });
 
+  it("accepts every registered project human's address, like the newest one", () => {
+    // Every address in the `HUMANS` map must pass the identity check; the
+    // newest contributor's is pinned here so a registration gap shows up as
+    // this test, not as the contributor's red pull request.
+    const ugochukwu = human("Ugochukwu Chidera", "ugochukwuc762@gmail.com");
+    const result = gateFor({
+      author: ugochukwu,
+      committer: ugochukwu,
+      date: IN_WINDOW,
+    });
+    expect(result.code).toBe(0);
+  });
+
   it("rejects a project human outside a window", () => {
     const result = gateFor({
       author: human(),
