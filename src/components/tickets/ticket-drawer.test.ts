@@ -100,7 +100,7 @@ const renderBody = () =>
         onCycleChange: noop,
         onToggleLabel: noop,
         onLinkTicket: noop,
-        onAddComment: noop,
+        onAddComment: async () => true,
       }),
     ),
   );

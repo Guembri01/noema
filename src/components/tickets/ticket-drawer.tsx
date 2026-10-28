@@ -383,8 +383,8 @@ export type TicketDrawerBodyProps = {
   onToggleLabel: (labelId: string) => void;
   /** Link a related ticket. */
   onLinkTicket: (toId: string, type: string) => void;
-  /** Post a comment. */
-  onAddComment: (body: string) => void;
+  /** Post a comment. Resolves true once the server accepted it. */
+  onAddComment: (body: string) => Promise<boolean>;
 };
 
 /**
@@ -423,7 +423,11 @@ export function TicketDrawerBody({
   const [relationQuery, setRelationQuery] = useState("");
   const [relationType, setRelationType] = useState("relates");
 
-  useEffect(() => setLocalComments(comments), [comments]);
+  // Server comments replace the local list once they arrive, but an empty
+  // response while the post is in flight must not wipe the optimistic row.
+  useEffect(() => {
+    if (comments.length > 0) setLocalComments(comments);
+  }, [comments]);
 
   const insertCommentText = (text: string) => {
     const element = commentRef.current;
@@ -879,17 +883,23 @@ export function TicketDrawerBody({
               onClick={() => {
                 const text = comment.trim();
                 if (!text) return;
-                onAddComment(text);
+                const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
                 setLocalComments((current) => [
                   ...current,
                   {
-                    id: `local-${Date.now()}`,
+                    id: optimisticId,
                     body: text,
                     createdAt: new Date(),
                     author: { id: "you", name: "You", email: "" },
                   },
                 ]);
                 setComment("");
+                void onAddComment(text).then((accepted) => {
+                  if (accepted) return;
+                  setLocalComments((current) =>
+                    current.filter((entry) => entry.id !== optimisticId),
+                  );
+                });
               }}
             >
               {t(locale, "comment")}
@@ -1090,15 +1100,24 @@ export function TicketDrawer({
     });
 
   const addComment = (body: string) =>
-    startTransition(async () => {
-      const outcome = await safeAction(() => addTicketCommentAction(ticket.id, body), { locale });
-      if (!outcome.ok) toast.error(outcome.error);
-      else if ("error" in outcome.value) toast.error(outcome.value.error);
-      else {
-        toast.success(t(locale, "commentAdded"));
-        onCommentAdded?.();
-      }
-      router.refresh();
+    new Promise<boolean>((resolve) => {
+      startTransition(async () => {
+        const outcome = await safeAction(() => addTicketCommentAction(ticket.id, body), {
+          locale,
+        });
+        if (!outcome.ok) {
+          toast.error(outcome.error);
+          resolve(false);
+        } else if ("error" in outcome.value) {
+          toast.error(outcome.value.error);
+          resolve(false);
+        } else {
+          toast.success(t(locale, "commentAdded"));
+          onCommentAdded?.();
+          resolve(true);
+        }
+        router.refresh();
+      });
     });
 
   const archiveLabel = t(locale, "archiveTicket");
@@ -1162,6 +1181,7 @@ export function TicketDrawer({
         bodyClassName="space-y-5"
       >
         <TicketDrawerBody
+          key={ticket.id}
           ticket={ticket}
           labels={labels}
           members={members}
