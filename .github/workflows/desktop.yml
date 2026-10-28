@@ -162,10 +162,14 @@ jobs:
         env:
           # linuxdeploy ships as an AppImage; extract it instead of requiring FUSE.
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          # The payload is already assembled above. Tauri still runs
+          # `beforeBuildCommand`; this makes it assert freshness and re-stage
+          # instead of running a second `next build`, which runs the macOS
+          # runner out of heap.
+          NOEMA_SKIP_BUILD: "1"
         # No token and no tag: this job only builds. Creating the release — the
         # one thing that needs `contents: write` — is the `release` job's.
         with:
-          # The payload is already assembled, so skip the JS build hook.
           # --verbose is deliberate: Tauri otherwise hides linuxdeploy's stderr
           # behind "failed to run linuxdeploy".
           args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }} --verbose
@@ -301,6 +305,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # linuxdeploy ships as an AppImage; extract it instead of requiring FUSE.
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          # The payload is already assembled above. Tauri still runs
+          # `beforeBuildCommand`; skip the second `next build` (the macOS
+          # runner runs out of heap) while still asserting the build is fresh.
+          NOEMA_SKIP_BUILD: "1"
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -310,7 +318,6 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
-          # The payload is already assembled, so skip the JS build hook.
           args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }}
           tagName: ${{ github.ref_name }}
           releaseName: ${{ format('Noema {0}', github.ref_name) }}
