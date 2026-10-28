@@ -372,16 +372,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p release-assets
-          gh release download "$GITHUB_REF_NAME" --dir release-assets --clobber
+          # This job deliberately has no checkout, so tell gh which repository
+          # to use instead of making it discover one from .git.
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --clobber
 
       - name: Write SHA256SUMS
         working-directory: release-assets
-        run: sha256sum -- * > SHA256SUMS
+        run: |
+          # Never hash a previous SHA256SUMS on a re-run; hash only the assets.
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 -r sha256sum > SHA256SUMS
 
       - name: Upload SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" release-assets/SHA256SUMS --clobber
+        run: |
+          gh release upload "$GITHUB_REF_NAME" release-assets/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
 
   payload-smoke:
     # The check that catches a *plausible* but broken installer: it boots the
