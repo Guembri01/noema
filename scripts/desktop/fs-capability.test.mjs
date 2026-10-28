@@ -96,21 +96,14 @@ describe("desktop capability file-system permissions", () => {
     }
   });
 
-  it("grants the broad capability no file-system permission at all", () => {
-    const everything = capabilityFiles.find(
-      (entry) => entry.name === "desktop-everything.json",
-    );
-    expect(everything).toBeDefined();
-    expect(fsPermissions(everything.capability)).toEqual([]);
-  });
+  it("ships no broad capability and no destructive file operation anywhere", () => {
+    expect(
+      capabilityFiles.some((entry) => entry.name === "desktop-everything.json"),
+    ).toBe(false);
 
-  it("grants the broad capability none of the destructive file operations", () => {
-    const everything = capabilityFiles.find(
-      (entry) => entry.name === "desktop-everything.json",
+    const permissions = allCapabilities.flatMap(({ capability }) =>
+      fsPermissions(capability),
     );
-    expect(everything).toBeDefined();
-
-    const permissions = fsPermissions(everything.capability);
     for (const forbidden of [
       "fs:allow-remove",
       "fs:allow-rename",
@@ -139,16 +132,5 @@ describe("desktop capability file-system permissions", () => {
     for (const { name, capability } of allCapabilities) {
       expect(fsPermissions(capability), name).toEqual([]);
     }
-  });
-
-  it("no longer advertises file access in the broad capability's description", () => {
-    const everything = capabilityFiles.find(
-      (entry) => entry.name === "desktop-everything.json",
-    );
-    expect(everything).toBeDefined();
-
-    const description = everything.capability.description ?? "";
-    expect(description).not.toContain("read/write the user's files");
-    expect(description).not.toContain("$HOME");
   });
 });

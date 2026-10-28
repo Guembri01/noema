@@ -119,6 +119,54 @@ metadata addresses and every `.internal`/`.local` name stay refused. It
 applies to the webhook path only; calendar feeds keep refusing a loopback
 feed in production.
 
+## Hardening the desktop app
+
+The Windows/macOS/Linux app is the same server behind a Tauri shell. Its extra
+surface is hardened as follows:
+
+- **Loopback only.** The bundled server binds `127.0.0.1` (or `::1` only when
+  explicitly requested) on the install's port. An inherited `HOSTNAME`,
+  `APP_ORIGINS` or LAN address cannot widen the desktop binding; the boot wrapper
+  ignores `HOSTNAME` and recomputes the Server Action origin list as loopback-only
+  and port-exact.
+- **Navigation guard.** The webview may only show the shell's own page or exactly
+  the server origin this run started. Other HTTP(S) links open in the system
+  browser; `javascript:`, `data:` and `file:` navigations are denied. The dev
+  server is allowed only in debug builds.
+- **Narrow IPC.** The served app can call five shell commands and listen to
+  events. The shell's own first-run page can call five commands. The process,
+  filesystem, dialog, `os`, store and opener plugins are not granted to any
+  document; several are not linked at all. The broad `desktop-everything`
+  capability has been removed.
+- **Secrets at rest.** The Postgres URL and the session signing secret live in
+  `secrets.bin`, encrypted with Windows DPAPI in the current user's scope. The old
+  plain-text `preferences.json` key and `auth-secret` file are migrated and
+  removed. A corrupt store fails closed; it never silently becomes a new secret or
+  a new database. On non-Windows builds the file is `0600` and the data directory
+  is owner-only.
+- **No secret in diagnostics.** `desktop_info` and the clipboard report receive a
+  password-redacted connection string, logs redact any `postgres(ql)://user:…@`
+  credential before they are stored or shown, and `get_pref` refuses the
+  connection-string key.
+- **Strict local CSP.** The shell page's CSS and JavaScript are external files;
+  its CSP has no `unsafe-inline`, no remote hosts, no frames, no objects and
+  `frame-ancestors 'none'`.
+- **Supply chain.** GitHub Actions are pinned by commit SHA, the container base
+  is digest-pinned, and release builds use a locked Rust CLI version.
+
+**Signed installers are not available yet.** The release workflow already reads
+`WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`, but no certificate is
+configured, so the current Windows installers are unsigned and SmartScreen may
+warn. Verify the SHA-256 in `SHA256SUMS` beside the release; do **not** disable
+SmartScreen or add a blanket exclusion. Auto-update is deliberately absent until
+a signing key pair and a release endpoint exist.
+
+**Threat boundary.** DPAPI and the per-user `%APPDATA%` ACL stop other users, the
+network and a copied profile. They do not stop malware already running as the
+same signed-in user — that process can read the user's DPAPI secrets and
+environment, as it can read any file the user can. The app is not claiming an
+OS sandbox/AppContainer.
+
 ## Secrets in the repository
 
 No credential belongs in the tree. `npm run check:secrets` fails the build on

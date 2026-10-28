@@ -225,16 +225,17 @@ function nonLiteralCallSites() {
 }
 
 describe("desktop capabilities (B46)", () => {
-  it("keeps the shell's own broad capability local — no remote URL", () => {
-    const everything = readCapability("desktop-everything.json");
-    expect(everything.identifier).toBe("desktop-everything");
-    expect(everything.remote).toBeUndefined();
-    expect(everything.local).toBe(true);
-    // The broad set is unchanged: the shell's own page still needs its
-    // commands. (The file-system permission that used to be part of it is
-    // gone — the plugin has no JavaScript face in this app, see #62.)
-    const ids = permissionIds(everything);
-    expect(ids).toContain("shell:allow-execute");
+  it("ships no broad local capability", () => {
+    expect(existsSync(join(capabilitiesDir, "desktop-everything.json"))).toBe(false);
+    for (const capability of allCapabilities()) {
+      const ids = permissionIds(capability);
+      expect(ids, `capability "${capability.identifier}" grants the shell plugin`).not.toContain(
+        "shell:allow-execute",
+      );
+      expect(ids, `capability "${capability.identifier}" grants shell spawn`).not.toContain(
+        "shell:allow-spawn",
+      );
+    }
   });
 
   it("registers every capability file in tauri.conf.json", () => {
@@ -292,8 +293,8 @@ describe("desktop capabilities (B46)", () => {
     const config = tauriConfig();
     const capabilities = config.app.security.capabilities;
     expect(capabilities).toContain("default");
-    expect(capabilities).toContain("desktop-everything");
     expect(capabilities).toContain("desktop-remote");
+    expect(capabilities).not.toContain("desktop-everything");
   });
 
   it("grants the served app exactly the shell commands it calls", () => {
@@ -439,11 +440,11 @@ describe("desktop capabilities (B48)", () => {
     }
   });
 
-  it("keeps the shell's own page its audited way into the store", () => {
-    // The store stays reachable for the shell's own page — through the app
-    // commands (`get_pref`/`set_pref`), which the ACL *can* gate. What must
-    // not happen is the plugin's own permission set, which the ACL can only
-    // hand out unscoped.
+  it("keeps the preference commands away from every document too", () => {
+    // The plugin is not the only way into the store: `get_pref`/`set_pref` are
+    // app commands. They are not granted to any capability any more, and the
+    // permission set does not include them. `set_database_url` is the only
+    // write path, and it validates + encrypts.
     const ids = permissionIds(readCapability("default.json"));
     expect(ids).toContain("default");
 
@@ -451,8 +452,9 @@ describe("desktop capabilities (B48)", () => {
       join(root, "src-tauri", "permissions", "default.toml"),
       "utf8",
     );
-    expect(permissionSet).toContain("allow-get-pref");
-    expect(permissionSet).toContain("allow-set-pref");
+    expect(permissionSet).not.toContain("allow-get-pref");
+    expect(permissionSet).not.toContain("allow-set-pref");
+    expect(permissionSet).toContain("allow-set-database-url");
   });
 });
 
@@ -480,6 +482,8 @@ describe("desktop capabilities (B48)", () => {
 
 /** The shell's own page: the only document that runs on the shell's origin. */
 const shellPagePath = join(root, "src-tauri", "dist", "index.html");
+/** Its script is external so the CSP can keep `script-src 'self'`. */
+const shellScriptPath = join(root, "src-tauri", "dist", "index.js");
 
 /**
  * The `core:` permissions the shell's own page needs.
@@ -530,7 +534,9 @@ const FORBIDDEN_LOCAL_PREFIXES = [
  * apart.
  */
 function shellPageCalls() {
-  const source = readFileSync(shellPagePath, "utf8");
+  const source = [shellPagePath, shellScriptPath]
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
   const app = new Set();
   const plugins = new Set();
   for (const match of source.matchAll(/invoke\(\s*"([^"]+)"/g)) {
@@ -649,7 +655,7 @@ describe("desktop capabilities (B59)", () => {
 
     // The subscription is the reason the event permission is there at all: a
     // grant without a call is exactly what this finding is about.
-    const source = readFileSync(shellPagePath, "utf8");
+    const source = readFileSync(shellScriptPath, "utf8");
     expect(
       source,
       "the shell's own page does not subscribe to the event stream any more",
@@ -662,7 +668,8 @@ describe("desktop capabilities (B59)", () => {
     // the theme, the minimize and the drag — but through the shell's own app
     // commands (`set_window_title`, `set_theme`, `set_zoom`,
     // `set_decorations`), which run in Rust, where the ACL does not gate
-    // them. So no `core:window:allow-*` permission is needed for any of it.
+    // them. They are intentionally *not* in the page's permission set: only
+    // the five commands the page invokes are.
     const commands = readFileSync(join(root, "src-tauri", "src", "commands.rs"), "utf8");
     const set = appPermissionSet();
     for (const command of [
@@ -674,7 +681,7 @@ describe("desktop capabilities (B59)", () => {
       expect(commands, `the shell has no "${command}" command`).toContain(
         `pub fn ${command}`,
       );
-      expect(set, `the app's permission set does not grant "${command}"`).toContain(
+      expect(set, `the app's permission set must not grant "${command}"`).not.toContain(
         allowId(command),
       );
     }

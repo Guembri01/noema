@@ -5,16 +5,18 @@
 //!  2. plugins (single instance, store, log, opener, window state, shell…)
 //!  3. native menu + tray, so the app is controllable even if the server fails
 //!  4. **start the local server** and wait for `/api/ready`
-//!  5. point the window at it and inject `window.__NOEMA_DESKTOP__`
+//!  5. point the window at it
 //!
 //! If step 4 fails the window still opens, on a bundled "not ready" page. That
 //! page is also the first-run surface: the desktop build talks to a Postgres, so
 //! if the default `localhost:5432` is not the user's database, they can paste a
-//! connection string there and the shell restarts the server with it — no white
+//! connection string there and the shell restarts the server with it - no white
 //! screen, no terminal, no reinstall.
 
 pub mod commands;
 pub mod logging;
+pub mod navigation;
+pub mod secrets;
 pub mod shell;
 pub mod sidecar;
 pub mod state;
@@ -91,15 +93,10 @@ async fn attach_server(app: &tauri::AppHandle, info: &sidecar::SidecarInfo) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let bridge = serde_json::json!({
-        "mode": "desktop",
-        "apiBase": info.api_base,
-        "dataDir": info.data_dir,
-        "appVersion": app.package_info().version.to_string(),
-        "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-    });
-    let script = format!("window.__NOEMA_DESKTOP__ = Object.freeze({bridge});");
-    let _ = window.eval(&script);
+    // The navigation guard must already know the exact origin when the window
+    // navigates. `sidecar::start` also sets it before emitting `Ready`, so a
+    // restart path and this attach path agree.
+    navigation::set_server_origin(app, Some(&info.api_base));
     if let Ok(mut url) = url::Url::parse(&info.api_base) {
         // Hand the stored theme over as a query parameter: the page's own store
         // (`localStorage`) is keyed by origin, and the port is only *preferred*
@@ -131,10 +128,6 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -143,6 +136,8 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(navigation::plugin())
+        .manage(navigation::NavigationState::default())
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             commands::desktop_info,
@@ -184,6 +179,18 @@ pub fn run() {
                     std::env::consts::ARCH
                 ),
             );
+
+            // 1b. Move the old plain-text database URL and session secret into
+            //     the encrypted store before the server starts. A failure here
+            //     is logged and the server start will fail closed rather than
+            //     silently falling back to a new database/secret.
+            if let Err(error) = state::migrate_plaintext_secrets(&handle) {
+                logging::line(
+                    &handle,
+                    "lifecycle",
+                    &format!("could not migrate plain-text secrets: {error}"),
+                );
+            }
 
             // 2. native menu + tray (the app stays controllable).
             let menu = shell::build_menu(&handle)?;

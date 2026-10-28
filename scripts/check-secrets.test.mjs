@@ -170,7 +170,10 @@ if (process.env.VITEST) {
   const { describe, it } = await import("vitest");
   describe("the secret gate (B34)", () => {
     for (const testCase of CASES) {
-      it(testCase.name, () => runCase(testCase));
+      // Each case builds a temporary repository and runs the gate over it.
+      // That is a handful of subprocesses; under a full parallel suite the
+      // default 5 s is not enough on a loaded Windows machine.
+      it(testCase.name, () => runCase(testCase), 30_000);
     }
   });
 } else {

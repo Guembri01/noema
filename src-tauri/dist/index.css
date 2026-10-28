@@ -1,0 +1,131 @@
+      /* The shell's own surface: shown while the local server starts, and if it
+         cannot start. Deliberately self-contained (no build step, no fonts) so
+         it renders even when everything else is broken. */
+      :root {
+        --bg: #ffffff;
+        --fg: #37352f;
+        --muted: #6b6a65;
+        --border: #e9e9e7;
+        --surface-2: #f7f7f5;
+        --danger: #d44c47;
+        --accent: #1a75d2;
+        --on-accent: #ffffff;
+        --radius: 6px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #191919;
+          --fg: rgba(255, 255, 255, 0.85);
+          --muted: rgba(255, 255, 255, 0.55);
+          --border: #2f2f2f;
+          --surface-2: #232323;
+        }
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 10vh 24px;
+      }
+      h1 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 8px;
+      }
+      p {
+        color: var(--muted);
+        margin: 0 0 18px;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        margin-bottom: 6px;
+      }
+      input {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--on-accent);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      details {
+        margin-top: 22px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      #detail {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--danger);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .spin {
+        width: 13px;
+        height: 13px;
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spin {
+          animation: none;
+        }
+      }
+      [data-state="ready"] .spin,
+      [data-state="running"] .spin {
+        display: none;
+      }
+      /* Once the server is up, the shell navigates away; if the user is seeing
+         this page it is because that has not happened yet. */
+      [data-state="ready"] #lead {
+        color: var(--fg);
+      }

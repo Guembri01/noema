@@ -27,6 +27,11 @@ const { networkInterfaces } = require("node:os");
 /** Ports the app is conventionally reached on, beyond the one it listens on. */
 const CONVENTIONAL_PORTS = ["3200", "3000"];
 
+/** Host names that always mean this machine. */
+function loopbackHosts() {
+  return ["localhost", "127.0.0.1", "[::1]"];
+}
+
 /**
  * The host names loopback and this machine's own addresses answer to.
  *
@@ -34,7 +39,7 @@ const CONVENTIONAL_PORTS = ["3200", "3000"];
  * @returns {string[]}
  */
 function localHosts(interfaces) {
-  const hosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  const hosts = new Set(loopbackHosts());
   for (const addresses of Object.values(interfaces ?? {})) {
     for (const address of addresses ?? []) {
       // IPv4 only: `[::1]` above is the one IPv6 name a browser sends, and an
@@ -46,7 +51,28 @@ function localHosts(interfaces) {
 }
 
 /**
+ * The address the desktop server is allowed to bind.
+ *
+ * The boot wrapper is only used by the desktop payload, so there is no reason
+ * to honour an inherited `HOSTNAME=0.0.0.0` (some shells and service managers
+ * set it). A non-loopback value fails closed to `127.0.0.1`; only an explicit
+ * IPv6 loopback is preserved, because the readiness probe and the app origin
+ * are IPv4 by design.
+ *
+ * @param {string | undefined} requested
+ * @returns {string}
+ */
+function serverHostname(requested) {
+  return requested?.trim() === "::1" ? "::1" : "127.0.0.1";
+}
+
+/**
  * The `host:port` entries Next accepts a Server Action from.
+ *
+ * In desktop mode the list is deliberately loopback-only and limited to the
+ * actual port. A desktop install binds loopback; accepting a LAN address (or a
+ * proxy host from `APP_ORIGINS`) would widen the CSRF/rebinding surface for no
+ * product benefit. The site/self-hosted build keeps the old behaviour.
  *
  * @param {{ env?: NodeJS.ProcessEnv, interfaces?: NodeJS.Dict<import("node:os").NetworkInterfaceInfo[]> }} [options]
  *   Injectable for tests; both default to this process and this machine.
@@ -55,23 +81,36 @@ function localHosts(interfaces) {
 function allowedOrigins(options = {}) {
   const env = options.env ?? process.env;
   const interfaces = options.interfaces ?? networkInterfaces();
+  const desktop = env.NOEMA_RUNTIME === "desktop";
 
-  const ports = new Set([env.PORT ?? "", ...CONVENTIONAL_PORTS]);
+  const hosts = desktop ? loopbackHosts() : localHosts(interfaces);
+  const ports = desktop
+    ? new Set([env.PORT ?? ""])
+    : new Set([env.PORT ?? "", ...CONVENTIONAL_PORTS]);
   const origins = new Set();
-  for (const host of localHosts(interfaces)) {
+  for (const host of hosts) {
     for (const port of ports) {
       if (port) origins.add(`${host}:${port}`);
     }
   }
 
   // APP_ORIGINS covers a reverse proxy or a tunnel, where the browser's `Origin`
-  // is a public name that no interface on this machine can enumerate.
-  for (const entry of (env.APP_ORIGINS ?? "").split(",")) {
-    const value = entry.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    if (value) origins.add(value);
+  // is a public name that no interface on this machine can enumerate. It is a
+  // server-deployment affordance, not a desktop one.
+  if (!desktop) {
+    for (const entry of (env.APP_ORIGINS ?? "").split(",")) {
+      const value = entry.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      if (value) origins.add(value);
+    }
   }
 
   return [...origins];
 }
 
-module.exports = { allowedOrigins, localHosts, CONVENTIONAL_PORTS };
+module.exports = {
+  allowedOrigins,
+  localHosts,
+  loopbackHosts,
+  serverHostname,
+  CONVENTIONAL_PORTS,
+};

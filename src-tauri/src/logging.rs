@@ -34,9 +34,49 @@ pub fn init_file_sink(dir: PathBuf) {
 
 /// Append one line to both sinks and notify the UI.
 pub fn line(app: &AppHandle, source: &str, message: &str) {
+    let message = redact(message);
     let entry = format!("[{source}] {}", message.trim_end());
     push(&entry);
     let _ = app.emit("sidecar://log", &entry);
+}
+
+/// Strip credentials out of any Postgres URL before a line reaches the ring,
+/// the log file or the diagnostics panel.
+///
+/// Server errors are the usual source: a failed connection can quote the whole
+/// connection string, password included. The password is still in the process
+/// environment, where the server needs it; this only keeps it out of a support
+/// bundle that a user is encouraged to paste into an issue.
+pub fn redact(message: &str) -> String {
+    let mut output = String::with_capacity(message.len());
+    let mut rest = message;
+    loop {
+        let next = ["postgresql://", "postgres://"]
+            .iter()
+            .filter_map(|scheme| rest.find(scheme).map(|index| (index, *scheme)))
+            .min_by_key(|(index, _)| *index);
+        let Some((index, scheme)) = next else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..index + scheme.len()]);
+        let after = &rest[index + scheme.len()..];
+        let end = after
+            .find(|character: char| {
+                character.is_whitespace()
+                    || matches!(character, '"' | '\'' | '`' | ')' | ']' | '}' | ',' | ';')
+            })
+            .unwrap_or(after.len());
+        let token = &after[..end];
+        if let Some(at) = token.rfind('@') {
+            output.push_str("***@");
+            output.push_str(&token[at + 1..]);
+        } else {
+            output.push_str(token);
+        }
+        rest = &after[end..];
+    }
+    output
 }
 
 /// Convenience for the sidecar's stdout/stderr.
@@ -122,6 +162,22 @@ mod tests {
             tail(&buffer, 99).len(),
             3,
             "a limit above the length returns everything"
+        );
+    }
+
+    #[test]
+    fn connection_string_passwords_never_reach_the_logs() {
+        let redacted = redact(
+            "cannot connect to postgresql://noema:sup3r-secret@db.example.com:5432/noema (P1001)",
+        );
+        assert!(!redacted.contains("sup3r-secret"), "{redacted}");
+        assert!(redacted.contains("postgresql://***@db.example.com:5432/noema"));
+        assert!(redacted.contains("P1001"));
+        // A URL without credentials is untouched, and the scanner consumes the
+        // whole message rather than looping on a scheme it cannot redact.
+        assert_eq!(
+            redact("postgres://u@h/db and postgresql://host/db"),
+            "postgres://***@h/db and postgresql://host/db"
         );
     }
 

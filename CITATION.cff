@@ -13,8 +13,8 @@ authors:
     given-names: Bilel
   - family-names: Ben Othmen
     given-names: Wissal
-version: 1.4.1
-date-released: "2026-10-17"
+version: 1.4.2
+date-released: "2026-10-25"
 license: MIT
 repository-code: "https://github.com/Guembri01/noema"
 url: "https://github.com/Guembri01/noema"

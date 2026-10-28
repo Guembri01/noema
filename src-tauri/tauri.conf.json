@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Noema",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "identifier": "app.noema.desktop",
   "build": {
     "beforeDevCommand": "npm run desktop:dev:web",
@@ -30,12 +30,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri: ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data: blob: http://127.0.0.1:* https:; media-src 'self' blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* https: wss:; font-src 'self' data:; frame-src 'self' http://127.0.0.1:* https:; object-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self'; style-src-attr 'none'; img-src 'self' data:; font-src 'self'; media-src 'none'; connect-src 'self' ipc: http://ipc.localhost; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "assetProtocol": {
         "enable": false,
         "scope": ["$APPDATA/**", "$APPLOCALDATA/**"]
       },
-      "capabilities": ["default", "desktop-everything", "desktop-remote"]
+      "capabilities": ["default", "desktop-remote"]
     },
     "trayIcon": {
       "id": "main",
