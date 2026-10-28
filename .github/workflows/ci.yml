@@ -246,16 +246,10 @@ jobs:
     # The Rust half of the tree has its own advisory database (RustSec), and
     # `cargo audit` is not part of the Rust toolchain — it is installed here.
     #
-    # The two advisories that are ignored below are the ones the tree carries
-    # today. Both are the same issue (CVE-2026-111943): a distrusted emSign
-    # intermediate whose private key is public.
-    #   · RUSTSEC-2026-0381 — webpki-roots; the tree carries 1.0.9, the fix
-    #     is 1.0.10.
-    #   · RUSTSEC-2026-0382 — rustls-webpki; the tree carries 0.103.15, the
-    #     fix is 0.103.16.
-    # Moving them is a `cargo update` of the Tauri dependency tree, which this
-    # pull request does not make — until it does, the two are ignored with
-    # their reason, and every other advisory fails this job.
+    # No advisory is ignored. In particular, webpki-roots 1.0.10 and
+    # rustls-webpki 0.103.16 carry the fix for CVE-2026-111943 (a distrusted
+    # emSign intermediate whose private key is public); the lockfile was moved
+    # to those versions rather than teaching the gate to ignore them.
     name: rust advisories
     runs-on: ubuntu-latest
     permissions:
@@ -281,10 +275,7 @@ jobs:
 
       - name: Rust advisory audit
         working-directory: src-tauri
-        run: |
-          cargo audit \
-            --ignore RUSTSEC-2026-0381 \
-            --ignore RUSTSEC-2026-0382
+        run: cargo audit
   # The CSP gate (B82): `scripts/check-csp.mjs` asserts against a *running
   # production server* that every inline script is nonced or hash-pinned. It
   # ran in no workflow at all, so a CSP regression was only ever noticed by

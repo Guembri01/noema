@@ -512,8 +512,8 @@ The build produces two installers in `src-tauri/target/release/bundle/`:
 
 | Artifact | Size | Notes |
 |---|---|---|
-| `nsis/Noema_1.4.2_x64-setup.exe` | 77.65 MiB | Per-user install - **no admin prompt**, no UAC |
-| `msi/Noema_1.4.2_x64_en-US.msi` | 137.34 MiB | For managed deployment (MSI/GPO) |
+| `nsis/Noema_1.4.2_x64-setup.exe` | 77.67 MiB | Per-user install - **no admin prompt**, no UAC |
+| `msi/Noema_1.4.2_x64_en-US.msi` | 137.36 MiB | For managed deployment (MSI/GPO) |
 
 For a published release, compare the downloaded file with the `SHA256SUMS` asset
 before running it. On Windows:
@@ -669,7 +669,7 @@ below was executed, not inferred.
 | `cargo test --all-features` | 26 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour and the preferred-port fallback, log ring, connection-string redaction and quote-normalisation, preferred-port plausibility, `Send` guards, readiness messaging) |
 | `npm run desktop:prepare` | 369.0 MB payload staged and validated |
 | `npm run desktop:smoke` | boots the packaged payload on the bundled runtime, migrates, serves `/api/health` 200 and `/login` 200 |
-| `cargo tauri build` | `Noema_1.4.2_x64-setup.exe` (77.65 MiB) + `Noema_1.4.2_x64_en-US.msi` (137.34 MiB) |
+| `cargo tauri build` | `Noema_1.4.2_x64-setup.exe` (77.67 MiB) + `Noema_1.4.2_x64_en-US.msi` (137.36 MiB) |
 | **Installed the NSIS installer** | exit 0, per-user, **no admin prompt** → `%LOCALAPPDATA%\Noema\` + Start Menu shortcut + `uninstall.exe` |
 | **Launched the installed app** | supervised server on a loopback port, `/api/health → 200 {"ok":true,"db":"up"}`, `/login → 200` (16,903 bytes) |
 | **Relaunched the installed app** | same loopback port (61621 → 61621), so the app's browser-side state survives a restart; with that port occupied it logs `port 61621 is in use, serving on 62537 instead` and re-points the preference |

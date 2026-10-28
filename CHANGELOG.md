@@ -46,6 +46,10 @@ unchanged except for shared code touched by the shell changes.
 - **Tauri internals are hardened defensively.** `open_data_subdir` uses an
   allow-list, `set_pref` is bounded, `set_zoom` no longer uses `eval`, window
   titles are single-line/bounded, and `set_theme` rejects unknown values.
+- **The Rust advisory gate has no ignores.** The lockfile moved
+  `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10, which carry the fix
+  for the distrusted emSign intermediate (CVE-2026-111943); `cargo audit` now
+  fails on any advisory instead of carrying two accepted ones.
 
 ### Added
 
