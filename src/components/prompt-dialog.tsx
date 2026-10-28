@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { DialogContent } from "@/components/ui/dialog";
+import { TAG_PALETTE, tagStyle } from "@/lib/design-tokens";
+import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 
 export type PromptField = {
@@ -15,6 +17,11 @@ export type PromptField = {
   /** Render a textarea (formulas, descriptions). */
   multiline?: boolean;
   required?: boolean;
+  /**
+   * Control to render. `date` uses the browser calendar, `color` renders the
+   * shared tag palette — both keep the same string-value contract as text.
+   */
+  kind?: "text" | "date" | "color";
 };
 
 /**
@@ -90,7 +97,36 @@ export function PromptDialog({
             <label key={field.name} className="block text-sm">
               {field.label}
               {field.hint && <span className="ml-2 text-2xs text-muted">{field.hint}</span>}
-              {field.multiline ? (
+              {field.kind === "color" ? (
+                <span
+                  role="radiogroup"
+                  aria-label={field.label}
+                  className="mt-1 flex flex-wrap gap-1.5"
+                >
+                  {TAG_PALETTE.map((hue) => {
+                    const active = values[field.name] === hue;
+                    const swatch = tagStyle(hue);
+                    return (
+                      <button
+                        key={hue}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={hue}
+                        title={hue}
+                        onClick={() =>
+                          setValues((current) => ({ ...current, [field.name]: hue }))
+                        }
+                        className={cn(
+                          "focus-ring h-6 w-6 rounded-full border u-colors",
+                          active ? "ring-2 ring-focus ring-offset-1" : "",
+                        )}
+                        style={{ backgroundColor: swatch.color, borderColor: swatch.borderColor }}
+                      />
+                    );
+                  })}
+                </span>
+              ) : field.multiline ? (
                 <textarea
                   value={values[field.name] ?? ""}
                   placeholder={field.placeholder}
@@ -102,6 +138,7 @@ export function PromptDialog({
                 />
               ) : (
                 <input
+                  type={field.kind === "date" ? "date" : "text"}
                   value={values[field.name] ?? ""}
                   placeholder={field.placeholder}
                   onChange={(event) =>

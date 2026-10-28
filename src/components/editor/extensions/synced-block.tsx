@@ -9,7 +9,7 @@ import {
 } from "@tiptap/react";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Link2, RefreshCw, Trash2 } from "lucide-react";
+import { Link2, RefreshCw, Trash2, Unlink } from "lucide-react";
 import type { RichNode } from "@/lib/blocks";
 import { DocRenderer } from "@/components/doc-renderer";
 import { defaultBlockIdFactory } from "@/components/editor/extensions/block-ids";
@@ -670,7 +670,7 @@ function SyncedBlockView({
     (samePage && live === null && snapshot !== null) ||
     (!samePage && remote.error !== null);
 
-  const detach = () => {
+  const unlink = () => {
     const ref = syncedRefFromAttrs(attrs);
     const pos = getPos();
     const instanceId =
@@ -735,7 +735,16 @@ function SyncedBlockView({
               aria-label={t(locale, "detachSyncedBlock")}
               title={t(locale, "detachSyncedBlock")}
               className="focus-ring u-interactive rounded-control p-1 text-muted hover:bg-surface-2 hover:text-fg"
-              onClick={detach}
+              onClick={unlink}
+            >
+              <Unlink className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Delete block"
+              title="Delete block"
+              className="focus-ring u-interactive rounded-control p-1 text-muted hover:bg-danger-soft hover:text-danger"
+              onClick={() => deleteNode()}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>

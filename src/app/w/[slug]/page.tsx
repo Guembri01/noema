@@ -39,7 +39,9 @@ export default async function WorkspaceHome({
       where: { id: user.id },
       select: { onboardingDismissedAt: true },
     }),
-    prisma.page.count({ where: { workspaceId: workspace.id, deletedAt: null } }),
+    prisma.page.count({
+      where: { workspaceId: workspace.id, deletedAt: null, type: "PAGE" },
+    }),
     prisma.page.count({
       where: { workspaceId: workspace.id, deletedAt: null, type: "DATABASE" },
     }),
@@ -83,6 +85,21 @@ export default async function WorkspaceHome({
                   {checklist.done} of {checklist.total} done — the fastest path to a
                   useful workspace.
                 </p>
+                <div
+                  className="mt-3 h-1.5 w-52 overflow-hidden rounded-full bg-surface-2"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={checklist.total}
+                  aria-valuenow={checklist.done}
+                  aria-label="Onboarding progress"
+                >
+                  <div
+                    className="h-full rounded-full bg-action transition-[width] duration-300"
+                    style={{
+                      width: `${checklist.total > 0 ? Math.round((checklist.done / checklist.total) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
               </div>
               <form action={dismissOnboardingAction}>
                 <button

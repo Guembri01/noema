@@ -22,13 +22,19 @@ export type TicketRow = {
   assigneeId: string | null;
   assigneeName: string | null;
   assigneeEmail: string | null;
-  labels: { id: string; name: string; color: string }[];
+  labels: { id: string; name: string; color: string; description?: string | null }[];
   labelIds: string[];
   commentCount: number;
   childCount: number;
 };
 
-export type LabelRow = { id: string; name: string; color: string; count: number };
+export type LabelRow = {
+  id: string;
+  name: string;
+  color: string;
+  description?: string | null;
+  count: number;
+};
 
 export const LABEL_APPEARANCE: Record<string, string> = {
   gray: "bg-surface-2 text-muted",

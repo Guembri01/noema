@@ -275,7 +275,10 @@ export function Backlinks({
     );
   }
 
-  const sections = backlinkSections(items, unlinked);
+  // A single unlinked mention is usually the page's own title appearing in a
+  // sibling note; it adds a whole section for one low-value row. Keep the
+  // section only when it actually aggregates something.
+  const sections = backlinkSections(items, unlinked.length > 1 ? unlinked : []);
 
   if (sections.length === 0) {
     if (!showEmpty) return null;

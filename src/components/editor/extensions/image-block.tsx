@@ -120,7 +120,7 @@ const MEDIA_KINDS: readonly MediaKind[] = ["image", "video", "audio", "file"];
 const VIDEO_EXTENSION = /\.(mp4|m4v|webm|ogv|mov)$/;
 const AUDIO_EXTENSION = /\.(mp3|wav|m4a|aac|oga|ogg|flac)$/;
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|tiff?)$/;
-const FILE_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|md|json|zip|rar|7z|tar|gz)$/;
+const FILE_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv|txt|md|json|zip|rar|7z|tar|gz)$/;
 
 /** Normalise a stored `mediaType` (an explicit declaration wins over the URL). */
 export function mediaKindAttr(value: unknown): MediaKind | null {

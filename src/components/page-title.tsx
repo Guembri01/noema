@@ -68,6 +68,7 @@ import {
 } from "@/components/topbar/avatar-stack";
 import { useUndoRedo } from "@/components/providers/undo-redo-provider";
 import {
+  AUTOCORRECT_EVENT,
   focusPageBody,
   readAutocorrectPreference,
   writeAutocorrectPreference,
@@ -720,6 +721,11 @@ export function PageTitle({
     const next = !autocorrect;
     setAutocorrect(next);
     writeAutocorrectPreference(pageId, next);
+    // The editor restores the preference on mount; the live toggle must also
+    // reach the already-mounted extension or it only takes effect on reload.
+    window.dispatchEvent(
+      new CustomEvent(AUTOCORRECT_EVENT, { detail: { enabled: next } }),
+    );
   };
   // The in-page `h1`'s offset inside the scroll container, cached so each scroll
   // tick compares against a stable threshold (re-measured on resize / cover swap).

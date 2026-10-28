@@ -69,9 +69,17 @@ export function statusBadgeTone(color: string | null | undefined): BadgeTone {
 }
 
 /** A ticket label rendered as a token-coloured `Tag`. */
-function LabelTag({ name, color }: { name: string; color: string }) {
+function LabelTag({
+  name,
+  color,
+  description,
+}: {
+  name: string;
+  color: string;
+  description?: string | null;
+}) {
   return (
-    <Tag hue={color} size="sm">
+    <Tag hue={color} size="sm" title={description || undefined}>
       {name}
     </Tag>
   );
@@ -433,7 +441,12 @@ export function BoardCard({
         <span className="mt-0.5 block text-sm">{ticket.title}</span>
         <span className="mt-1 flex flex-wrap items-center gap-1">
           {ticket.labels.map((label) => (
-            <LabelTag key={label.id} name={label.name} color={label.color} />
+            <LabelTag
+              key={label.id}
+              name={label.name}
+              color={label.color}
+              description={label.description}
+            />
           ))}
           {ticket.estimate !== null && (
             <Badge tone="neutral" size="sm">
@@ -577,7 +590,12 @@ export function TicketListView({
                   <span className="w-16 shrink-0 font-mono text-2xs text-muted">{ticket.key}</span>
                   <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
                   {ticket.labels.map((label) => (
-                    <LabelTag key={label.id} name={label.name} color={label.color} />
+                    <LabelTag
+                      key={label.id}
+                      name={label.name}
+                      color={label.color}
+                      description={label.description}
+                    />
                   ))}
                   {ticket.childCount > 0 && (
                     <Badge tone="neutral" size="sm">

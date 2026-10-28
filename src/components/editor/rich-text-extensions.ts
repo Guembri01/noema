@@ -9,7 +9,8 @@
  * reaches for a page id, a socket or a database:
  *
  *   blocks   paragraph, heading 1-3, bulleted/ordered/to-do lists, quote,
- *            code block (the lowlight one), horizontal rule, table
+ *            code block (the lowlight one), horizontal rule, table, image or
+ *            uploaded file card
  *   marks    bold, italic, underline, strike, inline code, link, text colour,
  *            highlight
  *   typing   markdown input rules (`#`, `-`, `1.`, `1)`, `[] `, `>`, ``` ```,
@@ -32,6 +33,7 @@ import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import { TableKit } from "@tiptap/extension-table/kit";
 import { CodeBlock } from "@/components/editor/extensions/code-block";
+import { ImageBlock } from "@/components/editor/extensions/image-block";
 import { InputRules } from "@/components/editor/extensions/input-rules";
 
 export type RichTextOptions = {
@@ -64,6 +66,10 @@ export function richTextExtensions({
       ...(collaboration ? { undoRedo: false } : {}),
     }),
     CodeBlock.configure({ locale }),
+    // A ticket can carry a PDF or spreadsheet as a file card. The page editor's
+    // block is the same node, so the stored description renders identically in
+    // `DocRenderer` and can be promoted to a page without conversion.
+    ImageBlock.configure({ locale }),
     Placeholder.configure({ placeholder }),
     TaskList,
     TaskItem.configure({ nested: true }),

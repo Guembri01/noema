@@ -359,7 +359,7 @@ export function HomeGallery({
 
   return (
     <div className="w-full">
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div id="quick-start" className="grid scroll-mt-24 gap-4 sm:grid-cols-2">
         {quickStartKinds().map(quickStart)}
       </div>
 

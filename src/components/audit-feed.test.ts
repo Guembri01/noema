@@ -116,6 +116,7 @@ describe("auditTarget", () => {
     expect(auditTarget(event())).toBe("Old notes");
     expect(auditTarget(event({ meta: { name: "Secret" } }))).toBe("Secret");
     expect(auditTarget(event({ meta: undefined }))).toBe("p9");
+    expect(auditTarget(event({ meta: { title: "### rr" } }))).toBe("rr");
   });
 });
 

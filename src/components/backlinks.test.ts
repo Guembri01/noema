@@ -99,7 +99,7 @@ describe("Backlinks render", () => {
   it("renders unlinked mentions with a Link action and an orange chip", () => {
     const html = render({
       items: [item("l1")],
-      unlinked: [item("u1", "Old notes")],
+      unlinked: [item("u1", "Old notes"), item("u2", "Older notes")],
     });
     expect(html).toContain("Unlinked mentions");
     expect(html).toContain("tag tag-orange");

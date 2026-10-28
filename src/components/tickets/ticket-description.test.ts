@@ -51,7 +51,7 @@ describe("autosave cadence", () => {
  * trigger that names its own panel, and nothing renders until one is opened.
  */
 describe("description toolbar panels", () => {
-  const render = (locale = "en") =>
+  const render = (locale = "en", workspaceId?: string) =>
     renderToStaticMarkup(
       // The toolbar's buttons carry tooltips, which are Radix-backed and need the
       // provider the app's layout supplies.
@@ -62,6 +62,7 @@ describe("description toolbar panels", () => {
           doc: null,
           text: "",
           locale,
+          workspaceId,
           onSave: () => {},
         }),
       ),
@@ -98,5 +99,14 @@ describe("description toolbar panels", () => {
     const html = render("fr");
     expect(html).toContain('aria-label="Couleur du texte"');
     expect(html).toContain('aria-label="Lien"');
+  });
+
+  it("offers document attachments only when the workspace is known", () => {
+    const withWorkspace = render("en", "ws-1");
+    expect(withWorkspace).toContain('aria-label="Attach file"');
+    expect(withWorkspace).toContain('type="file"');
+    expect(withWorkspace).toContain(".xlsx");
+    expect(withWorkspace).toContain(".pdf");
+    expect(render("en")).not.toContain('type="file"');
   });
 });

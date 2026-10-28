@@ -13,6 +13,7 @@ import {
   type AuditFilter,
 } from "@/lib/audit-log";
 import { diffObjects, isEmptyDiff, summarizeDiff } from "@/lib/audit-diff";
+import { cleanDisplayText } from "@/lib/display-text";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -115,10 +116,10 @@ export function auditTarget(event: AuditEvent): string {
   if (meta !== undefined) {
     for (const key of ["title", "name"] as const) {
       const value = meta[key];
-      if (typeof value === "string" && value.length > 0) return value;
+      if (typeof value === "string" && value.length > 0) return cleanDisplayText(value);
     }
   }
-  return event.entityId;
+  return cleanDisplayText(event.entityId);
 }
 
 /**
@@ -157,7 +158,7 @@ function changeSummary(event: AuditEvent): string | null {
   const meta = event.meta;
   if (meta === undefined || !("before" in meta) || !("after" in meta)) return null;
   const entries = diffObjects(meta.before, meta.after);
-  return isEmptyDiff(entries) ? null : summarizeDiff(entries);
+  return isEmptyDiff(entries) ? null : cleanDisplayText(summarizeDiff(entries));
 }
 
 /* -------------------------------------------------------------------------- *
@@ -204,7 +205,7 @@ function AuditRow({ event, now }: { event: AuditEvent; now: number }) {
           <span className="mt-0.5 block truncate text-sm text-fg" title={target}>
             {target}
           </span>
-          {change && (
+          {change && change !== target && (
             <span className="mt-0.5 block truncate text-xs text-muted" title={change}>
               {change}
             </span>

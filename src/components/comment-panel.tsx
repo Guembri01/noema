@@ -32,6 +32,7 @@ import {
 } from "@/server/actions/comments";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { CommentComposerTools } from "@/components/comment-composer-tools";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,7 +52,12 @@ import { actionError, safeAction } from "@/lib/actions-client";
 import { resolveAvatar, type Avatar as ResolvedAvatar } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
 import { contentDirProps } from "@/lib/bidi";
-import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
+import {
+  commentMentionHref,
+  parseCommentBody,
+  toPlainText,
+  type CommentSegment,
+} from "@/lib/comment-body";
 import { extractMentions } from "@/lib/comments";
 import { type CommentAnchorState } from "@/lib/comment-anchors";
 import {
@@ -436,6 +442,8 @@ function CommentListSkeleton() {
 export function CommentPanel({
   locale,
   pageId,
+  workspaceId,
+  workspaceSlug = "",
   comments,
   currentUserId,
   canComment,
@@ -445,6 +453,10 @@ export function CommentPanel({
   focusCommentId,
 }: {
   pageId: string;
+  /** Workspace that owns the page; enables attach + mention tools. */
+  workspaceId?: string;
+  /** Slug used to build navigable mention links in rendered comments. */
+  workspaceSlug?: string;
   comments: CommentNode[];
   currentUserId: string;
   canComment: boolean;
@@ -484,6 +496,29 @@ export function CommentPanel({
   const mainArea = useAutoGrowTextarea(COMPOSER_MAX_HEIGHT_PX);
   const replyArea = useAutoGrowTextarea(COMPOSER_MAX_HEIGHT_PX);
   const inputRef = mainArea.ref;
+
+  /**
+   * Insert attachment/mention text at the caret instead of appending it. Both
+   * composers own a textarea ref, so a single helper keeps the caret, focus and
+   * auto-grow correct after the controlled value changes.
+   */
+  const insertInto = (
+    value: string,
+    setValue: (next: string) => void,
+    ref: RefObject<HTMLTextAreaElement | null>,
+    text: string,
+  ) => {
+    const element = ref.current;
+    const start = Math.min(element?.selectionStart ?? value.length, value.length);
+    const end = Math.min(element?.selectionEnd ?? start, value.length);
+    const next = `${value.slice(0, start)}${text}${value.slice(end)}`;
+    setValue(next);
+    window.requestAnimationFrame(() => {
+      element?.focus();
+      const caret = start + text.length;
+      element?.setSelectionRange(caret, caret);
+    });
+  };
 
   // Purely derived from the props: flatten the roots/replies into the pure
   // thread model once, then group via `buildThreads` and tally resolved vs open
@@ -885,7 +920,11 @@ export function CommentPanel({
                           </div>
                         </form>
                       ) : (
-                        <CommentBody body={comment.body} className="mt-1 text-sm" />
+                        <CommentBody
+                          body={comment.body}
+                          slug={workspaceSlug}
+                          className="mt-1 text-sm"
+                        />
                       )}
 
                       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1000,6 +1039,7 @@ export function CommentPanel({
                                 </div>
                                 <CommentBody
                                   body={reply.body}
+                                  slug={workspaceSlug}
                                   className="mt-0.5 text-sm"
                                 />
                                 {reply.reactions && reply.reactions.length > 0 && (
@@ -1047,8 +1087,17 @@ export function CommentPanel({
                             placeholder={t(locale, "writeReply")}
                             className="resize-none"
                           />
-                          <div className="flex items-center justify-between gap-2">
-                            <MentionHints body={replyBody} />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="flex items-center gap-1">
+                              <MentionHints body={replyBody} />
+                              <CommentComposerTools
+                                compact
+                                workspaceId={workspaceId}
+                                onInsert={(text) =>
+                                  insertInto(replyBody, setReplyBody, replyArea.ref, text)
+                                }
+                              />
+                            </span>
                             <Button
                               size="sm"
                               aria-label={t(locale, "postReply")}
@@ -1127,7 +1176,13 @@ export function CommentPanel({
             placeholder={quote ? t(locale, "commentOnSelection") : t(locale, "addAComment")}
             className="resize-none"
           />
-          <MentionHints body={body} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <MentionHints body={body} />
+            <CommentComposerTools
+              workspaceId={workspaceId}
+              onInsert={(text) => insertInto(body, setBody, inputRef, text)}
+            />
+          </div>
           {composerError && (
             <p
               id={composerErrorId}
@@ -1190,7 +1245,15 @@ export function CommentPanel({
  * text. Bodies with no rich segments take the canonical {@link toPlainText}
  * path. Presentation only — the wire body is never rewritten.
  */
-function CommentBody({ body, className }: { body: string; className?: string }) {
+function CommentBody({
+  body,
+  slug = "",
+  className,
+}: {
+  body: string;
+  slug?: string;
+  className?: string;
+}) {
   const segments = parseCommentBody(body);
   const rich = segments.some((segment) => segment.type !== "text");
   // A comment can be written in any script (or mix two). Give the paragraph
@@ -1204,7 +1267,7 @@ function CommentBody({ body, className }: { body: string; className?: string }) 
     >
       {rich
         ? segments.map((segment, index) => (
-            <CommentSegmentView key={index} segment={segment} />
+            <CommentSegmentView key={index} segment={segment} slug={slug} />
           ))
         : toPlainText(segments)}
     </p>
@@ -1212,14 +1275,27 @@ function CommentBody({ body, className }: { body: string; className?: string }) 
 }
 
 /** One parsed segment: a mention chip, an external link, an emoji or raw text. */
-function CommentSegmentView({ segment }: { segment: CommentSegment }) {
+function CommentSegmentView({ segment, slug }: { segment: CommentSegment; slug: string }) {
   switch (segment.type) {
-    case "mention":
-      return (
+    case "mention": {
+      const href = commentMentionHref(segment.id, slug);
+      const chip = (
         <span className="rounded-chip bg-surface-2 px-1 font-medium text-fg">
           <bdi>@{segment.value}</bdi>
         </span>
       );
+      return href ? (
+        <a
+          href={href}
+          className="focus-ring rounded-chip underline-offset-2 hover:underline"
+          title={`Open ${segment.value}`}
+        >
+          {chip}
+        </a>
+      ) : (
+        chip
+      );
+    }
     case "link": {
       // `parseCommentBody` only yields http(s)/www links; `sanitizeHref` is the
       // same scheme gate the renderer/markdown use, and `www.` needs a scheme.

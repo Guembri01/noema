@@ -17,18 +17,20 @@ describe("settings nav mapping", () => {
     expect(items[0]).toMatchObject({ href: "/w/acme/settings", exact: true });
     expect(items.map((item) => item.href)).toEqual([
       "/w/acme/settings",
-      "/w/acme/settings/notifications",
-      "/w/acme/settings/tokens",
       "/w/acme/settings/billing",
-      "/w/acme/settings/prompts",
-      "/w/acme/settings/data",
       "/w/acme/settings/move",
+      "/w/acme/settings/prompts",
+      "/w/acme/settings/import",
+      "/w/acme/settings/notifications",
+      "/w/acme/settings/data",
+      "/w/acme/settings/tokens",
     ]);
     // The manager-only audit log is linked from the Activity block instead.
     expect(items.some((item) => item.href.endsWith("/audit"))).toBe(false);
     for (const item of items) {
       expect(item.label.length).toBeGreaterThan(0);
       expect(item.description.length).toBeGreaterThan(0);
+      expect(item.group.length).toBeGreaterThan(0);
     }
   });
 

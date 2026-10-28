@@ -22,6 +22,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import {
   ImageBlock,
 } from "@/components/editor/extensions/image-block";
+import { DOCUMENT_ATTACHMENT_ACCEPT } from "@/lib/file-type";
 import { BlockColors } from "@/components/editor/extensions/block-colors";
 import { Autocorrect } from "@/components/editor/extensions/autocorrect";
 import { CalendarBlock } from "@/components/editor/extensions/calendar-block";
@@ -2052,7 +2053,7 @@ function PageEditorBody({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,.pdf,.txt,.md,.json,.zip,.docx,.xlsx,.csv"
+            accept={`video/*,audio/*,${DOCUMENT_ATTACHMENT_ACCEPT}`}
             className="hidden"
             onChange={(event) => {
               const files = Array.from(event.target.files ?? []);

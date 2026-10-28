@@ -445,6 +445,7 @@ export function TicketComposerForm({
                 hue={label.color}
                 size="sm"
                 dot
+                title={label.description || undefined}
                 selected={labelIds.includes(label.id)}
                 disabled={pending}
                 onSelectedChange={(next) => toggleLabel(label.id, next)}

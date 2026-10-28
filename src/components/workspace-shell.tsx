@@ -486,7 +486,10 @@ export function WorkspaceShell({
             <nav
               data-testid="workspace-tabs"
               aria-label={t(locale, "recent")}
-              className="no-scrollbar sticky top-0 z-20 flex snap-x items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2"
+              className={cn(
+                "no-scrollbar sticky top-0 z-20 flex snap-x items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2",
+                sidebarHidden && "ps-12",
+              )}
             >
               {openTabs.map(({ entry, node }) => {
                 const active = entry.pageId === activePageId;

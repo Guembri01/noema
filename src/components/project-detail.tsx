@@ -395,8 +395,9 @@ export function ProjectDetail({
             {ordered.map((milestone, index) => (
               <li
                 key={milestone.id}
+                id={`milestone-${milestone.id}`}
                 data-testid="milestone-row"
-                className="flex flex-wrap items-center gap-3 px-3 py-2"
+                className="flex scroll-mt-24 flex-wrap items-center gap-3 px-3 py-2"
               >
                 <Checkbox
                   checked={milestone.status === "done"}
@@ -596,7 +597,7 @@ export function ProjectDetail({
             The page stays where it is in the sidebar and is also listed in this
             project.
           </p>
-          <div className="mt-3 max-h-[55vh] space-y-1 overflow-y-auto pe-1">
+          <div className="mt-3 space-y-1">
             {(project.availablePages ?? []).map((page) => (
               <label
                 key={page.id}
