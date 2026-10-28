@@ -26,10 +26,11 @@ const fs = require("node:fs");
 // does: Next decides which React build to load from this, and a late assignment
 // loads the development copy into a production server.
 process.env.NODE_ENV = "production";
-// This wrapper only ever runs the packaged desktop server. Marking it here
-// means the origin allow-list and the bind address stay loopback-only even if
-// the payload is started by hand rather than by the Rust shell.
-process.env.NOEMA_RUNTIME = "desktop";
+// The desktop shell sets this to "desktop"; the container image sets it to
+// "server". Default to desktop for a payload started by hand, so it stays
+// loopback-only, but never overwrite an explicit runtime: the Docker entrypoint
+// uses this same wrapper and must be able to bind 0.0.0.0.
+process.env.NOEMA_RUNTIME ??= "desktop";
 
 // The managed-database helper is copied next to this file by prepare.mjs.
 // Required defensively: an older payload without it should still boot (falling
@@ -242,9 +243,14 @@ function startServer() {
   const { startServer: start } = require("next/dist/server/lib/start-server");
 
   const port = Number.parseInt(process.env.PORT ?? "", 10) || 3000;
-  // Fail closed: a desktop server binds loopback even if the environment
-  // inherited `HOSTNAME=0.0.0.0` from a shell or a service manager.
-  const hostname = serverHostname ? serverHostname(process.env.HOSTNAME) : "127.0.0.1";
+  // Fail closed in desktop mode: do not honour an inherited
+  // `HOSTNAME=0.0.0.0`. A container runs this same wrapper with
+  // `NOEMA_RUNTIME=server`, where the requested bind address is legitimate.
+  const hostname = serverHostname
+    ? serverHostname(process.env.HOSTNAME, process.env.NOEMA_RUNTIME)
+    : process.env.NOEMA_RUNTIME === "desktop"
+      ? "127.0.0.1"
+      : process.env.HOSTNAME || "0.0.0.0";
   let keepAliveTimeout = Number.parseInt(process.env.KEEP_ALIVE_TIMEOUT ?? "", 10);
   if (!Number.isFinite(keepAliveTimeout) || keepAliveTimeout < 0) keepAliveTimeout = undefined;
 

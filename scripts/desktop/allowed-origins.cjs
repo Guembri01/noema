@@ -51,19 +51,25 @@ function localHosts(interfaces) {
 }
 
 /**
- * The address the desktop server is allowed to bind.
+ * The address the packaged server may bind.
  *
- * The boot wrapper is only used by the desktop payload, so there is no reason
- * to honour an inherited `HOSTNAME=0.0.0.0` (some shells and service managers
- * set it). A non-loopback value fails closed to `127.0.0.1`; only an explicit
+ * Desktop payloads are loopback-only: honouring an inherited
+ * `HOSTNAME=0.0.0.0` would expose the app to the network. Only an explicit
  * IPv6 loopback is preserved, because the readiness probe and the app origin
  * are IPv4 by design.
  *
+ * The container image uses the same wrapper, but sets
+ * `NOEMA_RUNTIME=server`; there `HOSTNAME=0.0.0.0` is the whole point, so keep
+ * the requested address (defaulting to all interfaces).
+ *
  * @param {string | undefined} requested
+ * @param {string | undefined} [runtime]
  * @returns {string}
  */
-function serverHostname(requested) {
-  return requested?.trim() === "::1" ? "::1" : "127.0.0.1";
+function serverHostname(requested, runtime = process.env.NOEMA_RUNTIME) {
+  const host = requested?.trim();
+  if (runtime === "desktop") return host === "::1" ? "::1" : "127.0.0.1";
+  return host || "0.0.0.0";
 }
 
 /**

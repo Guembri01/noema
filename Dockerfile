@@ -95,6 +95,7 @@ LABEL org.opencontainers.image.title="Noema" \
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
+    NOEMA_RUNTIME=server \
     NEXT_TELEMETRY_DISABLED=1 \
     NOEMA_DATA_DIR=/data \
     STORAGE_DIR=/data/uploads \

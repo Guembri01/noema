@@ -36,10 +36,13 @@ unchanged except for shared code touched by the shell changes.
   are external assets, so `default-src`/`script-src`/`style-src` are `'self'`
   with no `unsafe-inline`, no `https:` and no `127.0.0.1:*` wildcard. Frames,
   objects, `<base>` and form submissions are disabled.
-- **Desktop networking fails closed.** The server always binds loopback; an
-  inherited `HOSTNAME=0.0.0.0` is ignored. Server Action origins are loopback-only
-  and exactly the run's port in desktop mode, `APP_ORIGINS` is ignored there, and
-  `AUTH_SECRET` shorter than 32 characters is refused.
+- **Desktop networking fails closed.** The desktop server always binds loopback;
+  an inherited `HOSTNAME=0.0.0.0` is ignored. Server Action origins are
+  loopback-only and exactly the run's port in desktop mode, `APP_ORIGINS` is
+  ignored there, and `AUTH_SECRET` shorter than 32 characters is refused. The
+  container keeps its publishable bind: it sets `NOEMA_RUNTIME=server`, so the
+  shared boot wrapper honours `HOSTNAME=0.0.0.0` there instead of forcing
+  loopback.
 - **Diagnostics are redacted.** Connection-string passwords are stripped from the
   IPC, the log ring, the log file and the clipboard report; `get_pref` refuses the
   database URL key, and only a non-secret preference allow-list is writable.
