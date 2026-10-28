@@ -197,6 +197,24 @@ describe("POST /api/upload — the SVG safety rule (B56)", () => {
     expect(edge.put).not.toHaveBeenCalled();
   });
 
+  it("accepts Word, Excel and CSV attachments", async () => {
+    const files = [
+      new File([new Uint8Array([0x50, 0x4b])], "notes.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      new File([new Uint8Array([0x50, 0x4b])], "sheet.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      new File(["a,b\n1,2"], "rows.csv", { type: "text/csv" }),
+    ];
+    for (const file of files) {
+      const res = await POST(uploadRequest(file));
+      expect(res.status).toBe(200);
+    }
+    expect(edge.put).toHaveBeenCalledTimes(files.length);
+    expect(edge.assetCreate).toHaveBeenCalledTimes(files.length);
+  });
+
   it("leaves a raster upload alone", async () => {
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", {
       type: "image/png",

@@ -368,6 +368,42 @@ describe("DocRenderer UML blocks", () => {
   });
 });
 
+describe("DocRenderer attachments and PDF previews", () => {
+  it("renders a media file node as a download link, not a broken image", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "image",
+          attrs: {
+            src: "/api/files/ws-1/report.docx",
+            alt: "report.docx",
+            mediaType: "file",
+          },
+        },
+      ],
+    });
+    expect(html).not.toMatch(/<img\b/);
+    expect(hrefsOf(html)).toContain("/api/files/ws-1/report.docx");
+    expect(html).toContain("report.docx");
+  });
+
+  it("renders an authenticated PDF preview", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "pdfPreview",
+          attrs: { url: "/api/files/ws-1/report.pdf", title: "Report" },
+        },
+      ],
+    });
+    expect(html).toContain('data-pdf-preview=""');
+    expect(html).toContain('src="/api/files/ws-1/report.pdf"');
+    expect(html).toContain('title="Report"');
+  });
+});
+
 describe("DocRenderer animated media / device previews", () => {
   const animatedDoc = (attrs: Record<string, unknown>) => ({
     type: "doc",

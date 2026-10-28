@@ -1,6 +1,6 @@
 {
   "name": "noema",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "An original, open-source, self-hosted workspace for notes, docs and databases — and an installable desktop app that needs nothing else installed.",
   "license": "MIT",

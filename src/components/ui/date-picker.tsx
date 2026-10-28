@@ -271,6 +271,18 @@ export function DatePicker({
     if (nowMs === null) setClockMs(Date.now());
   }, [nowMs]);
 
+  // `seedCursor` cannot read the clock during server rendering, so it starts
+  // at the deterministic 2000-01 fallback. Once the mounted clock arrives,
+  // move an empty picker to the current month instead of leaving it in 2000.
+  useEffect(() => {
+    if (clockMs === null || value?.date) return;
+    const today = new Date(clockMs);
+    setCursor({
+      year: today.getUTCFullYear(),
+      month: today.getUTCMonth(),
+    });
+  }, [clockMs, value?.date]);
+
   const todayIso = clockMs === null ? null : isoFromDayIndex(Math.floor(clockMs / MS_PER_DAY));
   const resolvedNow = clockMs ?? nowMs ?? 0;
 

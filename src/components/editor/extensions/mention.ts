@@ -35,6 +35,8 @@ export const Mention = Node.create({
       "span",
       mergeAttributes(HTMLAttributes, {
         "data-mention": type,
+        "data-id": node.attrs.id ?? "",
+        "data-label": node.attrs.label ?? "",
         class: type === "block" ? "noema-mention noema-mention--block" : "noema-mention",
       }),
       `${glyph} ${String(node.attrs.label ?? "")}`,

@@ -9,7 +9,7 @@ import {
 } from "@tiptap/react";
 import { ExternalLink, MapPin, Pencil, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { embedMeta, hostOf, isHttpUrl, normalizeUrl, resolveEmbed } from "@/lib/embeds";
+import { embedMeta, hostOf, isHttpUrl, isSafePdfUrl, normalizeUrl, resolveEmbed } from "@/lib/embeds";
 import {
   DEFAULT_ZOOM,
   isValidZoom,
@@ -759,7 +759,7 @@ export const PdfPreview = Node.create<{ locale: string }>({
 
 function PdfPreviewView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const url = node.attrs.url as string | null;
-  const safeUrl = url && isHttpUrl(url) ? url : null;
+  const safeUrl = url && isSafePdfUrl(url) ? url : null;
   const host = safeUrl ? hostOf(safeUrl) : "";
   const [editing, setEditing] = useState(!safeUrl);
   const [value, setValue] = useState(url ?? "");
@@ -767,12 +767,15 @@ function PdfPreviewView({ node, updateAttributes, deleteNode, locale }: NodeView
 
   const submit = () => {
     const normalized = normalizeUrl(value);
-    if (!normalized || !isHttpUrl(normalized)) {
-      setError("Enter a valid PDF address.");
+    if (!normalized || !isSafePdfUrl(normalized)) {
+      setError("Enter a valid PDF address or upload path.");
       return;
     }
     setError(null);
-    updateAttributes({ url: normalized, title: hostOf(normalized) || null });
+    const name = normalized.startsWith("/api/files/")
+      ? decodeURIComponent(normalized.split("/").pop() ?? "")
+      : "";
+    updateAttributes({ url: normalized, title: hostOf(normalized) || name || null });
     setEditing(false);
   };
 

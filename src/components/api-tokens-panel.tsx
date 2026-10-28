@@ -36,7 +36,7 @@ export function ApiTokensPanel({
       locale={locale}
       now={now}
       loading={loading}
-      create={(name, scopes) => createApiTokenAction(name, scopes)}
+      create={(name, scopes, expiresAt) => createApiTokenAction(name, scopes, expiresAt)}
       revoke={revokeApiTokenAction}
       title="Personal access tokens"
       data-testid="api-tokens-panel"

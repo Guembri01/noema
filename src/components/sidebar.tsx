@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -14,6 +13,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   Plus,
+  RotateCcw,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
@@ -33,6 +33,8 @@ import { safeAction } from "@/lib/actions-client";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
 import { WorkspaceDialog } from "@/components/workspace-dialog";
 import { Kbd } from "@/components/ui/kbd";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { formatShortcut } from "@/lib/keyboard-shortcuts";
 import { useIsMac } from "@/lib/use-is-mac";
 import { WorkspaceSwitcher } from "@/components/sidebar/workspace-switcher";
@@ -51,6 +53,15 @@ import {
   parseStoredSidebarWidth,
 } from "@/lib/sidebar-layout";
 import { ResizablePanel } from "@/components/ui/resizable-panel";
+import {
+  DEFAULT_SIDEBAR_SECTIONS,
+  SIDEBAR_SECTIONS,
+  SIDEBAR_SECTIONS_STORAGE_KEY,
+  hasVisibleSidebarSection,
+  parseSidebarSections,
+  type SidebarSectionId,
+  type SidebarSectionVisibility,
+} from "@/lib/sidebar-sections";
 
 type SidebarProps = {
   workspace: {
@@ -102,6 +113,10 @@ export function Sidebar({
   );
   const [notionOpen, setNotionOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [sections, setSections] = useState<SidebarSectionVisibility>({
+    ...DEFAULT_SIDEBAR_SECTIONS,
+  });
   const [tab, setTab] = useState<"home" | "chat" | "meetings">("home");
 
   // --- Sidebar width: restore + persist -----------------------------------
@@ -114,6 +129,43 @@ export function Sidebar({
       /* private mode / storage blocked: keep the default width */
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      setSections(
+        parseSidebarSections(
+          window.localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY),
+        ),
+      );
+    } catch {
+      /* private mode / storage blocked: keep every section visible */
+    }
+  }, []);
+
+  const setSection = (id: SidebarSectionId, visible: boolean) => {
+    setSections((current) => {
+      const next = { ...current, [id]: visible };
+      try {
+        window.localStorage.setItem(
+          SIDEBAR_SECTIONS_STORAGE_KEY,
+          JSON.stringify(next),
+        );
+      } catch {
+        /* storage unavailable: the toggle still applies for this session */
+      }
+      return next;
+    });
+  };
+
+  const resetSections = () => {
+    const next = { ...DEFAULT_SIDEBAR_SECTIONS };
+    setSections(next);
+    try {
+      window.localStorage.removeItem(SIDEBAR_SECTIONS_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const commitWidth = useCallback((value: number) => {
     const next = clampSidebarWidth(value);
@@ -160,8 +212,10 @@ export function Sidebar({
       const result = outcome.value;
       if ("ok" in result) {
         if (parentId) setExpanded((prev) => new Set(prev).add(parentId));
+        // The server action already revalidates the workspace layout. A second
+        // `router.refresh()` here duplicated that request and made "Add" wait
+        // for two RSC round-trips before the new page appeared.
         router.push(`/w/${workspace.slug}/${result.id}`);
-        router.refresh();
       } else {
         toast.error(result.error);
       }
@@ -255,35 +309,48 @@ export function Sidebar({
 
       {tab === "home" && (
         <>
-          <HomeQuickLinks
-            workspace={workspace}
-            projects={projects}
-            openTickets={openTickets}
-            unreadCount={unreadCount}
-            locale={locale}
-          />
-          <FavoritesList workspace={workspace} favorites={favorites} locale={locale} />
-          <PageTree
-            tree={tree}
-            teamspaces={teamspaces}
-            projects={projects}
-            workspace={workspace}
-            locale={locale}
-            expanded={expanded}
-            setExpanded={setExpanded}
-            pending={pending}
-            addPage={addPage}
-            discuss={discuss}
-            startTransition={startTransition}
-          >
-            <ImportSection
+          {sections.homeLinks && (
+            <HomeQuickLinks
               workspace={workspace}
-              addPage={addPage}
+              projects={projects}
+              openTickets={openTickets}
+              unreadCount={unreadCount}
               locale={locale}
-              startTransition={startTransition}
-              onOpenNotion={() => setNotionOpen(true)}
             />
-          </PageTree>
+          )}
+          {sections.favorites && (
+            <FavoritesList workspace={workspace} favorites={favorites} locale={locale} />
+          )}
+          {sections.pages && (
+            <PageTree
+              tree={tree}
+              teamspaces={teamspaces}
+              projects={projects}
+              workspace={workspace}
+              locale={locale}
+              expanded={expanded}
+              setExpanded={setExpanded}
+              pending={pending}
+              addPage={addPage}
+              discuss={discuss}
+              startTransition={startTransition}
+            >
+              <ImportSection
+                workspace={workspace}
+                addPage={addPage}
+                locale={locale}
+                startTransition={startTransition}
+                onOpenNotion={() => setNotionOpen(true)}
+              />
+            </PageTree>
+          )}
+
+          {!hasVisibleSidebarSection(sections) && (
+            <p className="px-3 py-4 text-xs text-muted">
+              Every sidebar section is hidden. Use “Customize sidebar” to bring
+              one back.
+            </p>
+          )}
 
           <div className="mt-1 px-1">
             <button
@@ -295,13 +362,14 @@ export function Sidebar({
               <Plus className="h-4 w-4" />
               {t(locale, "add")}
             </button>
-            <Link
-              href={`/w/${workspace.slug}/settings`}
-              className="flex items-center gap-2 rounded-control px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
+            <button
+              type="button"
+              onClick={() => setCustomizeOpen(true)}
+              className="focus-ring flex w-full items-center gap-2 rounded-control px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
             >
               <SlidersHorizontal className="h-4 w-4" />
               {t(locale, "customizeSidebar")}
-            </Link>
+            </button>
           </div>
         </>
       )}
@@ -343,6 +411,38 @@ export function Sidebar({
         workspaceId={workspace.id}
         slug={workspace.slug}
       />
+
+      <Dialog open={customizeOpen} onOpenChange={setCustomizeOpen}>
+        <DialogContent className="max-w-md p-4" aria-describedby="sidebar-customize-help">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold">{t(locale, "customizeSidebar")}</h2>
+            <p id="sidebar-customize-help" className="mt-1 text-xs text-muted">
+              Choose which sections the sidebar shows. The setting is saved on
+              this device.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {SIDEBAR_SECTIONS.map((section) => (
+              <Checkbox
+                key={section.id}
+                checked={sections[section.id]}
+                onCheckedChange={(checked) => setSection(section.id, checked)}
+                label={section.label}
+                description={section.description}
+              />
+            ))}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={resetSections}
+              className="focus-ring inline-flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-xs hover:bg-surface-2"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Reset to defaults
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </ResizablePanel>
   );
 }

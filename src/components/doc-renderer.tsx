@@ -7,7 +7,7 @@ import { isPlantUmlLanguage } from "@/lib/diagrams/plantuml-policy";
 import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
-import { embedMeta, resolveEmbed } from "@/lib/embeds";
+import { embedMeta, isSafePdfUrl, resolveEmbed } from "@/lib/embeds";
 import { resolveDeviceId } from "@/lib/animated-media";
 import { DevicePreview } from "@/components/device-preview";
 import { externalImageSrc } from "@/lib/external-image";
@@ -1012,6 +1012,20 @@ function renderBlock(
         </figure>
       );
     }
+    case "pdfPreview": {
+      const raw = String(node.attrs?.url ?? "");
+      if (!raw || !isSafePdfUrl(raw)) return null;
+      return (
+        <div key={key} className={cn("noema-pdf", docClasses("image"))} data-pdf-preview="">
+          <iframe
+            src={raw}
+            title={String(node.attrs?.title ?? "PDF preview")}
+            className="h-[70vh] w-full rounded-control border border-border"
+            loading="lazy"
+          />
+        </div>
+      );
+    }
     case "image": {
       const caption = String(node.attrs?.caption ?? "").trim();
       const width = typeof node.attrs?.width === "number" ? node.attrs.width : null;
@@ -1024,6 +1038,25 @@ function renderBlock(
       // all renders nothing.
       const src = externalImageSrc(node.attrs?.src);
       if (src === "") return null;
+      const mediaType = String(node.attrs?.mediaType ?? "");
+      if (mediaType === "file" || mediaType === "pdf") {
+        const href = sanitizeHref(String(node.attrs?.src ?? ""));
+        if (href === null) return null;
+        return (
+          <div key={key} className={cn("my-2", docClasses("image"))}>
+            <a
+              href={href}
+              download={String(node.attrs?.alt ?? node.attrs?.title ?? "") || undefined}
+              className="inline-flex max-w-full items-center gap-2 rounded-control border border-border px-3 py-2 text-sm hover:bg-surface-2"
+            >
+              <span aria-hidden>📎</span>
+              <span className="truncate">
+                {String(node.attrs?.alt ?? node.attrs?.title ?? "Attachment")}
+              </span>
+            </a>
+          </div>
+        );
+      }
       return (
         <figure
           key={key}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import Image, { type ImageOptions } from "@tiptap/extension-image";
 import { AlignCenter, AlignLeft, AlignRight, Download, File as FileIcon } from "lucide-react";
@@ -210,10 +210,15 @@ export function ImageView({
   selected,
   locale,
 }: NodeViewProps & { locale: string }) {
-  const [altOpen, setAltOpen] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const altRef = useRef<HTMLInputElement | null>(null);
+  /** Local drafts keep the controlled inputs stable while the node updates.
+   * Caption edits are persisted on each change; the draft prevents the node
+   * view from feeding the value back through a remount mid-keystroke. */
+  const captionFocused = useRef(false);
+  const altFocused = useRef(false);
   const editable = editor.isEditable;
   const attrs = node.attrs as {
     src: string;
@@ -225,6 +230,20 @@ export function ImageView({
     mediaType: unknown;
   };
   const caption = String(attrs.caption ?? "");
+  const [captionDraft, setCaptionDraft] = useState(caption);
+  const [altDraft, setAltDraft] = useState(String(attrs.alt ?? ""));
+  useEffect(() => {
+    if (!captionFocused.current) setCaptionDraft(caption);
+  }, [caption]);
+  useEffect(() => {
+    if (!altFocused.current) setAltDraft(String(attrs.alt ?? ""));
+  }, [attrs.alt]);
+  const commitCaption = () => {
+    if (captionDraft !== caption) updateAttributes({ caption: captionDraft });
+  };
+  const commitAlt = () => {
+    if (altDraft !== String(attrs.alt ?? "")) updateAttributes({ alt: altDraft });
+  };
   const align = alignOf(attrs.align);
   const width = dragWidth ?? (typeof attrs.width === "number" ? attrs.width : null);
   const kind = mediaKindOf(String(attrs.src ?? ""), attrs.mediaType);
@@ -379,13 +398,42 @@ export function ImageView({
       </div>
 
       {editable ? (
-        <div className="noema-image-meta" contentEditable={false}>
+        <div
+          className="noema-image-meta"
+          contentEditable={false}
+          onBlur={(event) => {
+            const next = event.relatedTarget as Node | null;
+            if (next && event.currentTarget.contains(next)) return;
+            captionFocused.current = false;
+            commitCaption();
+          }}
+        >
           <input
             className="noema-image-caption"
-            value={caption}
+            value={captionDraft}
             placeholder={t(locale, "imageCaptionPlaceholder")}
             aria-label={t(locale, "imageCaptionAria")}
-            onChange={(event) => updateAttributes({ caption: event.target.value })}
+            onFocus={() => {
+              captionFocused.current = true;
+            }}
+            onChange={(event) => {
+              const value = event.target.value;
+              setCaptionDraft(value);
+              // Persist on every keystroke; the local draft keeps the input
+              // controlled without waiting for a blur (which a node remount
+              // could otherwise swallow).
+              updateAttributes({ caption: value });
+            }}
+            onBlur={() => {
+              captionFocused.current = false;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitCaption();
+                event.currentTarget.blur();
+              }
+            }}
           />
           <span className="noema-image-align" role="group" aria-label={t(locale, "imageAlignmentAria")}>
             {ALIGNS.map(({ value, labelKey, icon: Icon }) => (
@@ -401,23 +449,34 @@ export function ImageView({
               </button>
             ))}
           </span>
-          <button
-            type="button"
-            className="noema-image-alt-toggle focus-ring u-interactive"
-            aria-expanded={altOpen}
-            onClick={() => setAltOpen((open) => !open)}
-          >
-            {t(locale, "imageAltText")}
-          </button>
-          {altOpen && (
-            <input
-              className="noema-image-alt"
-              value={attrs.alt ?? ""}
-              placeholder={t(locale, "imageAltPlaceholder")}
-              aria-label={t(locale, "imageAltText")}
-              onChange={(event) => updateAttributes({ alt: event.target.value })}
-            />
-          )}
+          <input
+            ref={altRef}
+            className="noema-image-alt"
+            value={altDraft}
+            placeholder={t(locale, "imageAltPlaceholder")}
+            aria-label={t(locale, "imageAltText")}
+            onFocus={() => {
+              altFocused.current = true;
+            }}
+            onChange={(event) => {
+              const value = event.target.value;
+              setAltDraft(value);
+              // Alt text is not the caption input that loses focus; persist it
+              // immediately so a reload/autosave cannot drop it.
+              updateAttributes({ alt: value });
+            }}
+            onBlur={() => {
+              altFocused.current = false;
+              commitAlt();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitAlt();
+                event.currentTarget.blur();
+              }
+            }}
+          />
         </div>
       ) : (
         caption.trim() !== "" && (

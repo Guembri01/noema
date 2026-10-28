@@ -29,6 +29,9 @@ export type BlockType =
   | "h1"
   | "h2"
   | "h3"
+  | "h4"
+  | "h5"
+  | "h6"
   | "bulletedList"
   | "numberedList"
   | "todoList"
@@ -44,6 +47,9 @@ export const BLOCK_TYPES: readonly BlockType[] = Object.freeze([
   "h1",
   "h2",
   "h3",
+  "h4",
+  "h5",
+  "h6",
   "bulletedList",
   "numberedList",
   "todoList",
@@ -74,7 +80,7 @@ export type InlineNode = {
 
 /** Attributes a convertible block may carry; each belongs to specific targets. */
 export type BlockAttrs = {
-  /** Heading level, for `h1`–`h3`. */
+  /** Heading level, for `h1`–`h6`. */
   level?: number;
   /** To-do box state, for `todoList`. */
   checked?: boolean;
@@ -109,7 +115,7 @@ export type ConversionGroup = {
 export const CONVERSION_GROUPS: readonly ConversionGroup[] = Object.freeze([
   Object.freeze({
     id: "text",
-    types: Object.freeze(["paragraph", "h1", "h2", "h3"] as const),
+    types: Object.freeze(["paragraph", "h1", "h2", "h3", "h4", "h5", "h6"] as const),
   }),
   Object.freeze({
     id: "lists",
@@ -126,6 +132,9 @@ const HEADING_LEVELS: Readonly<Partial<Record<BlockType, number>>> = Object.free
   h1: 1,
   h2: 2,
   h3: 3,
+  h4: 4,
+  h5: 5,
+  h6: 6,
 });
 
 /**

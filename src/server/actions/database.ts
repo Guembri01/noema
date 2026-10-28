@@ -2341,8 +2341,6 @@ export async function deleteTemplateAction(
   return { ok: true };
 }
 
-export type { TemplateRecurrence };
-
 export type TemplateScheduleOptions = {
   /** Optional wall-clock time the schedule is pinned to (R31.20). */
   hour?: number | null;

@@ -127,6 +127,18 @@ describe("EditorRowChrome (renderToStaticMarkup)", () => {
     expect(html).not.toContain("⋮⋮");
   });
 
+  it("renders the add affordance as a real, labelled button when wired", () => {
+    const html = renderToStaticMarkup(
+      createElement(EditorRowChrome, {
+        state: { hovered: true },
+        onAdd: () => {},
+      }),
+    );
+    expect(html).toContain('aria-label="Add a block below"');
+    expect(html).toMatch(/<button[^>]*noema-row-add/);
+    expect(html.match(/<button/g)).toHaveLength(1);
+  });
+
   it("is visible in the hover state", () => {
     const html = markup({ hovered: true });
     expect(html).toContain("opacity-100");

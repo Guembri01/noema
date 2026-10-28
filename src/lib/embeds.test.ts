@@ -9,6 +9,7 @@ import {
   isEmbedHostAllowed,
   isHttpUrl,
   isPrivateHost,
+  isSafePdfUrl,
   normalizeUrl,
   parseHtmlMetadata,
   parseStartTime,
@@ -23,6 +24,14 @@ describe("embeds / url helpers", () => {
     expect(isHttpUrl("http://example.com/x")).toBe(true);
     expect(isHttpUrl("javascript:alert(1)")).toBe(false);
     expect(isHttpUrl("not a url")).toBe(false);
+  });
+
+  it("allows public and authenticated-upload PDF sources only", () => {
+    expect(isSafePdfUrl("https://example.com/doc.pdf")).toBe(true);
+    expect(isSafePdfUrl("/api/files/ws-1/abc.pdf")).toBe(true);
+    expect(isSafePdfUrl("/api/files/../secret.pdf")).toBe(false);
+    expect(isSafePdfUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafePdfUrl("/etc/passwd.pdf")).toBe(false);
   });
 
   it("normalises scheme-less URLs", () => {

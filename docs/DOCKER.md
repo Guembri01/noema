@@ -169,7 +169,7 @@ destructive changes).
 | --- | --- | --- |
 | `latest` | every `v*` tag and `main` | Default. |
 | `edge` | every push to `main` | Newest unreleased code. |
-| `1.4.2`, `1.4`, `1` | never | Reproducible releases. |
+| `1.4.3`, `1.4`, `1` | never | Reproducible releases. |
 | `sha-<short>` | never | Exact commit. |
 | `pr-<n>` | never | Pull-request builds (loaded locally in CI, not pushed). |
 

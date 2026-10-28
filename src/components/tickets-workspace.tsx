@@ -89,6 +89,9 @@ export function TicketsWorkspace({
   // Extra pages fetched with "Load more".
   const [moreRows, setMoreRows] = useState<TicketRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(nextCursor);
+  /** Optimistic status/position changes while the move action is in flight. */
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [moving, setMoving] = useState<string[]>([]);
   // Drawer history, fetched on demand when a ticket is opened and cached per
   // ticket so reopening is instant and never shows another ticket's trail.
   const [activityByTicket, setActivityByTicket] = useState<
@@ -104,10 +107,11 @@ export function TicketsWorkspace({
     for (const ticket of [...tickets, ...moreRows]) {
       if (seen.has(ticket.id)) continue;
       seen.add(ticket.id);
-      merged.push(ticket);
+      const override = statusOverrides[ticket.id];
+      merged.push(override && override !== ticket.status ? { ...ticket, status: override } : ticket);
     }
     return merged;
-  }, [tickets, moreRows]);
+  }, [tickets, moreRows, statusOverrides]);
 
   const filtered = useMemo(
     () =>
@@ -184,6 +188,37 @@ export function TicketsWorkspace({
 
       return "error" in result ? { ok: false, message: result.error } : { ok: true };
     });
+
+  /**
+   * Move a card on the board immediately, then persist. The old path waited for
+   * `moveTicketAction` + a full `router.refresh()` before the card changed
+   * columns, which made drag-and-drop feel frozen and could hide tickets that
+   * fell outside the first server page.
+   */
+  const moveTicket = (ticketId: string, status: string, beforeId?: string | null) => {
+    const previous = rows.find((ticket) => ticket.id === ticketId);
+    if (!previous || previous.status === status) return;
+    setStatusOverrides((current) => ({ ...current, [ticketId]: status }));
+    setMoving((current) => (current.includes(ticketId) ? current : [...current, ticketId]));
+    void (async () => {
+      const outcome = await safeAction(
+        () => moveTicketAction({ ticketId, status, beforeId: beforeId ?? undefined }),
+        { locale },
+      );
+      const value = outcome.ok ? outcome.value : { error: outcome.error };
+      if ("error" in value) {
+        setStatusOverrides((current) => {
+          const next = { ...current };
+          delete next[ticketId];
+          return next;
+        });
+        toast.error(value.error);
+      } else {
+        router.refresh();
+      }
+      setMoving((current) => current.filter((id) => id !== ticketId));
+    })();
+  };
 
   // Load the opened ticket's activity once, via the existing detail query. A
   // transport failure is swallowed into an empty trail (`safeAction`) so the
@@ -297,13 +332,8 @@ export function TicketsWorkspace({
           filtered={filtered}
           onSelect={setSelected}
           locale={locale}
-          onMove={(ticketId, status) =>
-            run(null, async () => {
-              const result = await moveTicketAction({ ticketId, status });
-
-              return "error" in result ? { ok: false, message: result.error } : { ok: true };
-            })
-          }
+          onMove={moveTicket}
+          moving={moving}
         />
       )}
 

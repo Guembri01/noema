@@ -9,6 +9,7 @@ import {
   addMilestoneAction,
   deleteMilestoneAction,
   deleteProjectAction,
+  setPageProjectAction,
   updateMilestoneAction,
   updateProjectAction,
 } from "@/server/actions/projects";
@@ -32,6 +33,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tag } from "@/components/ui/tag";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { LocalTime } from "@/components/local-time";
 
 export type MilestoneRow = {
@@ -77,6 +79,8 @@ export type ProjectDetailData = {
   dueDate: string | null;
   milestones: MilestoneRow[];
   pages: { id: string; title: string; icon: string | null; type: string }[];
+  /** Live pages that can still be attached to this project. */
+  availablePages?: { id: string; title: string; icon: string | null; type: string }[];
   /** Optional ticket roll-up for the "Tickets" section. */
   tickets?: ProjectDetailTicket[];
   /** Optional activity timeline for the "Activity" section. */
@@ -146,6 +150,8 @@ export function ProjectDetail({
   const [milestoneDue, setMilestoneDue] = useState("");
   const [order, setOrder] = useState<string[]>(() => project.milestones.map((m) => m.id));
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [attachSelected, setAttachSelected] = useState<string[]>([]);
 
   // Keep the local reorder in sync when the server re-renders the project.
   useEffect(() => {
@@ -163,6 +169,19 @@ export function ProjectDetail({
       if (label) toast.success(label);
       router.refresh();
     });
+
+  const attachExistingPages = () => {
+    if (attachSelected.length === 0) return;
+    run("Added to project", async () => {
+      for (const pageId of attachSelected) {
+        const result = await setPageProjectAction(pageId, project.id);
+        if ("error" in result) return { ok: false, message: result.error };
+      }
+      setAttachSelected([]);
+      setAttachOpen(false);
+      return { ok: true };
+    });
+  };
 
   const statusLabel = (value: string) =>
     value === "planned"
@@ -536,12 +555,24 @@ export function ProjectDetail({
       )}
 
       <Section title={`${t(locale, "notesInProject")} · ${project.pages.length}`}>
-        {project.pages.length === 0 ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted">
             {t(locale, "attachNotesA")}
             <em>{t(locale, "attachNotesB")}</em>.
           </p>
-        ) : (
+          {project.availablePages && project.availablePages.length > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              leftIcon={<Plus className="h-3.5 w-3.5" aria-hidden />}
+              onClick={() => setAttachOpen(true)}
+            >
+              Attach existing page
+            </Button>
+          ) : null}
+        </div>
+        {project.pages.length === 0 ? null : (
           <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {project.pages.map((page) => (
               <li key={page.id}>
@@ -557,6 +588,54 @@ export function ProjectDetail({
           </ul>
         )}
       </Section>
+
+      <Dialog open={attachOpen} onOpenChange={setAttachOpen}>
+        <DialogContent className="max-w-lg p-4" aria-describedby="attach-pages-help">
+          <h2 className="text-sm font-semibold">Attach existing pages</h2>
+          <p id="attach-pages-help" className="mt-1 text-xs text-muted">
+            The page stays where it is in the sidebar and is also listed in this
+            project.
+          </p>
+          <div className="mt-3 max-h-[55vh] space-y-1 overflow-y-auto pe-1">
+            {(project.availablePages ?? []).map((page) => (
+              <label
+                key={page.id}
+                className="flex cursor-pointer items-start gap-2 rounded-control px-2 py-1.5 hover:bg-surface-2"
+              >
+                <Checkbox
+                  checked={attachSelected.includes(page.id)}
+                  onCheckedChange={(checked) =>
+                    setAttachSelected((current) =>
+                      checked
+                        ? [...current, page.id]
+                        : current.filter((id) => id !== page.id),
+                    )
+                  }
+                  aria-label={`Attach ${page.title || "Untitled"}`}
+                />
+                <span className="min-w-0 text-sm">
+                  <span aria-hidden>{page.icon ?? "📄"} </span>
+                  {page.title || t(locale, "untitled")}
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button type="button" size="sm" variant="secondary" onClick={() => setAttachOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending || attachSelected.length === 0}
+              loading={pending}
+              onClick={attachExistingPages}
+            >
+              Attach {attachSelected.length > 0 ? `(${attachSelected.length})` : ""}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ProjectRoleEditor projectId={project.id} locale={locale} />
 

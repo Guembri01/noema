@@ -797,8 +797,15 @@ export async function archivePageAction(pageId: string): Promise<Result> {
   if (!auth.capabilities.edit) {
     return { error: "You do not have permission to delete this page." };
   }
-  await prisma.page.update({
-    where: { id: pageId },
+  // Trash the whole subtree in one update. A child left live would still be
+  // reachable by its direct URL even though its parent is hidden from the tree.
+  const nodes = await prisma.page.findMany({
+    where: { workspaceId: auth.page.workspaceId },
+    select: { id: true, parentId: true },
+  });
+  const ids = subtreeClosure(nodes, [pageId]);
+  await prisma.page.updateMany({
+    where: { id: { in: ids }, workspaceId: auth.page.workspaceId, deletedAt: null },
     data: { deletedAt: new Date(), isArchived: true },
   });
   await logActivity({
@@ -832,10 +839,18 @@ export async function restorePageAction(pageId: string): Promise<Result> {
         select: { id: true },
       })
     : null;
-  await prisma.page.update({
-    where: { id: pageId },
-    data: { deletedAt: null, isArchived: false, ...(parentTrashed ? { parentId: null } : {}) },
+  const nodes = await prisma.page.findMany({
+    where: { workspaceId: auth.page.workspaceId },
+    select: { id: true, parentId: true },
   });
+  const ids = subtreeClosure(nodes, [pageId]);
+  await prisma.page.updateMany({
+    where: { id: { in: ids }, workspaceId: auth.page.workspaceId },
+    data: { deletedAt: null, isArchived: false },
+  });
+  if (parentTrashed) {
+    await prisma.page.update({ where: { id: pageId }, data: { parentId: null } });
+  }
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

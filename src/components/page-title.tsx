@@ -21,6 +21,7 @@ import {
   Move,
   Redo2,
   Smile,
+  SpellCheck,
   Star,
   Trash2,
   Undo2,
@@ -66,6 +67,11 @@ import {
   type TopbarMember,
 } from "@/components/topbar/avatar-stack";
 import { useUndoRedo } from "@/components/providers/undo-redo-provider";
+import {
+  focusPageBody,
+  readAutocorrectPreference,
+  writeAutocorrectPreference,
+} from "@/lib/editor-events";
 import {
   describeLastEdited,
   lastEditor,
@@ -166,6 +172,9 @@ export type PageTitleRowProps = {
   following: boolean;
   followPending?: boolean;
   starPopped?: boolean;
+  /** Per-page automatic typo correction; absent hides the toggle. */
+  autocorrect?: boolean;
+  onToggleAutocorrect?: () => void;
   scrolled: boolean;
   showStickyTitle: boolean;
   editedLabel?: string | null;
@@ -222,6 +231,8 @@ export function PageTitleRow({
   following,
   followPending = false,
   starPopped = false,
+  autocorrect,
+  onToggleAutocorrect,
   scrolled,
   showStickyTitle,
   editedLabel,
@@ -467,6 +478,21 @@ export function PageTitleRow({
               aria-hidden
             />
           </button>
+          {onToggleAutocorrect ? (
+            <button
+              type="button"
+              aria-label={autocorrect ? "Turn autocorrect off" : "Turn autocorrect on"}
+              aria-pressed={autocorrect === true}
+              title={autocorrect ? "Autocorrect is on" : "Autocorrect is off"}
+              onClick={onToggleAutocorrect}
+              className={cn(
+                "focus-ring u-interactive flex h-8 w-8 items-center justify-center rounded-control text-muted hover:bg-surface-2 sm:h-7 sm:w-7",
+                autocorrect && "bg-surface-2 text-fg",
+              )}
+            >
+              <SpellCheck className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null}
           {undoRedo ? (
             <div
               className={cn(
@@ -553,7 +579,7 @@ export function PageTitleRow({
               readOnly={!canEdit}
               placeholder={t(locale, "untitled")}
               rows={1}
-              spellCheck={false}
+              spellCheck
               onChange={(event) => {
                 onTitleChange(event.target.value);
                 event.target.style.height = "auto";
@@ -634,6 +660,7 @@ export function PageTitle({
   // placeholder do its job; `saveTitle` never writes an empty title back, so the
   // page keeps the name it was created with until something real is typed.
   const [title, setTitle] = useState(initialTitle === t(locale, "untitled") ? "" : initialTitle);
+  const [autocorrect, setAutocorrect] = useState(false);
   const [icon, setIcon] = useState(initialIcon);
   const [cover, setCover] = useState(initialCover);
   const [favorite, setFavorite] = useState(initialFavorite);
@@ -681,6 +708,19 @@ export function PageTitle({
   const coverFileRef = useRef<HTMLInputElement | null>(null);
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const h1Ref = useRef<HTMLHeadingElement | null>(null);
+
+  // Autocorrect is per page and off by default. localStorage is the right
+  // scope here: it follows the page across reloads but never leaks into a
+  // shared server preference.
+  useEffect(() => {
+    setAutocorrect(readAutocorrectPreference(pageId));
+  }, [pageId]);
+
+  const toggleAutocorrect = () => {
+    const next = !autocorrect;
+    setAutocorrect(next);
+    writeAutocorrectPreference(pageId, next);
+  };
   // The in-page `h1`'s offset inside the scroll container, cached so each scroll
   // tick compares against a stable threshold (re-measured on resize / cover swap).
   const h1TopRef = useRef(Number.POSITIVE_INFINITY);
@@ -1141,22 +1181,29 @@ export function PageTitle({
   const trash = () =>
     startTransition(async () => {
       const result = await archivePageAction(pageId);
-      if (!("error" in result)) {
-        recordEffectUndo(
-          "Move page to trash",
-          async () => {
-            await restorePageAction(pageId);
-            router.refresh();
-          },
-          async () => {
-            await archivePageAction(pageId);
-            router.refresh();
-          },
-        );
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
       }
+      recordEffectUndo(
+        "Move page to trash",
+        async () => {
+          await restorePageAction(pageId);
+          router.refresh();
+        },
+        async () => {
+          await archivePageAction(pageId);
+          router.refresh();
+        },
+      );
       toast.success("Moved to trash");
-      router.push(`/w/${workspaceSlug}`);
-      router.refresh();
+      // The page being viewed is now gone. Leave its route before a refresh can
+      // render the deleted page as a 404: go to the parent when there is one,
+      // otherwise the workspace home.
+      const parentId = breadcrumbTrail.at(-1)?.id ?? null;
+      router.push(
+        parentId ? `/w/${workspaceSlug}/${parentId}` : `/w/${workspaceSlug}`,
+      );
     });
 
   const undoEditor = () => {
@@ -1293,6 +1340,8 @@ export function PageTitle({
         following={following}
         followPending={followPending}
         starPopped={starPopped}
+        autocorrect={autocorrect}
+        onToggleAutocorrect={toggleAutocorrect}
         scrolled={scrolled}
         showStickyTitle={showStickyTitle}
         locale={locale}
@@ -1302,9 +1351,11 @@ export function PageTitle({
         onTitleChange={setTitle}
         onTitleBlur={saveTitle}
         onTitleKeyDown={(event) => {
-          if (event.key === "Enter") {
+          if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             titleRef.current?.blur();
+            // Let the blur/save commit, then hand the caret to the body.
+            window.setTimeout(focusPageBody, 0);
           }
         }}
         onToggleIcon={() => setShowEmoji((value) => !value)}

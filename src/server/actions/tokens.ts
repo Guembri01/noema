@@ -28,8 +28,9 @@ import {
 export async function createApiTokenAction(
   name: string,
   scopes: readonly string[] = [],
+  expiresAt: string | null | undefined = undefined,
 ): Promise<{ token: string } | { error: string }> {
-  return createScopedApiTokenAction(name, scopes);
+  return createScopedApiTokenAction(name, scopes, expiresAt);
 }
 
 /**

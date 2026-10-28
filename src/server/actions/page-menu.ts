@@ -264,6 +264,9 @@ export async function duplicatePageAction(
       fullWidth: true,
       smallText: true,
       font: true,
+      lineSpacing: true,
+      locked: true,
+      schemaLocked: true,
       content: true,
       deletedAt: true,
       permissions: {
@@ -313,6 +316,11 @@ export async function duplicatePageAction(
       fullWidth: source.fullWidth,
       smallText: source.smallText,
       font: source.font,
+      lineSpacing: source.lineSpacing,
+      // A locked page keeps its lock on the copy; the request that asked for
+      // the duplicate already passed the edit check on the source.
+      locked: source.locked,
+      schemaLocked: source.schemaLocked,
       content: (source.content ?? undefined) as Prisma.InputJsonValue | undefined,
       createdById: user.id,
       position: (last?.position ?? 0) + 1000,

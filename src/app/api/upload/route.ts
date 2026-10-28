@@ -47,8 +47,11 @@ const ALLOWED_TYPES: readonly string[] = [
   "application/pdf",
   "text/plain",
   "text/markdown",
+  "text/csv",
   "application/json",
   "application/zip",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ];
 
 /**

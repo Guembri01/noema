@@ -377,6 +377,24 @@ export async function getProjects(workspaceId: string) {
   });
 }
 
+/**
+ * Pages that can be attached to `projectId`: live pages in the workspace that
+ * are not already in it. The project page is the natural place to attach an
+ * existing note, not only the sidebar context menu.
+ */
+export async function getAttachablePages(workspaceId: string, projectId: string) {
+  return prisma.page.findMany({
+    where: {
+      workspaceId,
+      deletedAt: null,
+      OR: [{ projectId: null }, { projectId: { not: projectId } }],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 300,
+    select: { id: true, title: true, icon: true, type: true },
+  });
+}
+
 export async function getProjectDetail(workspaceId: string, projectId: string) {
   return prisma.project.findFirst({
     where: { id: projectId, workspaceId },

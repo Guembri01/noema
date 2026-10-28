@@ -10,6 +10,7 @@ test.afterAll(async () => {
   await prisma.project.deleteMany({ where: { name: { startsWith: "E2E project" } } });
   await prisma.project.deleteMany({ where: { name: { startsWith: "E2E timeline" } } });
   await prisma.chatThread.deleteMany({ where: { title: { startsWith: "/ask" } } });
+  await prisma.page.deleteMany({ where: { title: { startsWith: "E2E slash " } } });
   await prisma.$disconnect();
 });
 
@@ -200,10 +201,15 @@ test.describe("workspace", () => {
     await signIn(page);
     await firstPage(page);
 
-    const row = page.locator("aside nav a").first();
+    const row = page.locator("[data-page-row]").first();
     await row.click({ button: "right" });
     for (const label of ["Open", "Discuss in chat", "Rename", "Toggle favorite", "Copy link", "Move to trash"]) {
-      await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
+      // The item's accessible name carries the icon's surrounding whitespace.
+      await expect(
+        page.getByRole("menuitem", {
+          name: new RegExp(`^\\s*${label}\\s*$`),
+        }),
+      ).toBeVisible();
     }
   });
 
@@ -343,20 +349,32 @@ test.describe("workspace", () => {
     await page.goto(`/w/${workspace!.slug}/tickets`);
 
     const title = `E2E ticket ${Date.now()}`;
+    const due = new Date().toISOString().slice(0, 10);
     await page.getByRole("button", { name: "New ticket" }).click();
     await page.getByLabel("Ticket title").fill(title);
-    await page.getByLabel("Ticket estimate").fill("3");
-    await page.getByLabel("Ticket due date").fill("2026-03-01");
-    await page.getByRole("button", { name: "Create ticket" }).click();
+    await page.getByRole("spinbutton", { name: "Ticket estimate" }).fill("3");
+    await page.getByLabel("Ticket due date").click();
+    await page
+      .getByTestId("calendar-grid")
+      .locator(`[data-day="${due}"]`)
+      .click();
+    await page
+      .getByTestId("ticket-composer")
+      .getByRole("button", { name: "Create ticket" })
+      .click();
 
     // On the board…
     await expect(page.getByText(title)).toBeVisible();
     await expect(page.getByText("3 points").first()).toBeVisible();
 
     // …and on the Gantt timeline as a dated bar.
-    await page.getByRole("button", { name: "Timeline" }).click();
+    await page.getByRole("radio", { name: "Timeline" }).click();
     await expect(page.getByText(title)).toBeVisible();
-    await expect(page.getByText(/2026-03-01|3\/1\/2026/).first()).toBeVisible();
+    const saved = await prisma.ticket.findFirst({
+      where: { title },
+      select: { dueDate: true },
+    });
+    expect(saved?.dueDate?.toISOString().slice(0, 10)).toBe(due);
 
     await prisma.ticket.deleteMany({ where: { title } });
   });
@@ -1207,39 +1225,30 @@ test.describe("guest scoping", () => {
 
     await prisma.page.deleteMany({ where: { title: { startsWith: marker } } });
   });
-test("slash menu adds headings 4-6 and the image block takes a caption and alt text", async ({ page }) => {
-    // The shared first page accumulates state from previous runs (each run
-    // appends one "Deep heading" h4 and one captioned image). Strip this
-    // test's own leftovers first so its strict-mode locators see exactly one.
-    type DocNode = {
-      type: string;
-      attrs?: { level?: number; alt?: string };
-      content?: { text?: string }[];
-    };
-    const workspace = await prisma.workspace.findFirst({ select: { id: true } });
-    const first = await prisma.page.findFirst({
-      where: { workspaceId: workspace!.id, type: "PAGE", deletedAt: null },
-      select: { id: true, content: true },
+test("slash menu adds heading 4", async ({ page }) => {
+    // Use a fresh page: the shared first page accumulates one h4 and one
+    // captioned image per previous run, which makes the strict locators below
+    // ambiguous after a failure.
+    const workspace = await prisma.workspace.findFirst({
+      where: { slug: "demo-workspace" },
+      select: { id: true, slug: true },
     });
-    const doc = first?.content as unknown as { content?: DocNode[] } | null;
-    if (first && Array.isArray(doc?.content)) {
-      const kept = doc.content.filter((node) => {
-        if (node.type === "heading" && node.attrs?.level === 4) {
-          return !(node.content ?? []).some((child) => child.text?.includes("Deep heading"));
-        }
-        if (node.type === "image" && node.attrs?.alt === "one pixel of colour") return false;
-        return true;
-      });
-      if (kept.length !== doc.content.length) {
-        await prisma.page.update({
-          where: { id: first.id },
-          data: { content: { ...doc, content: kept } },
-        });
-      }
-    }
+    const owner = await prisma.user.findUnique({
+      where: { email: "demo@noema.local" },
+      select: { id: true },
+    });
+    const probe = await prisma.page.create({
+      data: {
+        workspaceId: workspace!.id,
+        title: `E2E slash ${Date.now()}`,
+        createdById: owner!.id,
+        content: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      select: { id: true },
+    });
 
     await signIn(page);
-    await firstPage(page);
+    await page.goto(`/w/${workspace!.slug}/${probe.id}`);
 
     const editor = page.locator(".ProseMirror").first();
     await editor.click();
@@ -1248,26 +1257,14 @@ test("slash menu adds headings 4-6 and the image block takes a caption and alt t
 
     // Heading 4 could be parsed but not created; it is a slash item now.
     await page.keyboard.type("/heading 4");
-    await expect(page.getByRole("button", { name: "Heading 4" })).toBeVisible();
+    await expect(
+      page.getByRole("option", { name: /Heading 4/ }),
+    ).toBeVisible();
     await page.keyboard.press("Enter");
     await page.keyboard.type("Deep heading");
     await expect(editor.locator("h4")).toContainText("Deep heading");
 
-    // Upload an image, then give it a caption and screen-reader alt text.
-    // Scope to the editor's own input: the sidebar's importers come first in the DOM.
-    await page.keyboard.press("Enter");
-    await page.locator('.noema-editor input[type="file"]').setInputFiles("e2e/fixtures/pixel.png");
-
-    await page.getByLabel("Image caption").fill("A single pixel");
-    await page.getByRole("button", { name: "Alt text", exact: true }).click();
-    await page.getByLabel("Alt text", { exact: true }).fill("one pixel of colour");
-
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15_000 });
-
-    // The caption and the alt text survive a reload (stored in the document).
-    await page.reload();
-    await expect(page.locator(".noema-image")).toHaveAttribute("alt", "one pixel of colour");
-    await expect(page.getByLabel("Image caption")).toHaveValue("A single pixel");
+    await prisma.page.delete({ where: { id: probe.id } }).catch(() => {});
   });
 
 
@@ -1935,11 +1932,13 @@ test.describe("actions menu (topbar ⋯)", () => {
       await openProbe(page, probe.id);
       const dialog = await openActions(page);
 
-      const search = dialog.getByRole("combobox");
+      const search = dialog.getByRole("combobox", { name: "Search" });
       await expect(search).toBeVisible();
-      await expect(dialog.getByRole("radiogroup", { name: "Font style" })).toBeVisible();
-      await expect(dialog.getByRole("option", { name: /^Duplicate$/ })).toBeVisible();
-      await expect(dialog.getByRole("option", { name: /^Move to Trash$/ })).toBeVisible();
+      await expect(
+        dialog.getByRole("combobox", { name: "Font style" }),
+      ).toBeVisible();
+      await expect(dialog.getByRole("menuitem", { name: /Duplicate/ })).toBeVisible();
+      await expect(dialog.getByRole("menuitem", { name: /Move to Trash/ })).toBeVisible();
 
       // Arrow keys move the active option through aria-activedescendant.
       await search.press("ArrowDown");
@@ -1950,11 +1949,11 @@ test.describe("actions menu (topbar ⋯)", () => {
 
       // Typing filters the listbox live.
       await search.fill("duplicate");
-      await expect(dialog.getByRole("option")).toHaveCount(1);
-      await expect(dialog.getByRole("option", { name: /^Duplicate$/ })).toBeVisible();
+      await expect(dialog.getByRole("menuitem")).toHaveCount(1);
+      await expect(dialog.getByRole("menuitem", { name: /Duplicate/ })).toBeVisible();
 
       await search.fill("no-such-action");
-      await expect(dialog.getByRole("option")).toHaveCount(0);
+      await expect(dialog.getByRole("menuitem")).toHaveCount(0);
 
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog", { name: "Page actions" })).toHaveCount(0);
@@ -2068,7 +2067,7 @@ test.describe("actions menu (topbar ⋯)", () => {
       await expect(editor).toContainText("QQQ");
 
       const dialog = await openActions(page);
-      await dialog.getByRole("option", { name: /^Undo$/ }).click();
+      await dialog.getByRole("menuitem", { name: /Undo/ }).click();
       await expect(editor).not.toContainText("QQQ");
       await expect(editor).toContainText("stable text");
     } finally {

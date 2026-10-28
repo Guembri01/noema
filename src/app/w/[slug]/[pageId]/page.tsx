@@ -1,5 +1,5 @@
 import { Suspense, type ReactNode } from "react";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { PropertyType } from "@prisma/client";
 import { cn } from "@/lib/utils";
 import { prosemirrorToText } from "@/lib/blocks";
@@ -70,8 +70,17 @@ export default async function PageRoute({
    * after the decision — an out-of-scope page ends in `notFound()` either way.
    */
   const page = await getPageDetail(pageId);
-  if (!page || page.workspaceId !== workspace.id || page.deletedAt) {
+  if (!page || page.workspaceId !== workspace.id) {
     notFound();
+  }
+  // A bookmarked or still-open route to a trashed page is not a 404: send the
+  // visitor to the parent when possible, else the workspace home.
+  if (page.deletedAt) {
+    redirect(
+      page.parentId
+        ? `/w/${workspace.slug}/${page.parentId}`
+        : `/w/${workspace.slug}`,
+    );
   }
 
   /**

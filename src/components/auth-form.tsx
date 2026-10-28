@@ -104,8 +104,8 @@ export type AuthFormTouched = Record<AuthFieldName, boolean>;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Copy shown by the password-visibility toggle. */
-const SHOW_PASSWORD = "Show password";
-const HIDE_PASSWORD = "Hide password";
+const SHOW_PASSWORD = "Show characters";
+const HIDE_PASSWORD = "Hide characters";
 /** Login-only "stay signed in" affordance. */
 const REMEMBER_LABEL = "Remember me on this device";
 

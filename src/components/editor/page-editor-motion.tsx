@@ -92,13 +92,22 @@ export function rowChromeClass(state: RowChromeState = {}): string {
 }
 
 /**
- * Presentational block chrome: the drag grip and the + affordance.
- * Pure (no hooks), so it renders identically on the server and in this slice's
- * `renderToStaticMarkup` proof. The grip is decorative — the surrounding
- * `DragHandle` owns the actual drag behaviour, and the + stays chrome-only so
- * this slice never introduces a new command.
+ * Presentational block chrome: the drag grip and the + action.
+ *
+ * The grip is decorative — the surrounding `DragHandle` owns the actual drag
+ * behaviour. The + is a real button: it appends an empty paragraph after the
+ * block the handle targets, which is the affordance users expect when hovering
+ * a row (especially a to-do item).
  */
-export function EditorRowChrome({ state = {} }: { state?: RowChromeState }) {
+export function EditorRowChrome({
+  state = {},
+  onAdd,
+  addLabel = "Add a block below",
+}: {
+  state?: RowChromeState;
+  onAdd?: () => void;
+  addLabel?: string;
+}) {
   const visible = Boolean(state.hovered || state.focused || state.selected);
   return (
     <span
@@ -109,9 +118,31 @@ export function EditorRowChrome({ state = {} }: { state?: RowChromeState }) {
       <span className="noema-drag-handle" aria-hidden="true">
         <GripVertical className="h-3.5 w-3.5" strokeWidth={1.8} />
       </span>
-      <span className="noema-row-add" aria-hidden="true">
-        <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
-      </span>
+      {onAdd ? (
+        <button
+          type="button"
+          className="noema-row-add focus-ring border-0 bg-transparent p-0"
+          aria-label={addLabel}
+          title={addLabel}
+          draggable={false}
+          contentEditable={false}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onAdd();
+          }}
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
+        </button>
+      ) : (
+        <span className="noema-row-add" aria-hidden="true">
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
+        </span>
+      )}
     </span>
   );
 }

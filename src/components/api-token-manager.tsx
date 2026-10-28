@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input } from "@/components/ui/input";
 import { Section } from "@/components/ui/section";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select } from "@/components/ui/select";
 import { Tag } from "@/components/ui/tag";
 import { isTagHue, type TagHue } from "@/lib/design-tokens";
 import { formatDuration, humanizeDuration } from "@/lib/duration";
@@ -29,6 +30,11 @@ import {
   expandScopes,
   validateScopes,
 } from "@/lib/api-token-scope";
+import {
+  TOKEN_EXPIRY_PRESETS,
+  customDateToIso,
+  presetExpiryIso,
+} from "@/lib/api-token-expiry";
 
 /* ------------------------------------------------------------------------- *
  * Pure domain helpers
@@ -170,6 +176,7 @@ export type TokenRevokeResult = { ok: true } | { error: string };
 export type TokenCreateAction = (
   name: string,
   scopes: string[],
+  expiresAt?: string | null,
 ) => Promise<TokenCreateResult>;
 export type TokenRevokeAction = (id: string) => Promise<TokenRevokeResult>;
 
@@ -220,11 +227,16 @@ export function ScopeChips({
 export function ScopePicker({
   selected,
   onToggle,
+  onSelectAll,
+  onClearAll,
   locale,
   disabled = false,
 }: {
   selected: readonly string[];
   onToggle: (id: string) => void;
+  /** Optional bulk actions; the settings body wires them to its state. */
+  onSelectAll?: () => void;
+  onClearAll?: () => void;
   locale: string;
   disabled?: boolean;
 }) {
@@ -238,6 +250,30 @@ export function ScopePicker({
       <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
         {t(locale, "generalAccess")}
       </legend>
+      {(onSelectAll || onClearAll) && (
+        <div className="mb-2 flex items-center justify-end gap-1">
+            {onSelectAll && (
+              <button
+                type="button"
+                onClick={onSelectAll}
+                disabled={disabled || API_SCOPES.every((scope) => selected.includes(scope.id))}
+                className="focus-ring rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2 disabled:opacity-40"
+              >
+                Select all
+              </button>
+            )}
+            {onClearAll && (
+              <button
+                type="button"
+                onClick={onClearAll}
+                disabled={disabled || selected.length === 0}
+                className="focus-ring rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2 disabled:opacity-40"
+              >
+                Clear
+              </button>
+            )}
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-2">
         {API_SCOPES.map((scope) => (
           <Checkbox
@@ -527,6 +563,8 @@ export function ApiTokenPanelBody({
   const nameRef = useRef<HTMLInputElement | null>(null);
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
+  const [expiryMode, setExpiryMode] = useState("90");
+  const [customDate, setCustomDate] = useState("");
   const [created, setCreated] = useState<string | null>(null);
 
   const toggleScope = (id: string) => {
@@ -543,12 +581,24 @@ export function ApiTokenPanelBody({
       toast.error(t(locale, "somethingWentWrong"));
       return;
     }
-    run(() => create(name, scopes), {
+    let expiresAt: string | null | undefined;
+    if (expiryMode === "custom") {
+      expiresAt = customDateToIso(customDate) ?? undefined;
+      if (expiresAt === undefined) {
+        toast.error("Choose a custom expiration date.");
+        return;
+      }
+    } else {
+      expiresAt = presetExpiryIso(expiryMode);
+    }
+    run(() => create(name, scopes, expiresAt), {
       onSuccess: (value) => {
         if (value && typeof value === "object" && "token" in value) {
           setCreated(value.token);
           setName("");
           setScopes([]);
+          setExpiryMode("90");
+          setCustomDate("");
           router.refresh();
         }
       },
@@ -599,9 +649,38 @@ export function ApiTokenPanelBody({
           </Button>
         </div>
 
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field id="api-token-expiry" label="Expires">
+            <Select
+              value={expiryMode}
+              onChange={setExpiryMode}
+              options={TOKEN_EXPIRY_PRESETS.map((preset) => ({
+                value: preset.value,
+                label: preset.label,
+              }))}
+              disabled={pending}
+              searchable={false}
+              aria-label="Token expiration"
+            />
+          </Field>
+          {expiryMode === "custom" && (
+            <Field id="api-token-custom-expiry" label="Custom date">
+              <Input
+                type="date"
+                value={customDate}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(event) => setCustomDate(event.target.value)}
+                disabled={pending}
+              />
+            </Field>
+          )}
+        </div>
+
         <ScopePicker
           selected={scopes}
           onToggle={toggleScope}
+          onSelectAll={() => setScopes(API_SCOPES.map((scope) => scope.id))}
+          onClearAll={() => setScopes([])}
           locale={locale}
           disabled={pending}
         />

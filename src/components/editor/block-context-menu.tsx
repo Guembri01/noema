@@ -174,7 +174,19 @@ function blockTypeOfNode(name: string, attrs: Record<string, unknown>): BlockTyp
       return "paragraph";
     case "heading": {
       const level = Number(attrs.level);
-      return level === 1 ? "h1" : level === 2 ? "h2" : level === 3 ? "h3" : null;
+      return level === 1
+        ? "h1"
+        : level === 2
+          ? "h2"
+          : level === 3
+            ? "h3"
+            : level === 4
+              ? "h4"
+              : level === 5
+                ? "h5"
+                : level === 6
+                  ? "h6"
+                  : null;
     }
     case "bulletList":
       return "bulletedList";
@@ -221,6 +233,9 @@ const TURN_TARGET_LABELS: Partial<Record<BlockType, I18nKey>> = {
   h1: "blockHeading1",
   h2: "blockHeading2",
   h3: "blockHeading3",
+  h4: "blockHeading4",
+  h5: "blockHeading5",
+  h6: "blockHeading6",
   bulletedList: "blockBulletedList",
   numberedList: "blockNumberedList",
   todoList: "blockTodoList",
@@ -372,9 +387,16 @@ export function BlockContextMenu({
         break;
       case "h1":
       case "h2":
-      case "h3": {
+      case "h3":
+      case "h4":
+      case "h5":
+      case "h6": {
         const level = converted.attrs?.level;
-        chain.setHeading({ level: level === 2 ? 2 : level === 3 ? 3 : 1 }).run();
+        const headingLevel =
+          level === 2 || level === 3 || level === 4 || level === 5 || level === 6
+            ? level
+            : 1;
+        chain.setHeading({ level: headingLevel }).run();
         break;
       }
       case "bulletedList":

@@ -139,7 +139,7 @@ account.
 
 | | |
 | --- | --- |
-| **Install** | The NSIS installer (`Noema_1.4.2_x64-setup.exe`) installs per user into `%LOCALAPPDATA%\Noema`, and uninstalls from Add/Remove programs. WebView2 is bootstrapped by the installer itself |
+| **Install** | The NSIS installer (`Noema_1.4.3_x64-setup.exe`) installs per user into `%LOCALAPPDATA%\Noema`, and uninstalls from Add/Remove programs. WebView2 is bootstrapped by the installer itself |
 | **Your data** | `%APPDATA%\app.noema.desktop` - the database, uploads and preferences; the database URL and session secret live in `secrets.bin`, encrypted with Windows DPAPI. Uninstalling keeps it unless you tick *delete application data* |
 | **Build it** | `npm run desktop:bundle` → `src-tauri/target/release/bundle/{nsis,msi}`. Verify the SHA-256 against the release's `SHA256SUMS`; the installer is unsigned until a code-signing certificate is configured, so do not disable SmartScreen |
 | **How it boots** | The shell starts the bundled server on a free loopback port and opens the window on it. The port is a preference, not a contract: it survives a port change because nothing outside the shell depends on the number |

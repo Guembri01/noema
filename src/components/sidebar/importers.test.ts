@@ -15,7 +15,10 @@ vi.mock("@/server/actions/import", () => ({
   importTrelloAction: vi.fn(),
   importZipAction: vi.fn(),
 }));
-vi.mock("@/server/actions/import-formats", () => ({ importHtmlAction: vi.fn() }));
+vi.mock("@/server/actions/import-formats", () => ({
+  importHtmlAction: vi.fn(),
+  importPdfAction: vi.fn(),
+}));
 vi.mock("@/server/actions/import-pdf", () => ({ importPdfTextAction: vi.fn() }));
 
 import {
@@ -65,6 +68,13 @@ describe("import source catalogue", () => {
       ids.add(source.id);
     }
     expect(ids.size).toBe(IMPORT_SOURCES.length);
+  });
+
+  it("offers real Excel, Word and PDF file inputs", () => {
+    expect(importSourceById("xlsx")?.accept).toContain(".xlsx");
+    expect(importSourceById("docx")?.accept).toContain(".docx");
+    expect(importSourceById("pdf")?.accept).toContain(".pdf");
+    expect(importSourceById("pdf")?.acceptHint).toContain("text layer");
   });
 
   it("resolves known ids and degrades unknown ids to null", () => {

@@ -379,6 +379,7 @@ export function BoardCard({
   capacity,
   slaRow,
   onSelect,
+  dragging = false,
 }: {
   ticket: TicketRow;
   locale?: string;
@@ -388,6 +389,8 @@ export function BoardCard({
   capacity?: CapacityRow;
   slaRow?: SlaStatusResult;
   onSelect?: (id: string) => void;
+  /** True while this card is the source of a live drag. */
+  dragging?: boolean;
 }) {
   const assignee = ticket.assigneeName
     ? {
@@ -401,11 +404,13 @@ export function BoardCard({
     <article
       data-testid="ticket-board-card"
       data-ticket={ticket.key}
+      data-status={ticket.status}
       className={cn(
-        "cursor-grab rounded-lg border border-border bg-bg p-2 shadow-1",
+        "rounded-lg border border-s-[3px] border-border bg-bg p-2 shadow-1",
         "u-interactive u-surface hover:border-border-strong hover:bg-surface hover:shadow-2",
-        "active:cursor-grabbing",
+        dragging ? "cursor-grabbing" : "cursor-grab active:cursor-grabbing",
       )}
+      style={{ borderInlineStartColor: tagStyle(statusMeta(ticket.status).color).color }}
     >
       <button
         type="button"
@@ -415,6 +420,7 @@ export function BoardCard({
         <span className="flex items-center gap-1.5 text-2xs text-muted">
           <span aria-hidden>{typeMeta(ticket.type).icon}</span>
           <span className="font-mono">{ticket.key}</span>
+          <StatusPill status={ticket.status} />
           <Badge
             tone={statusBadgeTone(priorityMeta(ticket.priority).color)}
             size="sm"
@@ -648,10 +654,11 @@ export function TicketBoardView({
   capacityByUser,
   slaPolicy,
   pending = false,
+  moving = [],
 }: {
   filtered: TicketRow[];
   onSelect: (id: string) => void;
-  onMove: (ticketId: string, status: string) => void;
+  onMove: (ticketId: string, status: string, beforeId?: string | null) => void;
   /** Locale for the surfaced dependency/workload labels. */
   locale?: string;
   /** Explicit dependency edges; when absent, `relations` is used, else none. */
@@ -664,11 +671,14 @@ export function TicketBoardView({
   slaPolicy?: TicketSlaPolicy;
   /** Loading flag: empty columns render a matching card skeleton. */
   pending?: boolean;
+  /** Tickets whose optimistic move is still in flight. */
+  moving?: readonly string[];
 }) {
   const dependencies = buildDependencyView(filtered, edges, relations);
   const workload = buildWorkloadView(filtered, capacityByUser);
   const sla = buildSlaView(filtered, slaPolicy);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
   const assigneeNames = new Map(
     filtered
       .filter((ticket) => ticket.assigneeId)
@@ -701,20 +711,63 @@ export function TicketBoardView({
       )}
 
       <div className="flex gap-3 overflow-x-auto pb-2">
-        {groupByStatus(filtered).map((column) => (
+        {groupByStatus(filtered).map((column) => {
+          const color = tagStyle(statusMeta(column.status).color);
+          const active = dragOver === column.status && dragging !== null;
+          return (
           <div
             key={column.status}
-            className="flex w-64 shrink-0 flex-col rounded-lg border border-border"
-            onDragOver={(event) => event.preventDefault()}
+            data-drop-status={column.status}
+            data-drop-active={active ? "true" : undefined}
+            className={cn(
+              "flex w-64 shrink-0 flex-col rounded-lg border border-t-[3px] border-border u-colors",
+              active && "border-action bg-surface-2/60",
+            )}
+            style={{ borderTopColor: color.color }}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDragOver(column.status);
+            }}
+            onDragOver={(event) => {
+              // Do not gate this on React's `dragging` state: a synthetic or
+              // very fast drag can deliver dragover before the state commit.
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              if (dragOver !== column.status) setDragOver(column.status);
+            }}
+            onDragLeave={(event) => {
+              const next = event.relatedTarget as Node | null;
+              if (next && event.currentTarget.contains(next)) return;
+              setDragOver((current) => (current === column.status ? null : current));
+            }}
             onDrop={(event) => {
-              const ticketId = event.dataTransfer.getData("text/ticket");
+              event.preventDefault();
+              const ticketId =
+                event.dataTransfer.getData("text/ticket") ||
+                event.dataTransfer.getData("text/plain");
+              setDragOver(null);
+              setDragging(null);
               if (!ticketId) return;
-              onMove(ticketId, column.status);
+              // Insert before the first card whose midpoint is below the
+              // pointer; otherwise append to the column.
+              const cards = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>("[data-ticket-id]"),
+              ).filter((card) => card.dataset.ticketId !== ticketId);
+              const before = cards.find((card) => {
+                const rect = card.getBoundingClientRect();
+                return event.clientY < rect.top + rect.height / 2;
+              });
+              onMove(ticketId, column.status, before?.dataset.ticketId ?? null);
             }}
           >
             <p className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted">
-              <CircleDot className="h-3 w-3" aria-hidden /> {column.label}
-              <Badge tone="neutral" size="sm" count={column.tickets.length} className="ms-auto" />
+              <CircleDot className="h-3 w-3" style={{ color: color.color }} aria-hidden /> {column.label}
+              <Badge
+                tone={statusBadgeTone(statusMeta(column.status).color)}
+                size="sm"
+                count={column.tickets.length}
+                className="ms-auto"
+              />
               <span className="tabular-nums">{column.estimate}</span>
             </p>
             <ul className="flex-1 space-y-2 p-2">
@@ -744,13 +797,26 @@ export function TicketBoardView({
                   return (
                     <li
                       key={ticket.id}
+                      data-ticket-id={ticket.id}
+                      data-dragging={dragging === ticket.id ? "true" : undefined}
                       draggable
+                      aria-grabbed={dragging === ticket.id || undefined}
                       onDragStart={(event) => {
                         setDragging(ticket.id);
+                        event.dataTransfer.effectAllowed = "move";
                         event.dataTransfer.setData("text/ticket", ticket.id);
+                        // Some WebView2 builds only expose text/plain reliably.
+                        event.dataTransfer.setData("text/plain", ticket.id);
                       }}
-                      onDragEnd={() => setDragging(null)}
-                      className={cn("list-none", dragging === ticket.id && "u-no-transition")}
+                      onDragEnd={() => {
+                        setDragging(null);
+                        setDragOver(null);
+                      }}
+                      className={cn(
+                        "list-none cursor-grab active:cursor-grabbing",
+                        dragging === ticket.id && "u-no-transition cursor-grabbing opacity-50",
+                        moving.includes(ticket.id) && "opacity-70",
+                      )}
                     >
                       <BoardCard
                         ticket={ticket}
@@ -761,6 +827,7 @@ export function TicketBoardView({
                         capacity={capacity}
                         slaRow={slaRow}
                         onSelect={onSelect}
+                        dragging={dragging === ticket.id}
                       />
                     </li>
                   );
@@ -768,7 +835,8 @@ export function TicketBoardView({
               )}
             </ul>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

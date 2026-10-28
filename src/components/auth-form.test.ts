@@ -183,12 +183,12 @@ describe("AuthFormView — default (login)", () => {
   it("labels the visibility toggle and reflects its pressed state", () => {
     const hidden = render({ showPassword: false });
     expect(hidden).toContain('aria-pressed="false"');
-    expect(hidden).toContain('aria-label="Show password"');
+    expect(hidden).toContain('aria-label="Show characters"');
     expect(hidden).toContain('type="password"');
 
     const shown = render({ showPassword: true });
     expect(shown).toContain('aria-pressed="true"');
-    expect(shown).toContain('aria-label="Hide password"');
+    expect(shown).toContain('aria-label="Hide characters"');
     expect(shown).toContain('type="text"');
     expectTokensOnly(shown);
   });

@@ -64,6 +64,7 @@ export {
   getWorkspaceMembers,
   getProjects,
   getProjectDetail,
+  getAttachablePages,
   type PageTreeNode,
   type ApiWorkspaceRow,
   type ApiPageRow,

@@ -71,4 +71,12 @@ describe("BoardCard markup", () => {
     expect(html).toContain("hover:shadow-2");
     expect(html).toContain("hover:border-border-strong");
   });
+
+  it("shows the grabbing cursor while the card is dragged", () => {
+    const dragging = renderToStaticMarkup(
+      createElement(BoardCard, { ticket, locale: "en", dragging: true }),
+    );
+    expect(dragging).toContain("cursor-grabbing");
+    expect(dragging).not.toContain("cursor-grab ");
+  });
 });

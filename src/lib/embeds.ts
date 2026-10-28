@@ -49,6 +49,26 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * A PDF preview may point at an authenticated upload (`/api/files/...`) as well
+ * as a public http(s) URL. The relative form is resolved against a fixed origin,
+ * so a traversal attempt cannot escape the uploads route.
+ */
+export function isSafePdfUrl(value: string): boolean {
+  if (isHttpUrl(value)) return true;
+  if (!value.startsWith("/api/files/")) return false;
+  try {
+    const url = new URL(value, "https://noema.invalid");
+    return (
+      url.origin === "https://noema.invalid" &&
+      url.pathname.startsWith("/api/files/") &&
+      !url.pathname.includes("..")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function hostOf(value: string): string {
   try {
     return new URL(value).hostname.replace(/^www\./i, "");

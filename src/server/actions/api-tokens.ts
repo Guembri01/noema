@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { randomToken } from "@/lib/slug";
-import { hashApiToken, apiTokenExpiry } from "@/lib/api-auth";
+import { hashApiToken } from "@/lib/api-auth";
+import { resolveTokenExpiry } from "@/lib/api-token-expiry";
 import { expandScopes, validateScopes } from "@/lib/api-token-scope";
 
 /**
@@ -36,12 +37,16 @@ export type ApiTokenSummary = {
 export async function createApiTokenAction(
   name: string,
   scopes: readonly string[] = [],
+  /** `undefined` = 90-day default, `null` = never, ISO = custom deadline. */
+  expiresAt: string | null | undefined = undefined,
 ): Promise<{ token: string } | { error: string }> {
   const user = await requireUser();
   const label = name.trim().slice(0, 60) || "API token";
 
   const validation = validateScopes(scopes);
   if (!validation.ok) return { error: "Invalid scopes." };
+  const expiry = resolveTokenExpiry(expiresAt);
+  if (!expiry.ok) return { error: expiry.error };
 
   const token = `noema_${randomToken(24)}`;
   await prisma.apiToken.create({
@@ -50,7 +55,7 @@ export async function createApiTokenAction(
       name: label,
       tokenHash: hashApiToken(token),
       scopes: expandScopes(scopes),
-      expiresAt: apiTokenExpiry(),
+      expiresAt: expiry.value,
     },
   });
   revalidatePath("/w", "layout");

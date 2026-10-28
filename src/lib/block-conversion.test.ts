@@ -34,12 +34,15 @@ const rich = (): ConvertibleBlock => ({
 });
 
 describe("BLOCK_TYPES / isBlockType", () => {
-  it("lists the twelve convertible types in canonical order", () => {
+  it("lists the fifteen convertible types in canonical order", () => {
     expect(BLOCK_TYPES).toEqual([
       "paragraph",
       "h1",
       "h2",
       "h3",
+      "h4",
+      "h5",
+      "h6",
       "bulletedList",
       "numberedList",
       "todoList",
@@ -55,7 +58,8 @@ describe("BLOCK_TYPES / isBlockType", () => {
   it("recognises known types and rejects everything else", () => {
     expect(isBlockType("paragraph")).toBe(true);
     expect(isBlockType("code")).toBe(true);
-    expect(isBlockType("h4")).toBe(false);
+    expect(isBlockType("h4")).toBe(true);
+    expect(isBlockType("h7")).toBe(false);
     expect(isBlockType("")).toBe(false);
     expect(isBlockType(42)).toBe(false);
     expect(isBlockType(undefined)).toBe(false);
@@ -75,7 +79,8 @@ describe("canConvert — complete graph minus identity", () => {
   });
 
   it("rejects unknown types on either side", () => {
-    expect(canConvert("paragraph", "h4")).toBe(false);
+    expect(canConvert("paragraph", "h4")).toBe(true);
+    expect(canConvert("paragraph", "h7")).toBe(false);
     expect(canConvert("nope", "quote")).toBe(false);
     expect(canConvert("", "code")).toBe(false);
   });
@@ -95,6 +100,9 @@ describe("allowedTargets — canonical order, never self", () => {
       "h1",
       "h2",
       "h3",
+      "h4",
+      "h5",
+      "h6",
       "bulletedList",
       "numberedList",
       "todoList",
@@ -117,7 +125,7 @@ describe("allowedTargets — canonical order, never self", () => {
   });
 
   it("returns [] for an unknown source", () => {
-    expect(allowedTargets("h4")).toEqual([]);
+    expect(allowedTargets("h7")).toEqual([]);
     expect(allowedTargets("")).toEqual([]);
   });
 });
@@ -162,6 +170,9 @@ describe("convertBlock — content, marks and attribute mapping", () => {
     expect(convertBlock(todo, "h1")?.attrs).toEqual({ level: 1 });
     expect(convertBlock(todo, "h2")?.attrs).toEqual({ level: 2 });
     expect(convertBlock(todo, "h3")?.attrs).toEqual({ level: 3 });
+    expect(convertBlock(todo, "h4")?.attrs).toEqual({ level: 4 });
+    expect(convertBlock(todo, "h5")?.attrs).toEqual({ level: 5 });
+    expect(convertBlock(todo, "h6")?.attrs).toEqual({ level: 6 });
   });
 
   it("recomputes the heading level when heading-to-heading", () => {
@@ -206,6 +217,6 @@ describe("convertBlock — content, marks and attribute mapping", () => {
   });
 
   it("returns null for an unknown target instead of guessing", () => {
-    expect(convertBlock(rich(), "h4" as BlockType)).toBeNull();
+    expect(convertBlock(rich(), "h7" as BlockType)).toBeNull();
   });
 });

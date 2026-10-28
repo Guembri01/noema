@@ -40,8 +40,9 @@ import {
   importTrelloAction,
   importZipAction,
 } from "@/server/actions/import";
-import { importHtmlAction } from "@/server/actions/import-formats";
+import { importHtmlAction, importPdfAction } from "@/server/actions/import-formats";
 import { importPdfTextAction } from "@/server/actions/import-pdf";
+
 import { csvToMatrix, matrixToCsv } from "@/lib/serialize";
 import {
   buildCreatePlan,
@@ -87,6 +88,7 @@ export type ImportSourceId =
   | "notion"
   | "trello"
   | "csv"
+  | "xlsx"
   | "markdown"
   | "html"
   | "asana"
@@ -139,6 +141,7 @@ export const REQUIRED_SOURCE_IDS: readonly ImportSourceId[] = [
 const IMPORT_ALLOW: Record<string, readonly string[]> = {
   markdown: [".md", ".markdown", ".txt"],
   csv: [".csv"],
+  xlsx: [".xlsx"],
   trello: [".json"],
   asana: [".json"],
   // `.enex` has no MIME in the shared table, so `mimeForExt` resolves it to the
@@ -148,9 +151,9 @@ const IMPORT_ALLOW: Record<string, readonly string[]> = {
   zip: [".zip"],
   docx: [".docx"],
   audio: ["audio/*"],
-  // The PDF importer runs the text-layer engine on extracted text (the
-  // dependency set has no PDF parser), so it accepts a plain-text payload.
-  pdfText: [".txt"],
+  // The PDF importer accepts a real PDF (base64 sent to the text-layer
+  // extractor). The legacy extracted-text .txt path stays supported.
+  pdf: [".pdf", ".txt"],
 };
 
 /** Every importable source, in picker order. The required ten come first. */
@@ -248,14 +251,24 @@ export const IMPORT_SOURCES: readonly ImportSourceDef[] = [
   {
     id: "pdf",
     label: "PDF",
-    description: "Import a PDF's extracted text layer as a page.",
+    description: "Import a PDF (or a pre-extracted text layer) as a page.",
     kind: "document",
     icon: FileIcon,
-    accept: ".txt,text/plain",
-    acceptHint: ".txt · a PDF's text layer",
-    allow: IMPORT_ALLOW.pdfText,
+    accept: ".pdf,.txt,application/pdf,text/plain",
+    acceptHint: ".pdf · .txt text layer",
+    allow: IMPORT_ALLOW.pdf,
   },
-  // Retained so no existing entry point is lost in the redesign.
+  // Spreadsheet and Office formats retained alongside the required ten.
+  {
+    id: "xlsx",
+    label: "Excel",
+    description: "Turn an .xlsx workbook's first sheet into a database.",
+    kind: "tabular",
+    icon: FileSpreadsheet,
+    accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    acceptHint: ".xlsx · first worksheet",
+    allow: IMPORT_ALLOW.xlsx,
+  },
   {
     id: "docx",
     label: "Word",
@@ -593,6 +606,8 @@ export type ImportPayload = {
   markdown?: string;
   notes?: { title: string; content: string }[];
   file?: File;
+  /** Base64-encoded PDF bytes for the binary text-layer importer. */
+  pdfBase64?: string;
 };
 
 export type ImportDraft = {
@@ -665,6 +680,30 @@ function readFileText(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("Could not read that file."));
     reader.readAsText(file);
   });
+}
+
+/** Read a binary file (XLSX ZIP / PDF) as an ArrayBuffer. */
+function readFileBytes(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) resolve(reader.result);
+      else reject(new Error("Could not read that file."));
+    };
+    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/** Base64 a binary file for a server action without loading a data URL. */
+async function readFileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await readFileBytes(file));
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 /** Inline annotation for a picked file: its glyph and detected category. */
@@ -854,6 +893,16 @@ async function buildDraft(source: ImportSourceDef, file: File): Promise<ImportDr
       if (matrix.length < 2) throw new Error("CSV needs a header row and at least one data row.");
       return tabularDraft(source, file, titleFromName(file.name), matrix[0], matrix.slice(1));
     }
+    case "xlsx": {
+      // JSZip is only needed once an .xlsx is actually picked; keep it out of
+      // the workspace's initial client bundle.
+      const { parseXlsxMatrix } = await import("@/lib/xlsx-import");
+      const matrix = await parseXlsxMatrix(await readFileBytes(file));
+      if (matrix.length < 2) {
+        throw new Error("The first worksheet needs a header row and at least one data row.");
+      }
+      return tabularDraft(source, file, titleFromName(file.name), matrix[0], matrix.slice(1));
+    }
     case "asana": {
       const text = await readFileText(file);
       let raw: unknown;
@@ -968,11 +1017,24 @@ async function buildDraft(source: ImportSourceDef, file: File): Promise<ImportDr
       });
     }
     case "pdf": {
+      if (fileExt(file.name) === "pdf" || importMime(file) === "application/pdf") {
+        const pdfBase64 = await readFileBase64(file);
+        return documentDraft(source, file, {
+          title: titleFromName(file.name),
+          items: [],
+          itemCount: 1,
+          note: "PDF document — its selectable text layer is extracted on import.",
+          warnings: [
+            "Scanned/image-only PDFs have no text layer and are refused.",
+          ],
+          payload: { file, pdfBase64 },
+        });
+      }
       const text = await readFileText(file);
-      if (!text.trim()) throw new Error("That file is empty — expected a PDF's extracted text.");
+      if (!text.trim()) throw new Error("That file is empty - expected a PDF's extracted text.");
       const parsed = assembleDoc(extractedTextToPages(text));
       if (parsed.blocks.length === 0) {
-        throw new Error("No text-layer content found — expected a PDF's extracted text.");
+        throw new Error("No text-layer content found - expected a PDF's extracted text.");
       }
       const summary = describeImport(parsed);
       return documentDraft(source, file, {
@@ -1844,6 +1906,7 @@ async function executeImport(
 ): Promise<ImportOutcome> {
   switch (source.id) {
     case "csv":
+    case "xlsx":
     case "asana": {
       const { properties, csv } = buildDatabasePayload(draft);
       if (properties.length === 0) return { error: "Choose at least one column to import." };
@@ -1909,14 +1972,23 @@ async function executeImport(
       return { summary: summarizeImport(result.counts, result.id) };
     }
     case "pdf": {
-      const outcome = await safeAction(() =>
-        importPdfTextAction({
-          workspaceId,
-          parentId: null,
-          filename: draft.fileName,
-          text: draft.payload.text ?? "",
-        }),
-      );
+      const outcome = draft.payload.pdfBase64
+        ? await safeAction(() =>
+            importPdfAction({
+              workspaceId,
+              parentId: null,
+              filename: draft.fileName,
+              data: draft.payload.pdfBase64 ?? "",
+            }),
+          )
+        : await safeAction(() =>
+            importPdfTextAction({
+              workspaceId,
+              parentId: null,
+              filename: draft.fileName,
+              text: draft.payload.text ?? "",
+            }),
+          );
       if (!outcome.ok) return { error: outcome.error };
       const result = outcome.value;
       if ("error" in result) return { error: result.error };

@@ -7,6 +7,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { getWorkspaceBySlug, searchPagesPaged } from "@/server/queries";
 import { t } from "@/lib/i18n";
 import { SearchResults } from "@/components/search-results";
+import { LiveSearchInput } from "@/components/live-search-input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { truncate } from "@/lib/utils";
 import { refineByRelevance } from "@/lib/search-ranking";
@@ -96,17 +97,11 @@ export default async function SearchPage({
         </p>
       </header>
 
-      <form method="GET" className="relative">
-        {searchType && <input type="hidden" name="type" value={searchType} />}
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-        <input
-          name="q"
-          defaultValue={q}
-          autoFocus
-          placeholder={t(locale, "searchTitlesAndContent")}
-          className="focus-ring h-11 w-full rounded-control border border-border bg-bg pl-9 pr-3 text-sm outline-none"
-        />
-      </form>
+      <LiveSearchInput
+        initialQuery={q}
+        type={searchType}
+        locale={locale}
+      />
 
       {q.trim() ? (
         <SearchResults

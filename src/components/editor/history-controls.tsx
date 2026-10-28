@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { type Editor } from "@tiptap/react";
 import {
+  Code2,
   Layers,
   Redo2,
   Undo2
@@ -93,7 +94,16 @@ function shadowDepthSummary(locale: string, depth: ShadowDepth): string {
   return `${undo} · ${t(locale, "redo")} +${depth.redo}`;
 }
 
-export function HistoryControls({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
+export function HistoryControls({
+  editor,
+  locale = "en",
+  onOpenSource,
+}: {
+  editor: Editor;
+  locale?: string;
+  /** Open the Markdown source panel (optional so the bar stays reusable). */
+  onOpenSource?: () => void;
+}) {
   const [, force] = useState(0);
   const [depth, setDepth] = useState<ShadowDepth>(NO_DEPTH);
   const focused = useEditorFocus(editor);
@@ -180,6 +190,17 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
         <Redo2 className="h-4 w-4" />
         <DepthBadge depth={depth.redo} />
       </button>
+      {onOpenSource && (
+        <button
+          type="button"
+          aria-label="View page source"
+          title="View page source"
+          onClick={onOpenSource}
+          className="flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
+        >
+          <Code2 className="h-4 w-4" />
+        </button>
+      )}
       {hasShadow && (
         // Read-only shadow-level chip. It is deliberately not a `<button>`:
         // with no restore command there is nothing to activate, so it carries

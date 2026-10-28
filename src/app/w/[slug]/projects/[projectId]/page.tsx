@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
-import { getProjectDetail, getProjectTickets, getWorkspaceBySlug } from "@/server/queries";
+import { getAttachablePages, getProjectDetail, getProjectTickets, getWorkspaceBySlug } from "@/server/queries";
 import { updateMilestoneAction, updateProjectAction } from "@/server/actions/projects";
 import { ProjectDetail } from "@/components/project-detail";
 import { ProjectActions } from "@/components/project-actions";
@@ -33,7 +33,10 @@ export default async function ProjectPage({
   const project = await getProjectDetail(workspace.id, projectId);
   if (!project) notFound();
 
-  const tickets = await getProjectTickets(workspace.id, project.id);
+  const [tickets, attachablePages] = await Promise.all([
+    getProjectTickets(workspace.id, project.id),
+    getAttachablePages(workspace.id, project.id),
+  ]);
   const open = tickets.filter((ticket) => !isClosed(ticket.status));
   const totalEstimate = sumEstimates(tickets);
   const remainingEstimate = sumEstimates(open);
@@ -139,6 +142,7 @@ export default async function ProjectPage({
             icon: page.icon,
             type: page.type,
           })),
+          availablePages: attachablePages,
           tickets: tickets.map((ticket) => ({
             id: ticket.id,
             key: ticket.key,

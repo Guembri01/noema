@@ -9,69 +9,51 @@ earlier than 1.4.0 are not catalogued here. What exists today is tracked row by
 row in [`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md), and what does not is
 in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
-## [1.4.2] — 2026-10-25
-
-A security-hardening release for the Windows desktop app. The web/site build is
-unchanged except for shared code touched by the shell changes.
-
-### Security
-
-- **Secrets are encrypted at rest.** The Postgres connection string and the
-  session signing secret moved out of `preferences.json` / `auth-secret` into
-  `secrets.bin`, encrypted with Windows DPAPI in the current user's scope. The
-  migration runs once at launch, writes the encrypted copy first, then deletes
-  the plain-text one. A corrupt store fails closed instead of silently creating a
-  new secret or database. Non-Windows builds use `0600`.
-- **The IPC surface is five commands, not "everything".** The broad
-  `desktop-everything` capability and the unused `dialog`, `fs`, `os` and
-  `process` Tauri plugins are gone. The shell's own page gets `desktop_info`,
-  `recent_logs`, `set_database_url`, `restart_server` and `open_data_dir`; the
-  served app gets its five commands plus event listen/unlisten. The store plugin
-  is granted to no document.
-- **Navigation is pinned to the run's exact origin.** The webview may only show
-  the shell page, `about:blank`, or `http://127.0.0.1:<chosen port>`. Other
-  loopback ports, external hosts, `javascript:`, `data:` and `file:` are denied;
-  HTTP(S) links open in the system browser. The Vite dev origin is debug-only.
-- **The shell CSP has no inline or remote escapes.** `index.css` and `index.js`
-  are external assets, so `default-src`/`script-src`/`style-src` are `'self'`
-  with no `unsafe-inline`, no `https:` and no `127.0.0.1:*` wildcard. Frames,
-  objects, `<base>` and form submissions are disabled.
-- **Desktop networking fails closed.** The desktop server always binds loopback;
-  an inherited `HOSTNAME=0.0.0.0` is ignored. Server Action origins are
-  loopback-only and exactly the run's port in desktop mode, `APP_ORIGINS` is
-  ignored there, and `AUTH_SECRET` shorter than 32 characters is refused. The
-  container keeps its publishable bind: it sets `NOEMA_RUNTIME=server`, so the
-  shared boot wrapper honours `HOSTNAME=0.0.0.0` there instead of forcing
-  loopback.
-- **Diagnostics are redacted.** Connection-string passwords are stripped from the
-  IPC, the log ring, the log file and the clipboard report; `get_pref` refuses the
-  database URL key, and only a non-secret preference allow-list is writable.
-- **Tauri internals are hardened defensively.** `open_data_subdir` uses an
-  allow-list, `set_pref` is bounded, `set_zoom` no longer uses `eval`, window
-  titles are single-line/bounded, and `set_theme` rejects unknown values.
-- **The Rust advisory gate has no ignores.** The lockfile moved
-  `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10, which carry the fix
-  for the distrusted emSign intermediate (CVE-2026-111943); `cargo audit` now
-  fails on any advisory instead of carrying two accepted ones.
+## [1.4.3] - 2026-10-26
 
 ### Added
 
-- Regression tests for DPAPI round-trip/fail-closed, navigation origins, URL
-  validation, preference/subdirectory allow-lists, log redaction, strict CSP,
-  external shell assets and the five-command ACL split.
-- The tag-release workflow now writes and uploads a `SHA256SUMS` file after every
-  platform has produced its installer, so an unsigned binary can still be
-  verified against the published digest.
+- **Inline calendar block.** `/calendar` inserts a month grid with local events
+  that travel with the page; the database Calendar view remains the right tool
+  for row/property calendars.
+- **Markdown source mode.** The editor's bottom bar opens a source panel that
+  serialises the body to Markdown and applies edits through the existing importer.
+- **Token expiry controls.** API tokens now offer 7/30/90/365-day presets, a
+  custom date, or no expiry, and the scope picker has Select all / Clear.
+- **Attach existing pages to a project** from the project page, not only through
+  the sidebar context menu.
+- **Excel import** (`.xlsx`, first worksheet) and real PDF import
+  (`.pdf` text layer); Word `.docx` was already supported. Uploaded PDFs render
+  in the inline viewer, and Office attachments are accepted by the upload route.
 
-### Notes
+### Fixed
 
-- The installers are **unsigned** because no Windows code-signing certificate is
-  configured. SmartScreen may warn; verify the published SHA-256. Auto-update
-  remains deferred until a signing key pair and release endpoint exist.
+- Enter in the page title now moves the caret into the first body block.
+- The spellcheck layer stays enabled, and the new opt-in autocorrect toggle is
+  off by default and only rewrites its small typo dictionary.
+- The slash menu scrolls the keyboard-active row into view and opens in any
+  text block, not only paragraphs; heading-level conversions now include H4–H6.
+- Repeated Tab presses indent outside lists instead of moving focus once.
+- Image captions keep focus while typing and persist on reload; alt text
+  persists as well.
+- Links in the editor navigate: external links open a new tab, page mentions go
+  to their page, and the read-only renderer handles file attachments/PDFs.
+- Body edits appear in the global Undo history and can be undone/redone from the
+  topbar.
+- The Actions menu no longer closes on the mousedown that activates an item
+  (the portalled panel was treated as outside the trigger).
+- The date picker opens on the current month when it has no value.
+- Deleting the page currently on screen redirects to its parent (or the
+  workspace home) instead of rendering a 404; trashing a page cascades to its
+  subtree, and restoring restores it.
+- Sidebar search results update while typing; “Customize sidebar” opens a real
+  dialog; adding a page no longer performs a duplicate RSC refresh.
+- Ticket cards show their status colour, use a grabbing cursor while dragged,
+  and move optimistically between columns with drop feedback.
+- The image block's hover “+” is a working button that appends a block.
 
-## [Unreleased]
 
-### Added
+### Added - AI providers
 
 - **OpenCode Go as an AI provider.** A Go subscription can now be connected
   like any other provider — the endpoint is Go's OpenAI-compatible surface
@@ -93,7 +75,7 @@ unchanged except for shared code touched by the shell changes.
   exactly this, so it can route and cache per conversation. The id names an
   internal object, so it travels to Go only — no other provider receives it.
 
-### Security
+### Security - dependency and workflow gates
 
 - The dependency tree is audited in CI, and one advisory chain is gone. The
   lockfile carried `mammoth` → `argparse` 1.0.10 → `sprintf-js` 1.0.3, and
@@ -1205,6 +1187,66 @@ list marks it as **No access**.
   from before the sealing keeps delivering signed requests — that transition
   window is unchanged — and so does a hook that never had a secret at all.
 
+## [1.4.2] — 2026-10-25
+
+A security-hardening release for the Windows desktop app. The web/site build is
+unchanged except for shared code touched by the shell changes.
+
+### Security
+
+- **Secrets are encrypted at rest.** The Postgres connection string and the
+  session signing secret moved out of `preferences.json` / `auth-secret` into
+  `secrets.bin`, encrypted with Windows DPAPI in the current user's scope. The
+  migration runs once at launch, writes the encrypted copy first, then deletes
+  the plain-text one. A corrupt store fails closed instead of silently creating a
+  new secret or database. Non-Windows builds use `0600`.
+- **The IPC surface is five commands, not "everything".** The broad
+  `desktop-everything` capability and the unused `dialog`, `fs`, `os` and
+  `process` Tauri plugins are gone. The shell's own page gets `desktop_info`,
+  `recent_logs`, `set_database_url`, `restart_server` and `open_data_dir`; the
+  served app gets its five commands plus event listen/unlisten. The store plugin
+  is granted to no document.
+- **Navigation is pinned to the run's exact origin.** The webview may only show
+  the shell page, `about:blank`, or `http://127.0.0.1:<chosen port>`. Other
+  loopback ports, external hosts, `javascript:`, `data:` and `file:` are denied;
+  HTTP(S) links open in the system browser. The Vite dev origin is debug-only.
+- **The shell CSP has no inline or remote escapes.** `index.css` and `index.js`
+  are external assets, so `default-src`/`script-src`/`style-src` are `'self'`
+  with no `unsafe-inline`, no `https:` and no `127.0.0.1:*` wildcard. Frames,
+  objects, `<base>` and form submissions are disabled.
+- **Desktop networking fails closed.** The desktop server always binds loopback;
+  an inherited `HOSTNAME=0.0.0.0` is ignored. Server Action origins are
+  loopback-only and exactly the run's port in desktop mode, `APP_ORIGINS` is
+  ignored there, and `AUTH_SECRET` shorter than 32 characters is refused. The
+  container keeps its publishable bind: it sets `NOEMA_RUNTIME=server`, so the
+  shared boot wrapper honours `HOSTNAME=0.0.0.0` there instead of forcing
+  loopback.
+- **Diagnostics are redacted.** Connection-string passwords are stripped from the
+  IPC, the log ring, the log file and the clipboard report; `get_pref` refuses the
+  database URL key, and only a non-secret preference allow-list is writable.
+- **Tauri internals are hardened defensively.** `open_data_subdir` uses an
+  allow-list, `set_pref` is bounded, `set_zoom` no longer uses `eval`, window
+  titles are single-line/bounded, and `set_theme` rejects unknown values.
+- **The Rust advisory gate has no ignores.** The lockfile moved
+  `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10, which carry the fix
+  for the distrusted emSign intermediate (CVE-2026-111943); `cargo audit` now
+  fails on any advisory instead of carrying two accepted ones.
+
+### Added
+
+- Regression tests for DPAPI round-trip/fail-closed, navigation origins, URL
+  validation, preference/subdirectory allow-lists, log redaction, strict CSP,
+  external shell assets and the five-command ACL split.
+- The tag-release workflow now writes and uploads a `SHA256SUMS` file after every
+  platform has produced its installer, so an unsigned binary can still be
+  verified against the published digest.
+
+### Notes
+
+- The installers are **unsigned** because no Windows code-signing certificate is
+  configured. SmartScreen may warn; verify the published SHA-256. Auto-update
+  remains deferred until a signing key pair and release endpoint exist.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
@@ -1275,7 +1317,8 @@ The first public release: the site, the desktop app, and the parity tracker.
 - `npm run check:secrets` fails on any credential-shaped value in a tracked
   file, and on any tracked `.env`.
 
-[Unreleased]: https://github.com/Guembri01/noema/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/Guembri01/noema/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/Guembri01/noema/releases/tag/v1.4.3
 [1.4.2]: https://github.com/Guembri01/noema/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Guembri01/noema/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Guembri01/noema/releases/tag/v1.4.0

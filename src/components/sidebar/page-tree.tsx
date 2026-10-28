@@ -777,6 +777,31 @@ export function PageTree({
       router.refresh();
     });
 
+  /**
+   * Trash a page. If it is the page currently on screen, leave the dead route
+   * before the server refresh can paint a 404: fall back to the parent when
+   * there is one, otherwise the workspace home.
+   */
+  const archive = (node: PageTreeNode) =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => archivePageAction(node.id));
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        return;
+      }
+      toast.success("Moved to trash");
+      const href = `/w/${workspace.slug}/${node.id}`;
+      if (pathname === href) {
+        router.push(
+          node.parentId
+            ? `/w/${workspace.slug}/${node.parentId}`
+            : `/w/${workspace.slug}`,
+        );
+      } else {
+        router.refresh();
+      }
+    });
+
   /** id → node, for the drag helpers' parent lookups. */
   const byId = useMemo(() => new Map(tree.map((node) => [node.id, node])), [tree]);
 
@@ -1161,8 +1186,9 @@ export function PageTree({
                     <button
                       type="button"
                       aria-label={t(locale, "addSubPage")}
+                      disabled={pending}
                       onClick={() => addPage(node.id, "PAGE")}
-                      className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
+                      className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -1203,14 +1229,7 @@ export function PageTree({
                         <Copy className="h-4 w-4 text-muted" /> Duplicate
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onSelect={() =>
-                          remote(
-                            () => archivePageAction(node.id),
-                            "Moved to trash",
-                          )
-                        }
-                      >
+                      <DropdownMenuItem onSelect={() => archive(node)}>
                         <Trash2 className="h-4 w-4 text-muted" /> Move to trash
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -1226,6 +1245,9 @@ export function PageTree({
                     onSelect={() => window.open(href, "_blank", "noopener,noreferrer")}
                   >
                     <FileText className="h-4 w-4 text-muted" /> Open in new tab
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => addPage(node.id, "PAGE")}>
+                    <Plus className="h-4 w-4 text-muted" /> {t(locale, "addSubPage")}
                   </ContextMenuItem>
                   <ContextMenuItem onSelect={() => discuss(node.id)}>
                     <MessagesSquare className="h-4 w-4 text-muted" /> Discuss in chat
@@ -1362,10 +1384,7 @@ export function PageTree({
                     </ContextMenuSubContent>
                   </ContextMenuSub>
                   <ContextMenuSeparator />
-                  <ContextMenuItem
-                    destructive
-                    onSelect={() => remote(() => archivePageAction(node.id), "Moved to trash")}
-                  >
+                  <ContextMenuItem destructive onSelect={() => archive(node)}>
                     <Trash2 className="h-4 w-4" /> Move to trash
                   </ContextMenuItem>
                 </ContextMenuContent>

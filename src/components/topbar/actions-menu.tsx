@@ -552,6 +552,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const [highContrast, setHighContrast] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
   const liRefs = useRef<Record<string, HTMLLIElement | null>>({});
@@ -963,10 +964,17 @@ export function ActionsMenu(props: ActionsMenuProps) {
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (target && wrapperRef.current && !wrapperRef.current.contains(target)) {
-        setOpen(false);
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      // The panel (and the submenu) are portalled to <body>, outside the
+      // trigger wrapper. Checking only the wrapper closed the dialog on the
+      // mousedown that was supposed to activate an item, so every action in
+      // this menu was effectively dead. Treat both surfaces as inside.
+      if (wrapperRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-actions-surface]")) {
+        return;
       }
+      setOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -1234,9 +1242,11 @@ export function ActionsMenu(props: ActionsMenuProps) {
   // button, its viewport coordinates having been silently re-rooted.
   const panel = (
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={t(locale, "pageActions")}
+        data-actions-surface=""
         data-contrast={highContrast ? "more" : "normal"}
         onKeyDown={onDialogKeyDown}
         style={{
@@ -1388,6 +1398,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
               <div
                 id={SUBMENU_ID}
                 role="menu"
+                data-actions-surface=""
                 aria-label={subSpec.label}
                 tabIndex={-1}
                 onKeyDown={onSubmenuKeyDown}
