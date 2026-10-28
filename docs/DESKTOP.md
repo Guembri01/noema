@@ -177,7 +177,7 @@ Other deliberate choices:
 
 | Concern | Decision |
 |---|---|
-| Server exposure | loopback only (`127.0.0.1`, or `::1` when explicitly requested), no `0.0.0.0`; `HOSTNAME` inherited from the environment is ignored; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
+| Server exposure | the **desktop** server is loopback only (`127.0.0.1`, or `::1` when explicitly requested), no `0.0.0.0`; an inherited `HOSTNAME` is ignored; the port is this install's own (stable origin) or a free ephemeral one when it is taken. The **container/self-host** image sets `NOEMA_RUNTIME=server` and honours its `HOSTNAME=0.0.0.0`, which is what makes the published compose port work |
 | Webview ↔ server | a navigation guard in `src-tauri/src/navigation.rs` allows the shell's own origin and **exactly** this run's loopback origin; every other HTTP(S) link opens in the system browser, and `javascript:`, `data:` and `file:` are denied |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
 | Secrets | the Postgres connection string and the session signing secret live in `secrets.bin`, encrypted with Windows **DPAPI** (`CryptProtectData`, current-user scope); `preferences.json` holds only non-secret preferences. The password is **redacted** before it leaves the shell, logs are redacted, and `get_pref` refuses the connection-string key outright (unit-tested in `commands.rs`) |

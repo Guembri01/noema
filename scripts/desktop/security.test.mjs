@@ -97,10 +97,12 @@ describe("desktop security configuration", () => {
 
   it("binds the desktop server to loopback and requires a strong auth secret", () => {
     const wrapper = readFileSync(join(here, "boot-wrapper.cjs"), "utf8");
-    expect(wrapper).not.toContain('|| "0.0.0.0"');
-    expect(wrapper).toContain("serverHostname");
+    const policy = readFileSync(join(here, "allowed-origins.cjs"), "utf8");
+    expect(wrapper).toContain("serverHostname(process.env.HOSTNAME, process.env.NOEMA_RUNTIME)");
+    expect(wrapper).toContain('process.env.NOEMA_RUNTIME ??= "desktop"');
     expect(wrapper).toContain("MIN_AUTH_SECRET_LENGTH = 32");
-    expect(wrapper).toContain('process.env.NOEMA_RUNTIME = "desktop"');
+    expect(policy).toContain('runtime === "desktop"');
+    expect(policy).toContain('return host === "::1" ? "::1" : "127.0.0.1"');
     // The Rust shell passes the secret from DPAPI; a hand-started payload still
     // gets a file, but the generated value is explicitly random.
     expect(wrapper).toContain("crypto.randomBytes(32)");

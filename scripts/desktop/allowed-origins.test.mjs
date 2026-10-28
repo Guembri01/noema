@@ -79,9 +79,15 @@ describe("allowedOrigins", () => {
 
   it("never binds the desktop server to a non-loopback host", () => {
     for (const requested of [undefined, "", "0.0.0.0", "10.153.77.93", "localhost"]) {
-      expect(serverHostname(requested)).toBe("127.0.0.1");
+      expect(serverHostname(requested, "desktop")).toBe("127.0.0.1");
     }
-    expect(serverHostname("::1")).toBe("::1");
+    expect(serverHostname("::1", "desktop")).toBe("::1");
+  });
+
+  it("lets the container honour HOSTNAME while staying safe by default", () => {
+    expect(serverHostname("0.0.0.0", "server")).toBe("0.0.0.0");
+    expect(serverHostname("::1", "server")).toBe("::1");
+    expect(serverHostname(undefined, "server")).toBe("0.0.0.0");
   });
 
   it("reads this machine's own interfaces when none are injected", () => {

@@ -73,6 +73,9 @@ services:
       DATABASE_URL: "postgresql://noema:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env and set it}@db:5432/noema?schema=public"
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
+      # The image uses the same boot wrapper as the desktop payload; this is
+      # what tells it to honour HOSTNAME instead of forcing loopback.
+      NOEMA_RUNTIME: "server"
       # Public origin(s) the browser uses. The boot wrapper recomputes the
       # Server Action allowlist from this at run time (reverse proxy, tunnel,
       # LAN address) — build-time interfaces are never baked into the image.
