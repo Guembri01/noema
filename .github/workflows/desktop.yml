@@ -146,6 +146,9 @@ jobs:
         run: npm run desktop:prepare
         env:
           DATABASE_URL: postgresql://noema:dummy@127.0.0.1:5432/noema?schema=public
+          # `desktop:prepare` runs `next build`; the larger app chunk and the
+          # 7 GB macOS runner can otherwise abort the Next worker with SIGABRT.
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Type-check Rust
         working-directory: src-tauri
@@ -288,6 +291,9 @@ jobs:
         run: npm run desktop:prepare
         env:
           DATABASE_URL: postgresql://noema:dummy@127.0.0.1:5432/noema?schema=public
+          # `desktop:prepare` runs `next build`; the larger app chunk and the
+          # 7 GB macOS runner can otherwise abort the Next worker with SIGABRT.
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Type-check Rust
         working-directory: src-tauri
