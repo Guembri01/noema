@@ -87,9 +87,13 @@ describe("the IPC bridge of the desktop shell (B57)", () => {
 
   it("lets the shell's own page reach the same transport", () => {
     // The bootstrap page has no bundler, so it cannot import the package — it
-    // uses the internals the package itself uses.
+    // uses the internals the package itself uses. The script is external so the
+    // strict CSP (`script-src 'self'`) can load it.
     const page = readFileSync(join(root, "src-tauri", "dist", "index.html"), "utf8");
-    expect(page).toContain("__TAURI_INTERNALS__");
+    const script = readFileSync(join(root, "src-tauri", "dist", "index.js"), "utf8");
+    expect(page).toContain('<script src="index.js" defer></script>');
     expect(page).not.toContain("window.__TAURI__");
+    expect(script).toContain("__TAURI_INTERNALS__");
+    expect(script).not.toContain("window.__TAURI__");
   });
 });

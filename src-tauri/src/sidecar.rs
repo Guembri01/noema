@@ -121,6 +121,8 @@ pub enum SidecarEvent {
 pub enum SidecarError {
     #[error("could not resolve the application data directory")]
     NoDataDir,
+    #[error("could not read or create a shell secret: {0}")]
+    Secret(String),
     #[error("the bundled server is missing: {0} (reinstall the app)")]
     MissingEntry(PathBuf),
     #[error("server did not become ready within {0:?}: {1}")]
@@ -330,19 +332,23 @@ pub fn api_base(port: u16) -> String {
 ///
 /// `shell_token` is the handshake token of this run: the server echoes it in
 /// the `SHELL_TOKEN_HEADER` header, and the supervisor believes a server only
-/// when it does.
+/// when it does. `auth_secret` is the session signing secret, kept in the
+/// encrypted store and passed through the child's environment rather than left
+/// on disk.
 pub fn server_env(
     port: u16,
     data_dir: &Path,
     origin: &str,
     database_url: &str,
     shell_token: &str,
+    auth_secret: &str,
 ) -> Vec<(String, String)> {
     let mut env = vec![
         ("PORT".into(), port.to_string()),
         ("HOSTNAME".into(), "127.0.0.1".into()),
         ("NODE_ENV".into(), "production".into()),
         ("NOEMA_RUNTIME".into(), "desktop".into()),
+        ("AUTH_SECRET".into(), auth_secret.into()),
         (
             "NOEMA_DATA_DIR".into(),
             data_dir.to_string_lossy().into_owned(),
@@ -534,7 +540,8 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     let data_dir = crate::state::data_dir(app).ok_or(SidecarError::NoDataDir)?;
     ensure_layout(&data_dir)?;
     let entry = server_entry(app)?;
-    let database_url = crate::state::database_url(app);
+    let database_url = crate::state::database_url(app).map_err(SidecarError::Secret)?;
+    let auth_secret = crate::state::auth_secret(app).map_err(SidecarError::Secret)?;
 
     let (attempt, epoch) = {
         let state = app.state::<SidecarState>();
@@ -566,7 +573,14 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     // trusts a server that does, so a program that grabbed the port before the
     // server did is never mistaken for it.
     let token = shell_token()?;
-    let env = server_env(port, &data_dir, &origin, &database_url, &token);
+    let env = server_env(
+        port,
+        &data_dir,
+        &origin,
+        &database_url,
+        &token,
+        &auth_secret,
+    );
 
     let command = app
         .shell()
@@ -602,6 +616,9 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
                 pid,
                 data_dir: data_dir.to_string_lossy().into_owned(),
             };
+            // Must be true before `Ready` reaches the page: the bootstrap page
+            // navigates to `info.api_base` as soon as it sees the event.
+            crate::navigation::set_server_origin(app, Some(&info.api_base));
             {
                 let state = app.state::<SidecarState>();
                 *state.info.lock().await = Some(info.clone());
@@ -667,6 +684,7 @@ pub async fn stop(app: &AppHandle) {
         let _ = child.kill();
     }
     *state.info.lock().await = None;
+    crate::navigation::set_server_origin(app, None);
     let _ = app.emit("sidecar://event", SidecarEvent::Stopped);
 }
 
@@ -718,6 +736,7 @@ mod tests {
             "http://127.0.0.1:1234",
             "postgresql://u@h:5432/db",
             "token-of-this-run",
+            "auth-secret-of-this-install-123456",
         );
         let get = |key: &str| {
             env.iter()
@@ -735,6 +754,9 @@ mod tests {
         // The handshake token goes to the server with the environment, and
         // nowhere else.
         assert_eq!(get(SHELL_TOKEN_ENV), "token-of-this-run");
+        // The session secret comes from the encrypted store and is only ever
+        // handed to the child process.
+        assert_eq!(get("AUTH_SECRET"), "auth-secret-of-this-install-123456");
         // The names the app reads, all inside the data directory. `UPLOAD_DIR`
         // was sent once and read by nobody, so uploads and the session file fell
         // back to the working directory - which for an install is the program
@@ -769,13 +791,14 @@ mod tests {
             "http://127.0.0.1:1234",
             "",
             "token-of-this-run",
+            "auth-secret-of-this-install-123456",
         );
         assert!(
             !env.iter().any(|(key, _)| key == "DATABASE_URL"),
             "an empty DATABASE_URL must not be passed — unset is what selects the embedded database"
         );
         // The rest of the environment is unaffected.
-        assert_eq!(env.len(), 11);
+        assert_eq!(env.len(), 12);
     }
 
     /// The handshake. A program that grabbed the port before the server did

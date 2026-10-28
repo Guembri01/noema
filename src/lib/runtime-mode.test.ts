@@ -21,7 +21,7 @@ const bridge = {
   mode: "desktop" as const,
   apiBase: "http://127.0.0.1:47821",
   dataDir: "C:/Users/x/AppData/Roaming/Noema",
-  appVersion: "1.4.1",
+  appVersion: "1.4.2",
   platform: "windows-x86_64",
 };
 
@@ -96,7 +96,7 @@ describe("runtime mode", () => {
     expect(apiUrl("api/ready")).toBe("http://127.0.0.1:47821/api/ready");
     expect(resolveDataDir()).toBe(bridge.dataDir);
     expect(platform()).toBe("windows-x86_64");
-    expect(appVersion()).toBe("1.4.1");
+    expect(appVersion()).toBe("1.4.2");
     expect(desktopChrome()).toBe(true);
     expect(hideSiteOnlyChrome()).toBe(true);
   });

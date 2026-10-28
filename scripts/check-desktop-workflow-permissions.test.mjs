@@ -140,7 +140,7 @@ describe("the desktop workflow", () => {
     }
   });
 
-  it("keeps the write scope and the signing secrets in the release job", () => {
+  it("keeps the write scope inside the tag-gated publishing jobs", () => {
     const jobs = parseWorkflow(workflowSource()).get("jobs");
     const release = jobs.get("release");
     expect(release).toBeDefined();
@@ -148,10 +148,18 @@ describe("the desktop workflow", () => {
     expect(isTagGated(release.get("if"))).toBe(true);
     expect(referencesSecret(release)).toBe(true);
 
-    // The release job is the only one that may hold a write scope, and it may
-    // only hold it because a tag push alone reaches it.
+    // The release job and the checksum publisher are the only jobs that may
+    // hold a write scope, and both are reachable only from a tag push. The
+    // checksum publisher gets the automatic token, never a repository secret,
+    // and no checkout, so there is nothing for it to leave in `.git/config`.
+    const checksums = jobs.get("checksums");
+    expect(checksums).toBeDefined();
+    expect(checksums.get("permissions").get("contents")).toBe("write");
+    expect(isTagGated(checksums.get("if"))).toBe(true);
+    expect(referencesSecret(checksums)).toBe(false);
+
     for (const [name, job] of jobs) {
-      if (name === "release") continue;
+      if (name === "release" || name === "checksums") continue;
       expect(job.get("permissions")?.get("contents") ?? "read").not.toBe("write");
     }
   });
@@ -161,7 +169,7 @@ describe("the desktop workflow", () => {
     expect(triggerNames(workflow.get("on"))).toContain("pull_request");
     // The exact job list is deliberate: a new job that a pull request can
     // reach has to be reviewed, not inherited by accident.
-    expect([...workflow.get("jobs").keys()]).toEqual(["build", "release", "payload-smoke"]);
+    expect([...workflow.get("jobs").keys()]).toEqual(["build", "release", "checksums", "payload-smoke"]);
   });
 
   it("gives no workflow a `contents: write` at the workflow level", () => {

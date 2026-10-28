@@ -17,10 +17,11 @@
  * misconfigured desktop build can never brick the UI.
  *
  * The mode itself comes from {@link runtimeMode}, which prefers the signal the
- * **server** rendered into the document. That matters: the shell evaluates its
- * bridge object into its own page and then navigates the window to the served
- * app, so anything injected that way is gone by the time the app runs — which is
- * why `isDesktop()` used to answer `false` inside the installed app.
+ * **server** rendered into the document. That matters: the shell's own page is
+ * replaced by the served app, so anything injected only into that first document
+ * is gone by the time the app runs. The installed shell does not inject a bridge
+ * into the served page; `data-noema-runtime` and `isTauri()` are the durable
+ * signals, and the values only the shell knows come from `desktop_info`.
  */
 
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -51,9 +52,8 @@ export type DesktopBridge = {
 declare global {
   interface Window {
     /**
-     * Injected by the Tauri shell into its **own** page, which it then replaces
-     * with the served app — so it is not there by the time the app runs (see
-     * {@link runtimeMode}).
+     * Optional bridge object. The current shell does not inject it into the
+     * served page; it is kept as a typed escape hatch for an embedded shell.
      */
     __NOEMA_DESKTOP__?: DesktopBridge;
   }
@@ -68,8 +68,8 @@ declare global {
  *     document (`insideDesktopShell()`). It survives the navigation from the
  *     shell's own page to the served app and exists during SSR, so it is the
  *     only signal the *served* app can rely on for free.
- *  2. `window.__NOEMA_DESKTOP__` — the shell's bridge object, evaluated into the
- *     document it is about to replace (so: the shell's own page only).
+ *  2. `window.__NOEMA_DESKTOP__` — an optional bridge object an embedded shell may
+ *     provide; the current shell lets the server render the signal instead.
  *  3. `isTauri()` — the shell marks every document it hosts (see
  *     `@tauri-apps/api/core`). A fallback for a document that somehow lacks the
  *     attribute.
@@ -96,12 +96,11 @@ export function isDesktop(): boolean {
  * Call a command in the desktop shell (see `src-tauri/src/commands.rs`), or
  * `null` when there is no shell to call — the site, a plain browser, or SSR.
  *
- * Deliberately independent of {@link desktopBridge}: the bridge object is
- * evaluated into the shell's *own* page and does not survive the navigation to
- * the served app, while the shell's mark (`isTauri()`) is set in every
- * document it hosts. A rejected command resolves to `undefined` rather than
- * throwing: shell commands are enhancements, and nothing in the app may break
- * because the shell said no.
+ * Deliberately independent of {@link desktopBridge}: a bridge object only ever
+ * existed in the shell's own page, while the shell's mark (`isTauri()`) is set
+ * in every document it hosts. A rejected command resolves to `undefined` rather
+ * than throwing: shell commands are enhancements, and nothing in the app may
+ * break because the shell said no.
  */
 export function invokeShell(
   command: string,
@@ -169,15 +168,13 @@ export function listenShell(
 }
 
 /**
- * The desktop bridge, or null in a browser.
+ * The optional desktop bridge, or null in a browser.
  *
- * This is the **shell's own page** contract: the shell evaluates the object into
- * the document it is about to replace, so the served app never sees it. The
- * served app does not need it — it is served *by* the sidecar, which is why
- * `resolveApiBase()` correctly returns `""` (same-origin, relative fetches) for
- * any document reached through `runtimeMode()`'s server signal. Values that only
- * the shell knows (data dir, app version, platform triple) are available to the
- * served app from `desktop_info` instead.
+ * The current shell does not inject this into the served app; the type is kept
+ * for an embedded shell and for the tests that exercise the fallback. The served
+ * app's durable signal is `data-noema-runtime`, and values that only the shell
+ * knows (data dir, app version, platform triple) are available from
+ * `desktop_info` instead.
  */
 export function desktopBridge(): DesktopBridge | null {
   if (typeof window === "undefined") return null;

@@ -29,8 +29,8 @@ Only four things differ, and they are resolved in **one module**
 │ Noema.exe / Noema.app                      (Rust, tauri 2)    │
 │                                                               │
 │  window (WebView2 / WKWebView / WebKitGTK)                    │
-│    ▲  loads http://127.0.0.1:<port>                           │
-│    │  window.__NOEMA_DESKTOP__ = { apiBase, dataDir, … }      │
+│    ▲  navigation: shell origin + this exact 127.0.0.1:<port>  │
+│    │  (anything else opens in the system browser)             │
 │    │                                                          │
 │  ┌─ shell ────────────────────────────────────────────────┐   │
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
@@ -42,7 +42,7 @@ Only four things differ, and they are resolved in **one module**
 │  │  · stops it cleanly on quit                            │   │
 │  ├───────────────────────────────────────────────────────┤   │
 │  │ native: menus, tray, window state, single instance,    │   │
-│  │ dialogs, filesystem, notifications-ready hooks         │   │
+│  │ opener (external links only) - no fs/dialog/process    │   │
 │  └───────────────────────────────────────────────────────┘   │
 │                          │ spawns                              │
 │                          ▼                                     │
@@ -65,9 +65,10 @@ Either way the server stays loopback-only.
 
 The port says nothing about *which* version is running. The server answers that
 separately, by rendering `<html data-noema-runtime="desktop">` into the document
-(`src/lib/runtime-mode.ts` reads it back) — the shell's own
-`window.__NOEMA_DESKTOP__` object is evaluated into the page it then replaces, so
-it is not there by the time the app runs.
+(`src/lib/runtime-mode.ts` reads it back). The shell does **not** inject a bridge
+object into the served page: `dataDir`, version and platform come from the
+`desktop_info` command, and every shell call is mediated by the narrow ACL in
+`capabilities/desktop-remote.json`.
 
 ### Why a bundled runtime and not a Node SEA single executable
 
@@ -140,27 +141,26 @@ Other deliberate choices:
   reason `prepare.mjs` strips `uploads/`, `.data/` and `backups/` from the payload
   (Next copies them in on a machine where the app has been used) and fails the
   build if they would still ship, the way it does for `.env`. The uploads and the
-  session store are written owner-only (`0600` files in `0700` directories), so
-  another user on the machine cannot read them.
-- **The session secret is generated per install.** With no shipped `AUTH_SECRET`
-  the wrapper writes a 32-byte secret to `<data dir>/auth-secret` (`0600`) on first
-  launch and reuses it afterwards, so sessions survive a restart while one
-  install's cookies are worthless on another. A configured `AUTH_SECRET`, like a
-  configured database, still wins.
+  session store are written owner-only (`0600` files in `0700` directories) on
+  POSIX; on Windows they inherit the per-user `%APPDATA%` ACL.
+- **The session secret is generated per install and stored encrypted.** The Rust
+  shell generates 32 random bytes (hex) on first launch, writes them to
+  `secrets.bin` with DPAPI, and passes the value to the server in its environment.
+  The old `<data dir>/auth-secret` file is migrated into the encrypted store and
+  removed; sessions survive a restart, while one install's cookies are worthless
+  on another. A configured `AUTH_SECRET` still wins, but the boot wrapper refuses
+  one shorter than 32 characters rather than signing with a weak key.
 - **The Server Action origin allowlist is recomputed at launch, not shipped.**
   Next only accepts a Server Action when the request's `Origin` matches its `Host`
-  (CSRF), so this machine's own addresses must be listed — next.config.ts gets the
-  list from `scripts/desktop/allowed-origins.cjs`. Next serializes that config
-  *into* the build (`.next/required-server-files.json`, and the literal in the
-  standalone `server.js`), which would make an install inherit the network
-  interfaces of whatever machine built it: a VPN adapter that appears later, or a
-  build on someone else's PC, would leave the app refusing its own address, and
-  the failure is silent (saving spins forever, comments do nothing). The boot
-  wrapper therefore rebuilds the config from that file with the allowlist computed
-  now — including the runtime `APP_ORIGINS`, which a standalone payload otherwise
-  ignores — and falls back to the generated entry if the file is not the shape it
-  expects. `prepare.mjs` counts `next.config.ts` as a build input, so
-  `NOEMA_SKIP_BUILD=1` cannot re-stage a payload with the previous list.
+  (CSRF). In the desktop build the list is **loopback-only and exactly this run's
+  port** (plus `localhost`/`[::1]` on that port); `APP_ORIGINS` is ignored, so an
+  inherited `APP_ORIGINS` or a LAN address cannot widen CSRF acceptance. The
+  site/self-hosted build keeps the old interface list and `APP_ORIGINS` behaviour.
+  Next serializes the config into the build (`.next/required-server-files.json`,
+  and the literal in the standalone `server.js`), so the boot wrapper recomputes
+  it from `scripts/desktop/allowed-origins.cjs` at launch. `prepare.mjs` counts
+  `next.config.ts` as a build input, so `NOEMA_SKIP_BUILD=1` cannot re-stage a
+  payload with the previous list.
 - **Migrations are self-healing.** The boot wrapper runs `prisma migrate deploy`
   and, on `P3005` (tables without migration history — what `prisma db push`
   leaves behind), falls back to `db push` so an existing database is adopted
@@ -177,13 +177,15 @@ Other deliberate choices:
 
 | Concern | Decision |
 |---|---|
-| Server exposure | loopback only, no `0.0.0.0`; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
-| Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
+| Server exposure | loopback only (`127.0.0.1`, or `::1` when explicitly requested), no `0.0.0.0`; `HOSTNAME` inherited from the environment is ignored; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
+| Webview ↔ server | a navigation guard in `src-tauri/src/navigation.rs` allows the shell's own origin and **exactly** this run's loopback origin; every other HTTP(S) link opens in the system browser, and `javascript:`, `data:` and `file:` are denied |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
-| Secrets | a database password can live in the connection string; it is **redacted** before it leaves the shell at all — `database_url` hands out the redacted form, and `get_pref` refuses the key outright (unit-tested in `commands.rs`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. The **store plugin is granted to nobody**: `tauri-plugin-store` does no scope check of its own (`store|load` takes any path), the shell reaches the store through Rust — which the ACL does not gate — and the store's `preferences.json` holds the unredacted connection string. Drop `desktop-everything.json` for a hardened build |
+| Secrets | the Postgres connection string and the session signing secret live in `secrets.bin`, encrypted with Windows **DPAPI** (`CryptProtectData`, current-user scope); `preferences.json` holds only non-secret preferences. The password is **redacted** before it leaves the shell, logs are redacted, and `get_pref` refuses the connection-string key outright (unit-tested in `commands.rs`) |
+| Capabilities | `default.json` = five commands for the shell's own first-run/diagnostics page; `desktop-remote.json` = the served app's five commands + the two `core:event` permissions `listenShell` needs, **no** filesystem, shell, store, opener, dialog, `os` or `log`, and no `core:default`. The broad `desktop-everything.json` is gone. The **store plugin is granted to nobody**: `tauri-plugin-store` does no scope check (`store|load` takes any path), so the shell reaches the store through Rust, which the ACL does not gate |
+| Shell surface | the `dialog`, `fs`, `os` and `process` Tauri plugins are not linked at all; the shell page's CSS and JavaScript are external files, so the CSP can be `script-src 'self'` / `style-src 'self'` with no `unsafe-inline` |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
 | Updates | **deferred on purpose** — see §9 |
+| Code signing | the release workflow is ready (`WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD`), but the current installers are **unsigned** until a certificate exists; see §9 |
 
 ### App commands are behind the ACL too, and the served app counts as remote
 
@@ -200,9 +202,10 @@ So a new shell command needs three things, not one:
    autogenerates an `allow-<command>` permission into
    `permissions/autogenerated/` (gitignored, rebuilt by cargo).
    `commands::tests` keeps this list and the attributes in step;
-3. the permission listed in `src-tauri/permissions/default.toml` (the shell's
-   own page: the whole surface) and/or in a capability — the served app's set
-   lives in `capabilities/desktop-remote.json`.
+3. a capability that grants it — `capabilities/default.json` for the shell's
+   own page, `capabilities/desktop-remote.json` for the served app. A command
+   that no document calls should be granted by neither; the ACL still denies it
+   if someone invokes it.
 
 The served app's capability is deliberately narrow, because a capability bound
 to a remote URL hands its permissions to *every* script that runs in that
@@ -217,40 +220,59 @@ expands to the image plugin (`plugin:image|from_path` is a bare
 `std::fs::read` with no scope check), to the menu and tray plugins (a forged
 menu-item id reaches the commands in `src-tauri/src/shell.rs`, which dispatches
 on the raw id) and to the path plugin (it resolves the user's home directory).
-The broad set stays with the shell's own page in
-`capabilities/desktop-everything.json`, which grants no remote URL.
+
+The **navigation guard** is the second gate that a port-scoped capability
+cannot express. `capabilities/desktop-remote.json` can only say
+`http://127.0.0.1:*`; it cannot name the ephemeral port this run picked.
+`src-tauri/src/navigation.rs` therefore keeps the active server origin in
+`NavigationState` and denies every top-level navigation that is not the shell's
+own origin, exactly that origin, or `about:blank`. An HTTP(S) link in a note is
+opened in the user's browser; `javascript:`, `data:` and `file:` are blocked.
+The dev server (`http://localhost:3200`) is allowed only in a debug build.
 
 The **store plugin** is the one permission no origin holds at all — not the
 served app, not the shell's own page. `tauri-plugin-store` checks no scope of
 its own: `store|load` takes any path (an absolute one is used as it is), so
 `store:default` would be a read — and `store|save` a write — primitive over
-any JSON file on the machine. The store this app keeps holds the **unredacted**
-connection string, and nothing needs the plugin's JavaScript face: the shell
-reads and writes the store through Rust (`state::set_pref`), which the ACL does
-not gate. The preference store stays reachable for the shell's own page — as
-the audited app commands `get_pref`/`set_pref`.
+any JSON file on the machine. The store this app keeps now contains only
+non-secret preferences (`theme`, `lastPort`, zoom, onboarding); the database URL
+and session secret are in the DPAPI-encrypted `secrets.bin`, and nothing needs
+the plugin's JavaScript face. The shell reads and writes the store through Rust
+(`state::set_pref`), which the ACL does not gate. The `get_pref`/`set_pref`
+commands still exist for future shell pages, but they are not granted to any
+capability, and `set_pref` only accepts the non-secret allow-list.
 
 The **`default` capability** is the shell's own page — the first-run and
 diagnostics surface (`dist/index.html`), the only document that runs on the
 shell's origin — and it holds exactly what that page calls: the app's own
-command set (`default`) and the two `core:event` permissions its subscription
-to the sidecar's `sidecar://event` stream needs. Everything else is gone: the
-process plugin (the page never restarts or quits the app through it — the
-native menu does that in Rust), the opener, the dialog, the `os` and the
-file-system plugins (the page opens no URL, picks no file and reads no file)
-and the `core:` collectors — `core:default` expands to the image, menu, tray,
-path and resources plugins and to the window and app commands no document
-calls; the window title, the theme, the zoom and the decorations are the
-shell's own app commands (`set_window_title`, `set_theme`, `set_zoom`,
-`set_decorations`), which run in Rust, where the ACL does not gate them.
-Unused permissions are misleading — they read as "the app needs this" and
-become live the next time somebody wires them up.
+`default` permission (five commands: `desktop_info`, `recent_logs`,
+`set_database_url`, `restart_server`, `open_data_dir`) and the two
+`core:event` permissions its subscription to the sidecar's `sidecar://event`
+stream needs. Everything else is gone: the process plugin (the page never
+restarts or quits the app through it — the native menu does that in Rust), the
+opener, the dialog, the `os` and the file-system plugins (the page opens no URL,
+picks no file and reads no file) and the `core:` collectors — `core:default`
+expands to the image, menu, tray, path and resources plugins and to the window
+and app commands no document calls; the window title, the theme, the zoom and
+the decorations are the shell's own app commands (`set_window_title`,
+`set_theme`, `set_zoom`, `set_decorations`), which run in Rust, where the ACL
+does not gate them. Unused permissions are misleading — they read as "the app
+needs this" and become live the next time somebody wires them up.
+
+The shell page loads `index.css` and `index.js` as external files so the CSP can
+be strict: `default-src 'self'`, `script-src 'self'`, `style-src 'self'`, no
+`unsafe-inline`, no `https:` and no loopback wildcard. `frame-src 'none'`,
+`object-src 'none'`, `base-uri 'none'`, `form-action 'none'` and
+`frame-ancestors 'none'` close the remaining browser-side escapes. `img-src`
+still allows `data:`; `connect-src` allows only the IPC endpoint.
 
 `scripts/desktop/capabilities.test.mjs` pins the split — across the capability
 **files** *and* the capabilities declared inline in `tauri.conf.json`
 (`CapabilityEntry::Inlined`), which the ACL assembles just like the files and
 which therefore have to obey the same rules. A split that only constrains the
 files could be undone by appending one object to the config.
+`scripts/desktop/security.test.mjs` pins the CSP, the external assets and the
+removal of the unused plugins.
 
 Declaring the app manifest is not free: it switches the ACL on for **local**
 origins as well, which until then reached every command implicitly. That is why
@@ -271,11 +293,22 @@ CSP admits it (`connect-src` gains `ipc:` and `http://ipc.localhost`) in
   uploads/                  uploaded files
   sessions.json             this machine's session store
   backups/                  automatic backups
-  preferences.json          window state, theme, database URL
+  preferences.json          window state, theme, update channel, last port (no secrets)
+  secrets.bin               DPAPI-encrypted database URL + session secret
 ```
 
 - **Data dir** — `app.path().app_data_dir()`; `NOEMA_DATA_DIR` overrides it
   (portable installs, CI, "put my notes on an external drive").
+- **Secrets** — `secrets.bin` is encrypted with Windows DPAPI
+  (`CryptProtectData`, current-user scope, `CRYPTPROTECT_UI_FORBIDDEN`). The file
+  has a `NOEMA-SECRETS-1` magic header; a missing file is a first run, a corrupt
+  file fails closed instead of silently generating a new signing secret or a new
+  database. On first launch after the upgrade the old plain-text `databaseUrl`
+  preference and `auth-secret` file are migrated into it, and only then removed.
+  Moving the profile to another Windows user or machine requires the DPAPI blob
+  to move with that user; otherwise set `NOEMA_DATABASE_URL` / `AUTH_SECRET` for a
+  portable install. On non-Windows builds the payload is `0600` and the data
+  directory is owner-only, because there is no per-user DPAPI equivalent.
 - **Database** — the workspace data lives in Postgres, so "where is my data" has
   two honest answers: app files in the data dir, content in the database. §8
   explains the trade-off and the plan.
@@ -479,8 +512,20 @@ The build produces two installers in `src-tauri/target/release/bundle/`:
 
 | Artifact | Size | Notes |
 |---|---|---|
-| `nsis/Noema_1.4.1_x64-setup.exe` | 73.36 MiB | Per-user install — **no admin prompt**, no UAC |
-| `msi/Noema_1.4.1_x64_en-US.msi` | 131.35 MiB | For managed deployment (MSI/GPO) |
+| `nsis/Noema_1.4.2_x64-setup.exe` | 77.65 MiB | Per-user install - **no admin prompt**, no UAC |
+| `msi/Noema_1.4.2_x64_en-US.msi` | 137.34 MiB | For managed deployment (MSI/GPO) |
+
+For a published release, compare the downloaded file with the `SHA256SUMS` asset
+before running it. On Windows:
+
+```powershell
+(Get-FileHash .\Noema_1.4.2_x64-setup.exe -Algorithm SHA256).Hash.ToLower()
+Get-Content .\SHA256SUMS
+```
+
+The installers are unsigned until a Windows code-signing certificate is
+configured, so this checksum is the integrity check; do not disable SmartScreen
+to get past a warning.
 
 Verify the *installed* result rather than the build output — they are not the same
 thing, and every failure this project has had in the installer only ever appeared in
@@ -488,7 +533,7 @@ the installed app:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/verify-install.ps1 `
-  -Setup src-tauri\target\release\bundle\nsis\Noema_1.4.1_x64-setup.exe -UninstallFirst
+  -Setup src-tauri\target\release\bundle\nsis\Noema_1.4.2_x64-setup.exe -UninstallFirst
 ```
 
 It installs silently, starts the shell, finds the supervised server's loopback port,
@@ -531,17 +576,25 @@ connection**, paste a `DATABASE_URL`, and press **Save & restart**. **Copy
 diagnostics** puts a redacted report (host, port, app version, recent log lines —
 password never included) on the clipboard.
 
-Three environment variables are honoured, which is how a portable install or a
-support session works without touching the UI:
+The shell honours a few environment variables, which is how a portable install or
+a support session works without touching the UI:
 
 ```
-NOEMA_DATABASE_URL   the Postgres connection string
-NOEMA_DATA_DIR       where logs/ and backups/ live
+NOEMA_DATABASE_URL   the Postgres connection string (validated; postgres:// or
+                     postgresql:// only). Empty means embedded PGlite.
+NOEMA_DATA_DIR       where logs/, uploads/, backups/ and secrets.bin live
+AUTH_SECRET          optional session secret override; at least 32 characters,
+                     otherwise the boot fails closed. Normally the shell generates
+                     one and stores it DPAPI-encrypted.
+NOEMA_NO_EMBEDDED_DB 1 = skip PGlite and use a managed/configured database
 NOEMA_ALLOW_LOOPBACK_TARGETS  1 = allow an outbound webhook to point at the
                                 loopback range (127.0.0.0/8, ::1, localhost);
                                 unset = refused (the default). The opt-in
                                 opens the loopback range only — see SECURITY.md
 ```
+
+`HOSTNAME` is **not** honoured by the desktop boot wrapper: a value inherited
+from a shell or service manager cannot make the server bind beyond loopback.
 
 Uninstall: **Settings → Apps → Noema → Uninstall**, or the `uninstall.exe` in the
 install directory. Your data directory is left behind on purpose.
@@ -579,10 +632,10 @@ key out of the tree it ships.
 
 | Layer | What runs |
 |---|---|
-| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL and the handshake token), restart backoff bounds, free-port behaviour and the preferred-port fallback, the readiness handshake (a response is ours only when it carries the token), layout creation, log ring buffer, connection-string redaction |
+| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL, `AUTH_SECRET` and the handshake token), restart backoff bounds, free-port behaviour and the preferred-port fallback, the readiness handshake (a response is ours only when it carries the token), layout creation, log ring buffer, connection-string and log redaction, DPAPI/`secrets.bin` round-trip and fail-closed corruption, database-URL validation, preference/subdirectory allow-lists, navigation-guard origins and dangerous schemes |
 | Rust (quality) | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
-| Desktop wiring | `scripts/desktop/capabilities.test.mjs`, `scripts/desktop/fs-capability.test.mjs` and `scripts/desktop/shell-handshake.test.mjs` — the capability split and the handshake between the shell and the server (both sides must agree on the token's name and its header, and neither may drop the check) |
+| Desktop wiring | `scripts/desktop/capabilities.test.mjs`, `scripts/desktop/security.test.mjs`, `scripts/desktop/allowed-origins.test.mjs`, `scripts/desktop/fs-capability.test.mjs` and `scripts/desktop/shell-handshake.test.mjs` — the five-command ACL split, strict CSP and external shell assets, loopback/port-exact origin policy, and the handshake between the shell and the server |
 | Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, the mode the server renders into the document, the Tauri fallback, API base, data dir, version, capabilities, SSR safety) and `src/app/a11y-layout.test.ts` (the attribute the layout renders for the site, `NOEMA_RUNTIME` and `NOEMA_STANDALONE`) |
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
 | Embedded database | `npm run check:embedded-db` — starts a real PGlite engine in a throwaway data directory, aborts 24 handshakes mid-flight, and proves the engine still serves a second and a third Prisma client. No Postgres, no Docker, no Tauri. Run in CI's `payload-smoke` job. |
@@ -616,7 +669,7 @@ below was executed, not inferred.
 | `cargo test --all-features` | 26 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour and the preferred-port fallback, log ring, connection-string redaction and quote-normalisation, preferred-port plausibility, `Send` guards, readiness messaging) |
 | `npm run desktop:prepare` | 369.0 MB payload staged and validated |
 | `npm run desktop:smoke` | boots the packaged payload on the bundled runtime, migrates, serves `/api/health` 200 and `/login` 200 |
-| `cargo tauri build` | `Noema_1.4.1_x64-setup.exe` (73.36 MiB) + `Noema_1.4.1_x64_en-US.msi` (131.35 MiB) |
+| `cargo tauri build` | `Noema_1.4.2_x64-setup.exe` (77.65 MiB) + `Noema_1.4.2_x64_en-US.msi` (137.34 MiB) |
 | **Installed the NSIS installer** | exit 0, per-user, **no admin prompt** → `%LOCALAPPDATA%\Noema\` + Start Menu shortcut + `uninstall.exe` |
 | **Launched the installed app** | supervised server on a loopback port, `/api/health → 200 {"ok":true,"db":"up"}`, `/login → 200` (16,903 bytes) |
 | **Relaunched the installed app** | same loopback port (61621 → 61621), so the app's browser-side state survives a restart; with that port occupied it logs `port 61621 is in use, serving on 62537 instead` and re-points the preference |
@@ -634,25 +687,32 @@ Two environment notes worth keeping:
 
 ## 11. Known limits (honest list)
 
-- **The desktop app currently talks to Postgres.** The schema uses Postgres
-  full-text search (`tsvector`, `pg_trgm`), so a self-contained desktop build
-  needs either a SQLite-compatible schema or an embedded Postgres. Until that
-  lands, the installer expects a reachable Postgres — a local container is enough
-  — and the first-run screen makes that configurable without a reinstall. This is
-  the single biggest remaining gap between "installable" and "no prerequisites".
+- **The desktop app ships an embedded Postgres, with a remote one optional.**
+  PGlite (real PostgreSQL in WebAssembly) is the default, so a clean machine
+  needs no Postgres and no Docker. A configured `DATABASE_URL` still wins. The
+  one engine difference is `pg_trgm`, which PGlite does not ship; search has a
+  fallback (see §12).
 - **No auto-updater yet.** The updater needs a signing key pair and a release
   endpoint; shipping one that cannot verify a signature would be worse than
-  shipping none, so the menu item resolves to "up to date" and `docs/DESKTOP.md`
-  §9 records the plan.
+  shipping none, so the menu item resolves to "up to date" and §9 records the plan.
 - **Unsigned binaries.** Windows SmartScreen will warn until a code-signing
-  certificate is installed; the desktop workflow's `release` job (tag pushes
-  only) already threads the signing secrets.
+  certificate is installed. The desktop workflow's `release` job (tag pushes only)
+  already threads `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD`; without
+  those secrets the produced bundle is unsigned, and the release notes say so. Do
+  not tell users to disable SmartScreen; verify the SHA-256 checksum published
+  beside the installer instead.
+- **Same-user malware is outside the boundary.** DPAPI, the per-user `%APPDATA%`
+  ACL and the loopback binding stop other users, other machines and the network.
+  A process already running as the signed-in user can read that user's DPAPI
+  secrets and environment, as it can read any other file the user can read. Full
+  isolation there needs OS sandboxing/AppContainer, which this build does not use.
 - **macOS**: closing the window hides the app; **File → Quit** (⌘Q) really quits.
   Native, but surprising for Windows users.
-- **`desktop-everything.json` is deliberately broad** (product decision) and
-  **local only**: it applies to the shell's own page, never to the served web
-  app, which has its own narrow capability (`desktop-remote.json`). Narrow it
-  further for an untrusted-user scenario.
+- **The shell is not "everything" any more.** The old broad
+  `desktop-everything.json` is deleted: the shell's own page gets five commands
+  (`capabilities/default.json`), the served app gets its five plus event listen
+  (`capabilities/desktop-remote.json`). Commands outside those sets are denied by
+  the ACL even though Rust still registers them for the native menu/tray.
 - **Verified where**: `cargo build`, `cargo test`, the packaging steps and the
   installer run on a Windows machine with the MSVC toolchain (this repo's
   environment). macOS/Linux installers are produced by `desktop.yml` on native

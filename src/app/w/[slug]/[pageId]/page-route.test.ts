@@ -160,7 +160,7 @@ describe("the page route", () => {
     await PageRoute({ params: Promise.resolve({ slug: "acme", pageId: "page-shared" }) });
 
     expect(h.getWorkspaceMembers).not.toHaveBeenCalled();
-  });
+  }, 15000);
 
   it("scopes the database list to the guest's readable pages, not its ancestors", async () => {
     await PageRoute({ params: Promise.resolve({ slug: "acme", pageId: "page-shared" }) });

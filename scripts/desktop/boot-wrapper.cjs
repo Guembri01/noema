@@ -26,6 +26,10 @@ const fs = require("node:fs");
 // does: Next decides which React build to load from this, and a late assignment
 // loads the development copy into a production server.
 process.env.NODE_ENV = "production";
+// This wrapper only ever runs the packaged desktop server. Marking it here
+// means the origin allow-list and the bind address stay loopback-only even if
+// the payload is started by hand rather than by the Rust shell.
+process.env.NOEMA_RUNTIME = "desktop";
 
 // The managed-database helper is copied next to this file by prepare.mjs.
 // Required defensively: an older payload without it should still boot (falling
@@ -49,8 +53,9 @@ try {
 // The Server Action origin policy, shared with next.config.ts. Defensive too: a
 // payload without it keeps Next's own configuration rather than failing to boot.
 let allowedOrigins = null;
+let serverHostname = null;
 try {
-  ({ allowedOrigins } = require("./allowed-origins.cjs"));
+  ({ allowedOrigins, serverHostname } = require("./allowed-origins.cjs"));
 } catch (error) {
   console.warn("[noema] origin-allowlist helper unavailable:", error && error.message);
 }
@@ -237,7 +242,9 @@ function startServer() {
   const { startServer: start } = require("next/dist/server/lib/start-server");
 
   const port = Number.parseInt(process.env.PORT ?? "", 10) || 3000;
-  const hostname = process.env.HOSTNAME || "0.0.0.0";
+  // Fail closed: a desktop server binds loopback even if the environment
+  // inherited `HOSTNAME=0.0.0.0` from a shell or a service manager.
+  const hostname = serverHostname ? serverHostname(process.env.HOSTNAME) : "127.0.0.1";
   let keepAliveTimeout = Number.parseInt(process.env.KEEP_ALIVE_TIMEOUT ?? "", 10);
   if (!Number.isFinite(keepAliveTimeout) || keepAliveTimeout < 0) keepAliveTimeout = undefined;
 
@@ -261,19 +268,38 @@ function startServer() {
  * signed-in user signed in across a restart.
  *
  * An explicitly configured `AUTH_SECRET` still wins, so a shared server, a
- * portable install and a support session can all pin one.
+ * portable install and a support session can all pin one. It must be at least
+ * 32 characters: a short secret is a session-forgery bug, so the boot fails
+ * closed instead of quietly accepting it.
+ *
+ * The Rust shell now generates this secret and passes it in the child's
+ * environment (from the DPAPI-encrypted store). The file is the stand-alone
+ * fallback for a payload started without the shell; on Windows `mode: 0o600`
+ * is a no-op, which is why the shell moved the canonical copy to DPAPI.
  */
+const MIN_AUTH_SECRET_LENGTH = 32;
+
 function ensureAuthSecret() {
   const configured = (process.env.AUTH_SECRET || "").trim();
-  if (configured) return configured;
+  if (configured) {
+    if (configured.length < MIN_AUTH_SECRET_LENGTH) {
+      throw new Error(
+        `AUTH_SECRET must be at least ${MIN_AUTH_SECRET_LENGTH} characters (got ${configured.length})`,
+      );
+    }
+    return configured;
+  }
 
   const dir = process.env.NOEMA_DATA_DIR || process.cwd();
   const file = path.join(dir, "auth-secret");
   try {
     const existing = fs.readFileSync(file, "utf8").trim();
-    if (existing) return existing;
+    if (existing.length >= MIN_AUTH_SECRET_LENGTH) return existing;
+    if (existing) {
+      console.warn("[noema] stored session secret is too short; replacing it");
+    }
   } catch {
-    // Nothing stored yet (or unreadable) — generate below.
+    // Nothing stored yet (or unreadable) - generate below.
   }
 
   const secret = crypto.randomBytes(32).toString("base64url");

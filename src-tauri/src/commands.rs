@@ -2,7 +2,8 @@
 //!
 //! Everything here is a thin, well-typed wrapper over the shell. The webview
 //! never touches the filesystem or the process table directly except through
-//! these commands, so the "allow everything" capability set stays auditable.
+//! these commands, and the shipped capabilities grant only the subset the
+//! current pages actually call.
 
 use serde::Serialize;
 use std::path::Path;
@@ -67,7 +68,7 @@ pub async fn desktop_info(app: AppHandle) -> Result<DesktopInfo, String> {
         database_url: {
             // No configured URL means the bundled server is running its own
             // embedded database; say so rather than printing an empty field.
-            let resolved = state::database_url(&app);
+            let resolved = state::database_url(&app)?;
             if resolved.trim().is_empty() {
                 "embedded (in-app PostgreSQL)".to_string()
             } else {
@@ -105,9 +106,9 @@ pub async fn open_data_dir(app: AppHandle) -> Result<(), String> {
 /// Reveal a subfolder of the data directory (`uploads`, `logs`, `backups`).
 #[tauri::command]
 pub async fn open_data_subdir(app: AppHandle, name: String) -> Result<(), String> {
-    let dir = state::data_dir(&app)
-        .ok_or_else(|| "no data directory".to_string())?
-        .join(name);
+    let root = state::data_dir(&app).ok_or_else(|| "no data directory".to_string())?;
+    let dir = state::data_subdir(&root, &name)
+        .ok_or_else(|| format!("refusing to open unknown data folder {name:?}"))?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
@@ -158,18 +159,39 @@ where
     lookup(key)
 }
 
-/// Write a preference.
+/// Write a non-secret preference.
+///
+/// The allow-list is the second line of defence after the ACL: even if a future
+/// capability grants this command, it cannot write the connection string or a
+/// key the shell later treats as trusted.
 #[tauri::command]
 pub fn set_pref(app: AppHandle, key: String, value: serde_json::Value) {
-    state::set_pref(&app, &key, value);
+    if state::writable_pref(&key) {
+        state::set_pref(&app, &key, value);
+    }
 }
 
 /// Update the window title (the page title changes as you navigate).
+///
+/// The title can contain a user's note title, so control characters are
+/// stripped and the length is bounded: a newline in a window title can break
+/// the taskbar/alt-tab rendering, and nothing legitimate needs 500+ characters.
 #[tauri::command]
 pub fn set_window_title(app: AppHandle, title: String) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_title(&format!("{title} — Noema"));
+        let _ = window.set_title(&format!("{} - Noema", window_title(&title)));
     }
+}
+
+/// A safe window-title fragment: printable, single-line, bounded.
+pub fn window_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(512)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Zoom the webview (Ctrl/Cmd +/- are also bound natively).
@@ -179,10 +201,7 @@ pub fn set_zoom(app: AppHandle, factor: f64) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "no main window".to_string())?;
     window
-        .eval(format!(
-            "document.documentElement.style.zoom = '{}'",
-            factor.clamp(0.5, 3.0)
-        ))
+        .set_zoom(factor.clamp(0.5, 3.0))
         .map_err(|error| error.to_string())
 }
 
@@ -197,14 +216,12 @@ pub async fn check_update() -> Result<Option<String>, String> {
 }
 
 /// Save the database connection string and restart the server with it.
+///
+/// The string is validated first, then written to the encrypted store. A bad
+/// value must not stop a healthy server or replace a working URL with garbage.
 #[tauri::command]
 pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo, String> {
-    let trimmed = state::normalise_database_url(&url);
-    state::set_pref(
-        &app,
-        state::prefs::DATABASE_URL,
-        serde_json::Value::String(trimmed),
-    );
+    state::set_database_url(&app, &url)?;
     sidecar::stop(&app).await;
     sidecar::start(&app)
         .await
@@ -216,8 +233,8 @@ pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo
 /// **Redacted**: the password must not leave the shell, not even to the
 /// shell's own page. `desktop_info` hands out the same redacted form.
 #[tauri::command]
-pub fn database_url(app: AppHandle) -> String {
-    redacted_connection_string(&state::database_url(&app))
+pub fn database_url(app: AppHandle) -> Result<String, String> {
+    state::database_url(&app).map(|resolved| redacted_connection_string(&resolved))
 }
 
 /// The connection string as the shell hands it out: **redacted**, or empty
@@ -269,6 +286,13 @@ pub fn apply_theme(app: &AppHandle, name: &str) -> Result<(), String> {
 /// Set the workspace theme: apply it now *and* remember it for the next launch.
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    // The app only ever sends these three; an unexpected value must not be
+    // persisted (it would come back on the next launch and could forge a log
+    // line). `theme_from_name` still treats an unknown stored value as system,
+    // so an old preference cannot pin a wrong look either.
+    if !matches!(theme.as_str(), "light" | "dark" | "system") {
+        return Err(format!("unknown theme {theme:?}"));
+    }
     state::set_pref(
         &app,
         state::prefs::THEME,
@@ -509,6 +533,13 @@ mod tests {
         assert_eq!(theme_from_name(""), None);
         assert_eq!(theme_from_name("DARK"), None);
         assert_eq!(theme_from_name("solarized"), None);
+    }
+
+    #[test]
+    fn a_window_title_is_single_line_and_bounded() {
+        assert_eq!(window_title("  Project\nNotes\t  "), "ProjectNotes");
+        assert_eq!(window_title("a".repeat(600).as_str()).len(), 512);
+        assert_eq!(window_title("\u{0}\u{1}"), "");
     }
 
     /// The stamp is a directory name a user has to read in their file manager,
