@@ -71,6 +71,22 @@ describe("resolveCardPreview", () => {
     expect(preview).toEqual({ kind: "cover", value: "https://cdn.test/obj.png" });
   });
 
+  it("reads the first app-owned URL from a FILES { files } value", () => {
+    const preview = resolveCardPreview(
+      row({
+        cover: {
+          files: [
+            { name: "a.png", url: "https://cdn.test/a.png", mimeType: "image/png" },
+            { name: "b.png", url: "https://cdn.test/b.png", mimeType: "image/png" },
+          ],
+        },
+      }),
+      properties,
+      { coverPropertyId: "cover" },
+    );
+    expect(preview).toEqual({ kind: "cover", value: "https://cdn.test/a.png" });
+  });
+
   it("ignores a blank cover and falls back to the icon", () => {
     const preview = resolveCardPreview(row({ cover: "   " }), properties, {
       coverPropertyId: "cover",

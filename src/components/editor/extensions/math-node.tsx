@@ -67,7 +67,7 @@ export function EquationNodeSurface({
       role="math"
       aria-label={latex || "Empty equation"}
       tabIndex={interactive ? 0 : undefined}
-      onClick={
+      onPointerDownCapture={
         interactive
           ? (event) => {
               event.preventDefault();

@@ -70,7 +70,13 @@ export function richTextExtensions({
     // block is the same node, so the stored description renders identically in
     // `DocRenderer` and can be promoted to a page without conversion.
     ImageBlock.configure({ locale }),
-    Placeholder.configure({ placeholder }),
+    Placeholder.configure({
+      placeholder,
+      // The shared placeholder CSS targets `p.is-editor-empty`; without this
+      // the compact editors only got TipTap's default `is-empty` class and the
+      // hint never painted.
+      emptyEditorClass: "is-editor-empty",
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
     TextStyle,

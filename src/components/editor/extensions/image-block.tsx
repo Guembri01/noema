@@ -443,6 +443,10 @@ export function ImageView({
                 data-testid={`image-align-${value}`}
                 aria-label={t(locale, labelKey)}
                 aria-pressed={align === value}
+                // Keep focus where it is (usually the caption/alt input).
+                // Blurring it commits an attribute update, which replaces this
+                // button between mousedown and mouseup and swallows the click.
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => updateAttributes({ align: value })}
               >
                 <Icon className="h-3.5 w-3.5" />

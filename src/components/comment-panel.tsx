@@ -490,6 +490,15 @@ export function CommentPanel({
   const [liveStale, setLiveStale] = useState<ReadonlySet<string>>(new Set());
   // Resolved/open filter; `all` keeps every thread visible by default.
   const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>("all");
+  /**
+   * Resolve/reopen writes are optimistic. The server action + `router.refresh`
+   * round trip can land a beat after the click, and the row used to keep its
+   * old badge (and the counts stayed put) in the meantime. Hold the intended
+   * state per thread until the refreshed props echo it back.
+   */
+  const [resolvedOverrides, setResolvedOverrides] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
   const composerRef = useRef<HTMLDivElement | null>(null);
   const composerErrorId = useId();
 
@@ -523,8 +532,23 @@ export function CommentPanel({
   // Purely derived from the props: flatten the roots/replies into the pure
   // thread model once, then group via `buildThreads` and tally resolved vs open
   // threads via `threadCounts`. Read-only presentation - no action or wire
-  // shape changes.
-  const threadComments = useMemo(() => toThreadComments(comments), [comments]);
+  // shape changes. `resolvedOverrides` is the in-flight optimistic layer; once
+  // the server echo matches it the effect below drops it again.
+  const effectiveComments = useMemo(() => {
+    const ids = Object.keys(resolvedOverrides);
+    if (ids.length === 0) return comments;
+    return comments.map((comment) => {
+      const override = resolvedOverrides[comment.id];
+      return override === undefined || override === comment.resolved
+        ? comment
+        : { ...comment, resolved: override };
+    });
+  }, [comments, resolvedOverrides]);
+
+  const threadComments = useMemo(
+    () => toThreadComments(effectiveComments),
+    [effectiveComments],
+  );
 
   const threads = useMemo(() => buildThreads(threadComments), [threadComments]);
 
@@ -549,9 +573,27 @@ export function CommentPanel({
   }, [threads, resolvedFilter]);
 
   const visibleComments = useMemo(
-    () => comments.filter((comment) => visibleThreadIds.has(comment.id)),
-    [comments, visibleThreadIds],
+    () => effectiveComments.filter((comment) => visibleThreadIds.has(comment.id)),
+    [effectiveComments, visibleThreadIds],
   );
+
+  // The server has echoed an optimistic resolve/reopen: stop overriding it.
+  useEffect(() => {
+    setResolvedOverrides((previous) => {
+      const ids = Object.keys(previous);
+      if (ids.length === 0) return previous;
+      const next = { ...previous };
+      let changed = false;
+      for (const id of ids) {
+        const server = comments.find((comment) => comment.id === id);
+        if (!server || server.resolved === previous[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [comments]);
 
   const [focusedComment, setFocusedComment] = useState<string | null>(null);
 
@@ -665,12 +707,21 @@ export function CommentPanel({
     });
   };
 
-  const toggleResolved = (id: string, resolved: boolean) =>
+  const toggleResolved = (id: string, resolved: boolean) => {
+    setResolvedOverrides((previous) => ({ ...previous, [id]: resolved }));
     startTransition(async () => {
       const outcome = await safeAction(() => resolveCommentAction(id, resolved));
-      if (!outcome.ok) toast.error(outcome.error);
+      if (!outcome.ok) {
+        setResolvedOverrides((previous) => {
+          const next = { ...previous };
+          delete next[id];
+          return next;
+        });
+        toast.error(outcome.error);
+      }
       router.refresh();
     });
+  };
 
   const remove = (id: string) =>
     startTransition(async () => {

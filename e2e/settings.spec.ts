@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -45,11 +46,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -117,26 +114,31 @@ test.describe("settings surfaces", () => {
 
     try {
       await openSettings(page);
-      const tokens = section(page, "API tokens");
-      await waitForHydration(page, 'input[aria-label="Token name"]');
+      await page.goto(`/w/${WORKSPACE_SLUG}/settings/tokens`);
+      const tokenMain = page.locator("#main");
+      await waitForHydration(page, 'input[placeholder^="Token name"]');
 
       // Create -> plaintext shown exactly once.
-      await tokens.getByLabel("Token name").fill(name);
-      await tokens.getByRole("button", { name: "Create token", exact: true }).click();
+      await tokenMain.getByPlaceholder(/Token name/).fill(name);
+      await tokenMain.getByRole("button", { name: "Create token", exact: true }).click();
       await expect(
-        tokens.getByText(/Copy this token now/),
+        tokenMain.getByText(/Copy this token now/),
       ).toBeVisible({ timeout: 20_000 });
       await expect(
-        tokens.locator("code").filter({ hasText: /^noema_/ }),
+        tokenMain.locator("code").filter({ hasText: /^noema_/ }),
       ).toBeVisible();
 
       // …and the token appears in the list (+ row lands in the database).
-      const row = tokens.getByRole("listitem").filter({ hasText: name });
+      const row = tokenMain.getByRole("listitem").filter({ hasText: name });
       await expect(row).toHaveCount(1, { timeout: 20_000 });
       await expect.poll(() => countTokens(name), { timeout: 20_000 }).toBe(1);
 
       // Revoke -> gone from the list and from the database.
       await row.getByRole("button", { name: "Revoke token", exact: true }).click();
+      await tokenMain
+        .getByRole("dialog")
+        .getByRole("button", { name: "Revoke token", exact: true })
+        .click();
       await expect(row).toHaveCount(0, { timeout: 20_000 });
       await expect.poll(() => countTokens(name), { timeout: 20_000 }).toBe(0);
     } finally {
@@ -152,32 +154,40 @@ test.describe("settings surfaces", () => {
 
     try {
       await openSettings(page);
-      const labels = section(page, "Ticket labels");
-      await waitForHydration(page, 'input[aria-label="Label name"]');
+      const labelMain = page.locator("#main");
+      await waitForHydration(page, 'input[placeholder^="Label name"]');
 
       // Create.
-      await labels.getByLabel("Label name").fill(name);
-      await labels.getByRole("button", { name: "Create", exact: true }).click();
-      const row = labels.getByRole("listitem").filter({ hasText: name });
+      const labelInput = labelMain.getByPlaceholder(/Label name/);
+      await labelInput.fill(name);
+      await labelInput
+        .locator("xpath=ancestor::form")
+        .getByRole("button", { name: "Create", exact: true })
+        .click();
+      const row = labelMain.getByRole("listitem").filter({ hasText: name });
       await expect(row).toHaveCount(1, { timeout: 20_000 });
       await expect.poll(() => countLabels(name), { timeout: 20_000 }).toBe(1);
 
       // Edit: the rename input saves on blur.
-      const renameField = labels.getByLabel(`Rename ${name}`);
+      const renameField = labelMain.getByLabel(`Rename ${name}`);
       await renameField.fill(renamed);
       await renameField.press("Tab");
       await expect(
-        labels.getByRole("listitem").filter({ hasText: renamed }),
+        labelMain.getByRole("listitem").filter({ hasText: renamed }),
       ).toHaveCount(1, { timeout: 20_000 });
       await expect.poll(() => countLabels(renamed), { timeout: 20_000 }).toBe(1);
       await expect.poll(() => countLabels(name), { timeout: 20_000 }).toBe(0);
 
       // Delete.
-      await labels
+      await labelMain
         .getByRole("button", { name: `Delete ${renamed}`, exact: true })
         .click();
+      await labelMain
+        .getByRole("dialog")
+        .getByRole("button", { name: "Delete", exact: true })
+        .click();
       await expect(
-        labels.getByRole("listitem").filter({ hasText: renamed }),
+        labelMain.getByRole("listitem").filter({ hasText: renamed }),
       ).toHaveCount(0, { timeout: 20_000 });
       await expect.poll(() => countLabels(renamed), { timeout: 20_000 }).toBe(0);
     } finally {

@@ -357,8 +357,10 @@ export function DatabasePeek({
         tabIndex={-1}
         data-testid="peek-drawer"
         data-state={entered ? "open" : "closed"}
-        role="dialog"
-        aria-modal="false"
+        // A side peek is a non-modal companion to the table, not a dialog:
+        // focus is never trapped, the table stays usable, and Escape/scrim
+        // close it. `complementary` is the landmark that says exactly that.
+        role="complementary"
         aria-label={t(locale, "rowLabel")}
         className={cn(
           "surface-raised scrollbar-thin fixed inset-y-0 right-0 w-[26rem] max-w-full overflow-y-auto p-5 outline-none",

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,11 +48,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -214,7 +211,8 @@ test.describe("comments", () => {
       const row = commentRow(main, original);
       await expect(row).toBeVisible({ timeout: UI_TIMEOUT });
 
-      await row.getByRole("button", { name: "Edit", exact: true }).click();
+      await row.getByRole("button", { name: "More actions" }).click();
+      await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
       const fixed = `B40 fixed ${Date.now()}`;
       await row.getByLabel("Edit comment").fill(fixed);
       await row.getByRole("button", { name: "Save", exact: true }).click();
@@ -316,7 +314,8 @@ test.describe("comments", () => {
         .waitFor({ state: "visible", timeout: UI_TIMEOUT });
 
       // Delete the thread: reply cascades with it.
-      await commentRow(main, body).getByRole("button", { name: "Delete", exact: true }).click();
+      await commentRow(main, body).getByRole("button", { name: "More actions" }).click();
+      await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
 
       await expect
         .poll(async () => prisma.comment.count({ where: { pageId: created.id } }), {

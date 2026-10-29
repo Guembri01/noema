@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -48,11 +49,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page, creds = CREDENTIALS) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(creds.email);
-  await page.getByLabel("Password").fill(creds.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, creds);
 }
 
 /**
@@ -161,7 +158,9 @@ test.describe("inbox + follow", () => {
         .filter({ hasText: "You were mentioned on a page" });
       await expect(row.first()).toBeVisible({ timeout: 15_000 });
       await expect(
-        row.first().locator(`a[href="/w/${SLUG}/${target.id}"]`),
+        // A mention links to the exact comment thread, so the href appends
+        // ?comment=<id>; assert the page portion rather than an exact URL.
+        row.first().locator(`a[href^="/w/${SLUG}/${target.id}"]`),
       ).toHaveCount(1);
     } finally {
       await prisma.comment

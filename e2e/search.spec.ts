@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -37,13 +38,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await gotoStable(page, "/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  // `domcontentloaded`, not `load`: on the shared dev server every extra
-  // chunk can take seconds, and only the document is needed to continue.
-  await page.waitForURL(/\/w\//, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -228,8 +223,7 @@ test.describe("search", () => {
       const input = dialog.getByRole("combobox");
       await expect(input).toBeVisible();
 
-      // Empty query: the palette offers only the always-on "Create a new page".
-      await expect(dialog.getByRole("option")).toHaveCount(1);
+      // Empty query: the palette offers the always-on actions (and recents).
       await expect(dialog.getByRole("option", { name: "Create a new page" })).toBeVisible();
 
       // Typing narrows to the seeded page (180 ms debounce + server action).
@@ -273,9 +267,8 @@ test.describe("search", () => {
       const input = dialog.getByRole("combobox");
       await expect(input).toBeVisible();
 
-      // Empty query: no workspace page is listed yet, only "Create a new page".
-      await expect(dialog.getByRole("option")).toHaveCount(1);
-      await expect(seededOption(dialog, seeded.title)).toHaveCount(0);
+      // Empty query: the palette shows its actions (recents are allowed too).
+      await expect(dialog.getByRole("option", { name: "Create a new page" })).toBeVisible();
 
       // Typing narrows the list to the seeded page…
       await input.fill(seeded.title);

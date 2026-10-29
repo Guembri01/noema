@@ -52,6 +52,18 @@ describe("matchScriptShortcut", () => {
     expect(matchScriptShortcut("x^2")).toBeNull();
   });
 
+  it("leaves LaTeX carets/tildes alone inside an open $…$ span", () => {
+    expect(matchScriptShortcut("$a^2 + b^")).toBeNull();
+    expect(matchScriptShortcut("$H~2~")).toBeNull();
+    // The guard is about the open span, not about `$` anywhere in the block.
+    expect(matchScriptShortcut("$x^2$ and y^3^")).toEqual({
+      kind: "superscript",
+      full: "^3^",
+      inner: "3",
+      index: 11,
+    });
+  });
+
   it("leaves the stock `~~strike~~` shortcut to the strike rule", () => {
     expect(matchScriptShortcut("~~bold~~")).toBeNull();
     expect(matchScriptShortcut("~~")).toBeNull();

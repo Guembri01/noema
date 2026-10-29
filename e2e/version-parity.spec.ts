@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -43,11 +44,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await gotoStable(page, "/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -114,7 +111,10 @@ test("R30.6 + R30.1: current header row, newest snapshot restorable, restore re-
 
     // Panel: live state as a distinct header row; every snapshot restorable.
     await gotoStable(page, `/w/${SLUG}/${created.id}`);
-    await page.getByRole("button", { name: /version history/i }).click();
+    await page
+      .getByRole("button", { name: /^Version history/ })
+      .last()
+      .click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByTestId("version-current-row")).toBeVisible();
     await expect(dialog.getByTestId("version-current-row")).toContainText(TITLE);

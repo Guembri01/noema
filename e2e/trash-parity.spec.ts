@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -28,27 +29,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build) and concurrent source edits thrash the turbopack cache, so
-  // sign-in is retried instead of failing the test. `domcontentloaded` not
-  // `load`: under compile storms individual chunks stall for minutes while
-  // the HTML (and the server-action form, which works without hydration)
-  // arrives in seconds.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000, waitUntil: "domcontentloaded" });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByLabel("Password").fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000, waitUntil: "domcontentloaded" });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(10_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 async function gotoWithRetry(page: Page, url: string) {
@@ -152,7 +133,7 @@ test("restores a trashed page and the restore persists", async ({ page }) => {
   try {
     await openTrash(page);
 
-    const row = page.getByRole("listitem").filter({ hasText: title }).first();
+    const row = page.locator("#main").getByRole("listitem").filter({ hasText: title }).first();
     await expect(row).toBeVisible();
     // exact: the row's trash icon is aria-labelled "Delete <title> forever" and
     // the fixture title itself contains "restore" — a substring match hits both.
@@ -162,13 +143,19 @@ test("restores a trashed page and the restore persists", async ({ page }) => {
 
     // Persists in the database…
     await expect
-      .poll(async () => (await findPage(created.id))?.deletedAt ?? false, { timeout: 30_000 })
+      .poll(
+        async () => {
+          const page = await findPage(created.id);
+          return page ? page.deletedAt : "missing";
+        },
+        { timeout: 30_000 },
+      )
       .toBeNull();
 
     // …and stays restored after a reload: the row is gone from the trash.
     await page.reload({ timeout: 60_000, waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Trash" })).toBeVisible();
-    await expect(page.getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
+    await expect(page.locator("#main").getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
   } finally {
     await prisma.page.deleteMany({ where: { id: created.id } });
   }
@@ -191,26 +178,27 @@ test("permanently deletes a trashed page only after confirmation, children inclu
   try {
     await openTrash(page);
 
-    const parentRow = page.getByRole("listitem").filter({ hasText: parentTitle }).first();
-    const childRow = page.getByRole("listitem").filter({ hasText: childTitle }).first();
+    const parentRow = page.locator("#main").getByRole("listitem").filter({ hasText: parentTitle }).first();
+    const childRow = page.locator("#main").getByRole("listitem").filter({ hasText: childTitle }).first();
     await expect(parentRow).toBeVisible();
     await expect(childRow).toBeVisible();
 
     // Opening the confirmation deletes nothing.
     await parentRow.getByRole("button", { name: `Delete ${parentTitle} forever` }).click();
-    const confirm = parentRow.getByRole("button", { name: "Delete forever" });
+    const dialog = page.getByRole("dialog");
+    const confirm = dialog.getByRole("button", { name: "Delete forever" });
     await expect(confirm).toBeVisible();
     expect(await findPage(parent.id)).not.toBeNull();
     expect(await findPage(child.id)).not.toBeNull();
 
     // Cancelling keeps everything.
-    await parentRow.getByRole("button", { name: "Cancel" }).click();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(confirm).toHaveCount(0);
     expect(await findPage(parent.id)).not.toBeNull();
 
     // Confirming destroys the page — and its subtree — permanently.
     await parentRow.getByRole("button", { name: `Delete ${parentTitle} forever` }).click();
-    await parentRow.getByRole("button", { name: "Delete forever" }).click();
+    await dialog.getByRole("button", { name: "Delete forever" }).click();
     // Generous: the dev server compiles the changed action module on first use
     // and may be restarting under the shared dev server's load.
     await expect(page.getByText("Deleted forever")).toBeVisible({ timeout: 60_000 });
@@ -225,8 +213,8 @@ test("permanently deletes a trashed page only after confirmation, children inclu
     // Permanently gone from the list as well, after a reload.
     await page.reload({ timeout: 60_000, waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Trash" })).toBeVisible();
-    await expect(page.getByRole("listitem").filter({ hasText: parentTitle })).toHaveCount(0);
-    await expect(page.getByRole("listitem").filter({ hasText: childTitle })).toHaveCount(0);
+    await expect(page.locator("#main").getByRole("listitem").filter({ hasText: parentTitle })).toHaveCount(0);
+    await expect(page.locator("#main").getByRole("listitem").filter({ hasText: childTitle })).toHaveCount(0);
   } finally {
     await prisma.page.deleteMany({ where: { id: { in: [parent.id, child.id] } } });
   }
@@ -243,7 +231,7 @@ test("empty trash asks for confirmation and cancel keeps every trashed page", as
   const created = await createTrashedPage(title);
   try {
     await openTrash(page);
-    const row = page.getByRole("listitem").filter({ hasText: title }).first();
+    const row = page.locator("#main").getByRole("listitem").filter({ hasText: title }).first();
     await expect(row).toBeVisible();
 
     // The destructive step is gated behind an explicit confirmation.

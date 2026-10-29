@@ -49,9 +49,13 @@ const SCRIPT_SHORTCUTS: Record<ScriptKind, RegExp> = {
 export function matchScriptShortcut(text: string): ScriptShortcutMatch | null {
   for (const kind of ["subscript", "superscript"] as const) {
     const match = SCRIPT_SHORTCUTS[kind].exec(text);
-    if (match && match[1]) {
-      return { kind, full: match[0], inner: match[1], index: match.index };
-    }
+    if (!match || !match[1]) continue;
+    // The same `^` and `~` characters are LaTeX syntax. While a `$…$` span is
+    // open, the markdown trigger must not consume the pair: that would strip
+    // the carets before MathAutoDetect can turn the span into an equation.
+    const before = text.slice(0, match.index);
+    if ((before.match(/\$/g)?.length ?? 0) % 2 === 1) continue;
+    return { kind, full: match[0], inner: match[1], index: match.index };
   }
   return null;
 }

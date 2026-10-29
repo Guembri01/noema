@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, ChevronUp, Play, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   addMilestoneAction,
@@ -105,6 +105,13 @@ export const MILESTONE_STATUS_TONE: Record<string, BadgeTone> = {
 export function milestoneStatusTone(status: string): BadgeTone {
   return MILESTONE_STATUS_TONE[status] ?? "neutral";
 }
+
+/** planned → in progress → done → planned, the milestone advance cycle. */
+const NEXT_MILESTONE_STATUS: Record<string, "planned" | "in_progress" | "done"> = {
+  planned: "in_progress",
+  in_progress: "done",
+  done: "planned",
+};
 
 /** Milestone-derived progress: done count + whole-percent completion. */
 export function milestoneProgress(
@@ -217,15 +224,6 @@ export function ProjectDetail({
       setMilestoneName("");
       setMilestoneDue("");
       return { ok: true };
-    });
-
-  const setMilestoneDone = (milestone: MilestoneRow, done: boolean) =>
-    run(null, async () => {
-      const result = await updateMilestoneAction({
-        milestoneId: milestone.id,
-        status: done ? "done" : "planned",
-      });
-      return "error" in result ? { ok: false, message: result.error } : { ok: true };
     });
 
   const setMilestoneDate = (milestone: MilestoneRow, value: string) =>
@@ -399,12 +397,34 @@ export function ProjectDetail({
                 data-testid="milestone-row"
                 className="flex scroll-mt-24 flex-wrap items-center gap-3 px-3 py-2"
               >
-                <Checkbox
-                  checked={milestone.status === "done"}
-                  onCheckedChange={(done) => setMilestoneDone(milestone, done)}
-                  aria-label={`${milestone.name}`}
+                <button
+                  type="button"
+                  aria-label={`${t(locale, "advancePrefix")} ${milestone.name}`}
                   disabled={pending}
-                />
+                  onClick={() =>
+                    run(null, async () => {
+                      const result = await updateMilestoneAction({
+                        milestoneId: milestone.id,
+                        status: NEXT_MILESTONE_STATUS[milestone.status] ?? "planned",
+                      });
+                      return "error" in result ? { ok: false, message: result.error } : { ok: true };
+                    })
+                  }
+                  className={cn(
+                    "grid h-5 w-5 shrink-0 place-items-center rounded-full border focus-ring u-interactive",
+                    milestone.status === "done"
+                      ? "border-transparent bg-success text-action-fg"
+                      : milestone.status === "in_progress"
+                        ? "border-accent text-accent"
+                        : "border-border text-transparent",
+                  )}
+                >
+                  {milestone.status === "done" ? (
+                    <Check className="h-3 w-3" aria-hidden />
+                  ) : milestone.status === "in_progress" ? (
+                    <Play className="h-2.5 w-2.5" aria-hidden />
+                  ) : null}
+                </button>
                 <div className="min-w-0 flex-1">
                   <p
                     className={cn(
@@ -591,13 +611,13 @@ export function ProjectDetail({
       </Section>
 
       <Dialog open={attachOpen} onOpenChange={setAttachOpen}>
-        <DialogContent className="max-w-lg p-4" aria-describedby="attach-pages-help">
+        <DialogContent className="flex max-h-[85vh] max-w-lg flex-col p-4" aria-describedby="attach-pages-help">
           <h2 className="text-sm font-semibold">Attach existing pages</h2>
           <p id="attach-pages-help" className="mt-1 text-xs text-muted">
             The page stays where it is in the sidebar and is also listed in this
             project.
           </p>
-          <div className="mt-3 space-y-1">
+          <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
             {(project.availablePages ?? []).map((page) => (
               <label
                 key={page.id}

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -20,11 +21,7 @@ const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 const prisma = new PrismaClient();
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /** Dedicated discussion per test (structural convention: own row + cleanup). */

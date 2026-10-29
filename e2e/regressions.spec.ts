@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { Prisma, PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -7,11 +8,7 @@ const SLUG = "demo-workspace";
 const TITLE_PREFIX = "E2E regression";
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.locator("#password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 async function createPage(
@@ -184,7 +181,7 @@ test.describe("editor regressions", () => {
     await page.keyboard.press("Enter");
     await page.keyboard.type("history-body");
     // The bridge coalesces a typing burst before recording one entry.
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(2_000);
 
     await page.getByTestId("undo-history-trigger").click();
     await expect(page.getByTestId("undo-history-list")).toContainText("Edit page body");
@@ -368,8 +365,21 @@ test.describe("workspace regressions", () => {
     await signIn(page);
     await page.goto(`/w/${SLUG}/search`);
     const input = page.getByTestId("workspace-search-input");
-    await input.fill("Noema");
-    await page.waitForURL(/[?&]q=Noema/, { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="workspace-search-input"]');
+      return !!el && Object.keys(el).some((key) => key.startsWith("__react"));
+    });
+    await expect
+      .poll(
+        async () => {
+          if (!/[?&]q=Noema/.test(page.url())) {
+            await input.fill("Noema");
+          }
+          return page.url();
+        },
+        { timeout: 15_000, intervals: [500] },
+      )
+      .toMatch(/[?&]q=Noema/);
   });
 
   test("tokens expose expiry presets and select-all", async ({ page }) => {
@@ -421,22 +431,26 @@ test.describe("workspace regressions", () => {
     });
 
     await page.goto(`/w/${SLUG}/tickets`);
-    const source = page.locator(`[data-ticket-id="${ticket.id}"]`);
+    // Next's streamed Suspense boundary can leave an inert copy of the server
+    // segment in `<body>` until React clears it. Scope board locators to the
+    // live main surface, exactly like the project-description test.
+    const source = page.locator(`#main [data-ticket-id="${ticket.id}"]`);
     await expect(source).toBeVisible({ timeout: 20_000 });
     await expect(source.locator('[data-testid="ticket-board-card"]')).toHaveAttribute(
       "data-status",
       "todo",
     );
 
-    const target = page.locator('[data-drop-status="done"]');
+    const target = page.locator('#main [data-drop-status="done"]');
     // Native HTML5 DnD is not reliably synthesized by `dragTo` in headless
     // Chrome; dispatch the same event sequence the browser produces.
     await page.evaluate(
       ({ id, status }) => {
-        const source = document.querySelector<HTMLElement>(
+        const root = document.querySelector<HTMLElement>("#main");
+        const source = root?.querySelector<HTMLElement>(
           `[data-ticket-id="${id}"]`,
         );
-        const target = document.querySelector<HTMLElement>(
+        const target = root?.querySelector<HTMLElement>(
           `[data-drop-status="${status}"]`,
         );
         if (!source || !target) throw new Error("ticket drag targets missing");

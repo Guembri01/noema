@@ -76,12 +76,15 @@ export function descriptionDoc(text: string): { type: "doc"; content: unknown[] 
  * Both shapes are valid ProseMirror docs, so the editor needs no migration step:
  * a description written (or seeded) before the rich editor existed keeps its
  * text, and the first save upgrades it in place. An absent/empty description
- * yields an empty doc, which the editor renders as one empty paragraph — so the
- * placeholder shows and the caret has somewhere to land.
+ * yields one empty paragraph — ProseMirror renders a `content: []` doc as a
+ * zero-height surface, so the placeholder and the caret had nowhere to land.
  */
 export function descriptionEntryDoc(doc: unknown, text = ""): { type: "doc"; content: unknown[] } {
   if (doc && typeof doc === "object" && Array.isArray((doc as DocNode).content)) {
-    return doc as { type: "doc"; content: unknown[] };
+    const stored = doc as { type: "doc"; content: unknown[] };
+    if (stored.content.length > 0) return stored;
   }
-  return descriptionDoc(text);
+  const entry = descriptionDoc(text);
+  if (entry.content.length > 0) return entry;
+  return { type: "doc", content: [{ type: "paragraph" }] };
 }

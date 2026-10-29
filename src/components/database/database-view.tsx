@@ -998,13 +998,39 @@ export function DatabaseView({
     properties.find((p) => p.config?.primary) ?? properties[0] ?? null;
 
   // Parsed + normalised on read: malformed or unknown stored keys are ignored.
-  const viewConfig = parseViewConfig(activeView?.config);
+  const serverViewConfig = parseViewConfig(activeView?.config);
+  /**
+   * Optimistic view config. `setViewConfig` runs a server action and then
+   * `router.refresh()`; until that round trip lands the toolbar must already
+   * show the value the user picked, otherwise a fast follow-up action is built
+   * from a stale control (and the popover visibly snaps back). The local copy
+   * is only trusted while its server echo is still in flight; as soon as the
+   * refreshed props match it, the props are authoritative again.
+   */
+  const [optimisticViewConfig, setOptimisticViewConfig] = useState<{
+    viewId: string;
+    config: EditableViewConfig;
+  } | null>(null);
+  const viewConfig =
+    optimisticViewConfig && activeView && optimisticViewConfig.viewId === activeView.id
+      ? optimisticViewConfig.config
+      : serverViewConfig;
+  const serverViewConfigJson = JSON.stringify(serverViewConfig);
+  useEffect(() => {
+    if (!optimisticViewConfig) return;
+    if (optimisticViewConfig.viewId !== activeView?.id) {
+      setOptimisticViewConfig(null);
+      return;
+    }
+    const echoed =
+      JSON.stringify(optimisticViewConfig.config) === serverViewConfigJson;
+    if (echoed) setOptimisticViewConfig(null);
+  }, [activeView?.id, serverViewConfigJson, optimisticViewConfig]);
   // Once the server echoes a config back, the props are authoritative again
   // and the optimistic buffer below can be dropped.
-  const viewConfigJson = JSON.stringify(viewConfig);
   useEffect(() => {
     pendingConfig.current = undefined;
-  }, [viewConfigJson]);
+  }, [serverViewConfigJson]);
   const { rows: viewRows } = applyView(
     rows as unknown as QueryRow[],
     properties as unknown as QueryProperty[],
@@ -1372,9 +1398,13 @@ export function DatabaseView({
       ...patch,
     };
     pendingConfig.current = next;
+    setOptimisticViewConfig({ viewId: activeView.id, config: next });
     startTransition(async () => {
       const result = await updateViewAction(activeView.id, { config: next });
-      if ("error" in result) toast.error(result.error);
+      if ("error" in result) {
+        toast.error(result.error);
+        setOptimisticViewConfig(null);
+      }
       router.refresh();
     });
   };

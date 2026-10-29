@@ -106,6 +106,10 @@ test.describe("session management parity", () => {
       // Revoke the OTHER session from here.
       await waitForHydration(pageA, 'button[data-testid="session-revoke"]');
       await otherSessionRow(pageA).getByTestId("session-revoke").click();
+      await pageA
+        .getByRole("dialog")
+        .getByRole("button", { name: "Revoke session", exact: true })
+        .click();
       await expect(sessionRows(pageA)).toHaveCount(1, { timeout: 15_000 });
       // The surviving row is this device.
       await expect(
@@ -141,7 +145,11 @@ test.describe("session management parity", () => {
 
       // Sign out everywhere: this device lands on /login…
       await waitForHydration(pageA, '[data-testid="revoke-all-sessions"]');
-      await pageA.getByTestId("revoke-all-sessions").click();
+      await pageA.getByTestId("revoke-all-sessions").first().click();
+      await pageA
+        .getByRole("dialog")
+        .getByRole("button", { name: "Sign out of all sessions", exact: true })
+        .click();
       await expect(pageA).toHaveURL(/\/login/, { timeout: 30_000 });
 
       // …and the sibling device is dead on its next request too.

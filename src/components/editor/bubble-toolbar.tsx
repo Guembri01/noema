@@ -451,7 +451,14 @@ export function BubbleToolbar({
             </button>
           </PopoverTrigger>
         </Tooltip>
-        <PopoverContent align="center" className="w-auto p-2">
+        <PopoverContent
+          align="center"
+          className="w-auto p-2"
+          // Keep the editor's text selection alive while the swatch grid is
+          // open: focusing the popover would collapse it, and "Default" would
+          // then unset a colour on an empty caret.
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
           <div
             role="group"
             aria-label={t(locale, "colorLabel")}
@@ -485,7 +492,11 @@ export function BubbleToolbar({
             </button>
           </PopoverTrigger>
         </Tooltip>
-        <PopoverContent align="center" className="w-auto p-2">
+        <PopoverContent
+          align="center"
+          className="w-auto p-2"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
           <div
             role="group"
             aria-label={t(locale, "highlight")}

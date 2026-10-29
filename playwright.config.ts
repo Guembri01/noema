@@ -11,6 +11,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   reporter: [["list"]],
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3200",

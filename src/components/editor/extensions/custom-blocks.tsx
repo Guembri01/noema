@@ -1345,6 +1345,24 @@ export const TableOfContents = Node.create<{ locale: string }>({
     };
   },
 
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("tocAnchors"),
+        state: {
+          init: (_config, state) => tocAnchorDecorations(state.doc),
+          apply: (transaction, previous, _oldState, newState) =>
+            transaction.docChanged ? tocAnchorDecorations(newState.doc) : previous,
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state);
+          },
+        },
+      }),
+    ];
+  },
+
   addNodeView() {
     const locale = this.options.locale;
     return ReactNodeViewRenderer((props: NodeViewProps) => (
@@ -1352,6 +1370,35 @@ export const TableOfContents = Node.create<{ locale: string }>({
     ));
   },
 });
+
+/**
+ * View-only heading ids for the outline. Decorations (not document attrs) keep
+ * anchors out of the persisted JSON while still surviving ProseMirror's own
+ * re-renders; the TOC's `getElementById` fallback then resolves the same nodes.
+ */
+function tocAnchorDecorations(doc: PMNode): DecorationSet {
+  const headings: TocHeading[] = [];
+  const ranges: { from: number; to: number }[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name === "heading") {
+      const text = node.textContent.trim();
+      if (text) {
+        headings.push({ level: Number(node.attrs.level) || 1, text, pos });
+        ranges.push({ from: pos, to: pos + node.nodeSize });
+      }
+    }
+    return true;
+  });
+  const items = buildTocItems(headings);
+  return DecorationSet.create(
+    doc,
+    items.map((item, index) =>
+      Decoration.node(ranges[index].from, ranges[index].to, {
+        id: tocAnchorId(item.slug),
+      }),
+    ),
+  );
+}
 
 /**
  * The rendered element for the heading node at `pos`. Resolution is by
@@ -1407,7 +1454,9 @@ function TocView({ editor, locale }: NodeViewProps & { locale: string }) {
       container === document.documentElement;
     const baseTop = rootScroller ? 0 : container.getBoundingClientRect().top;
     const tops = list.map((item) => {
-      const el = headingElementAt(editor, item.pos);
+      const el =
+        headingElementAt(editor, item.pos) ??
+        document.getElementById(tocAnchorId(item.slug));
       if (!el || el.offsetHeight === 0) return Number.POSITIVE_INFINITY;
       return el.getBoundingClientRect().top - baseTop;
     });
@@ -1428,13 +1477,6 @@ function TocView({ editor, locale }: NodeViewProps & { locale: string }) {
     });
     const built = buildTocItems(headings);
     itemsRef.current = built;
-    // ANCHOR STRATEGY: slugify+dedupe runs here, at render, and the id is
-    // stamped onto the rendered heading element only — the document model
-    // stays id-free by design (see src/lib/toc.ts).
-    for (const item of built) {
-      const el = headingElementAt(editor, item.pos);
-      if (el) el.id = tocAnchorId(item.slug);
-    }
     setItems(built);
     measure(built);
   };
@@ -1443,6 +1485,10 @@ function TocView({ editor, locale }: NodeViewProps & { locale: string }) {
 
   useEffect(() => {
     collect();
+    // The first collect can run before ProseMirror has mounted the heading
+    // elements, in which case nodeDOM() returns null and no anchor ids are
+    // stamped. Re-run once on the next frame, when the rendered DOM exists.
+    const stampFrame = requestAnimationFrame(() => collect());
     editor.on("update", collect);
     // `scroll` does not bubble, so one capture-phase listener on window sees
     // the workspace scroller (#main), the root scroller, and nested ones.
@@ -1452,6 +1498,7 @@ function TocView({ editor, locale }: NodeViewProps & { locale: string }) {
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(remeasure);
     observer?.observe(editor.view.dom);
     return () => {
+      cancelAnimationFrame(stampFrame);
       editor.off("update", collect);
       window.removeEventListener("scroll", remeasure, true);
       window.removeEventListener("resize", remeasure);

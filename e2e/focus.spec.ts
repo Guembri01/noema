@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -44,11 +45,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -158,6 +155,14 @@ test.describe("focus management", () => {
           timeout: 5_000,
         })
         .toBe(true);
+
+      // AccessList resolves its roster through a server action; wait for the
+      // skeleton to be replaced before recording the focusable order. Otherwise
+      // the row buttons can appear mid-cycle and shift every index while Tab is
+      // being pressed, so the initial stop is never seen again by identity.
+      await expect(dialog.locator('[aria-busy="true"]')).toHaveCount(0, {
+        timeout: 15_000,
+      });
 
       const initial = await readStop();
       expect(initial.inside, "initial focus is not inside the dialog").toBe(true);

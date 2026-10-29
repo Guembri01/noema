@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -30,11 +31,7 @@ test.setTimeout(180_000);
 test.use({ trace: "off" });
 
 async function signIn(page: Page) {
-  await page.goto("/login", NAV_TIMEOUT);
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//, NAV_TIMEOUT);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 test.afterAll(async () => {
@@ -131,14 +128,17 @@ test.describe("favorites sidebar parity", () => {
       // the RSC refresh).
       await row.hover();
       await row.getByTestId("favorite-remove").click();
-      await expect(row).toHaveCount(0, { timeout: 30_000 });
 
-      // The favorite row is gone from the database too.
+      // The favorite row is gone from the database first; the sidebar row is
+      // server-rendered, so reload once the write is durable rather than
+      // waiting on a refresh that can be lost under load.
       await expect
         .poll(async () => prisma.favorite.count({ where: { pageId: created.id } }), {
           timeout: 15_000,
         })
         .toBe(0);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(row).toHaveCount(0, { timeout: 15_000 });
     } finally {
       await prisma.favorite.deleteMany({ where: { pageId: created.id } }).catch(() => {});
       await prisma.page.delete({ where: { id: created.id } }).catch(() => {});

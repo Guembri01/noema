@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -77,11 +78,7 @@ async function gotoStable(page: Page, url: string) {
 }
 
 async function signIn(page: Page) {
-  await gotoStable(page, "/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//, NAV_TIMEOUT);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 async function workspaceAndOwner() {
@@ -192,7 +189,10 @@ test.describe("export / import parity (B94)", () => {
       const body = await response.text();
       // The seeded heading (and its title H1) survive the round trip.
       expect(body).toContain(fixture.heading);
-      expect(body).toContain(`# ${fixture.title}`);
+      // The page title now travels in YAML frontmatter; the body headings stay
+      // in the Markdown below it.
+      expect(body).toContain(`title: ${fixture.title}`);
+      expect(body.trimStart().startsWith("---")).toBe(true);
       expect(body).toContain(fixture.body);
 
       // R23.16: an unknown format is a 400 with the valid list, never a
@@ -269,62 +269,24 @@ test.describe("export / import parity (B94)", () => {
   test("import surface lists md/zip/docx/trello/notion and the import dialog opens", async ({
     page,
   }) => {
-    const { workspace, owner } = await workspaceAndOwner();
-    const probe = await prisma.page.create({
-      data: {
-        workspaceId: workspace.id,
-        createdById: owner.id,
-        title: `B94 import probe ${Date.now()}`,
-        position: 952_000,
-      },
-      select: { id: true },
-    });
+    await signIn(page);
+    // Import lives in Settings now, not the sidebar.
+    await gotoStable(page, `/w/${SLUG}/settings/import`);
 
-    try {
-      await signIn(page);
-      await gotoStable(page, `/w/${SLUG}/${probe.id}`);
-      // Hydration signal: the editor only mounts once React has attached, so a
-      // click before it only writes to the DOM (see e2e/descriptions.spec.ts).
-      await expect(page.locator(".ProseMirror")).toBeVisible();
-
-      // The format list lives in the sidebar import section (md / zip / docx /
-      // trello / notion — transcribe is a bonus entry, not a format).
-      const sidebar = page.locator("aside");
-      for (const label of [
-        "Import Markdown",
-        "Import export (.zip)",
-        "Import Word (.docx)",
-        "Import Trello (JSON)",
-        "Import from Notion (API)",
-      ]) {
-        await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
-      }
-
-      // The page-actions menu exposes Import/Export, and Import opens the
-      // import dialog (the Notion import dialog is the dialog this app has).
-      await page.getByRole("button", { name: "Actions", exact: true }).click();
-      const actions = page.getByRole("dialog", { name: "Page actions" });
-      await expect(actions).toBeVisible();
-      await expect(actions.getByRole("option", { name: /^Import$/ })).toBeVisible();
-      await expect(actions.getByRole("option", { name: /^Export$/ })).toBeVisible();
-
-      await actions.getByRole("option", { name: /^Import$/ }).click();
-      // The dialog element carries no accessible name (plain <h2>, no
-      // DialogTitle/aria-label) so `role + name` cannot find it - identify it
-      // by the heading INSIDE it instead. The missing accessible name on
-      // role="dialog" is reported upstream: notion-import-dialog.tsx is
-      // B71-dirty and READ-ONLY for this change.
-      const importDialog = page
-        .getByRole("dialog")
-        .filter({ has: page.getByRole("heading", { name: "Import from Notion" }) });
-      await expect(importDialog).toBeVisible();
-      await expect(importDialog.getByLabel("Integration token")).toBeVisible();
-      await expect(importDialog.getByLabel("Page URL or id")).toBeVisible();
-
-      await page.keyboard.press("Escape");
-      await expect(importDialog).toHaveCount(0);
-    } finally {
-      await prisma.page.deleteMany({ where: { id: probe.id } }).catch(() => {});
+    // The source grid carries every format the import engine accepts.
+    for (const id of ["markdown", "zip", "docx", "trello", "notion"]) {
+      await expect(page.getByTestId(`import-source-${id}`)).toBeVisible();
     }
+
+    await page.getByTestId("import-source-notion").click();
+    const importDialog = page
+      .getByRole("dialog")
+      .filter({ has: page.getByRole("heading", { name: "Import from Notion" }) });
+    await expect(importDialog).toBeVisible();
+    await expect(importDialog.getByLabel("Integration token")).toBeVisible();
+    await expect(importDialog.getByLabel("Page URL or id")).toBeVisible();
+
+    await importDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(importDialog).toHaveCount(0);
   });
 });

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -27,23 +28,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByLabel("Password").fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /** Deterministic hydration signal (React has taken over the server HTML). */
@@ -216,13 +201,16 @@ test.describe("command palette + shortcuts parity", () => {
       await openWorkspacePage(page, hostId);
       const before = await page.url();
 
-      await page.keyboard.press("Control+n");
-      // The shell creates a root page and routes to it (new-page row).
-      await page.waitForURL(new RegExp(`/w/${SLUG}/[a-z0-9]+$`), {
-        timeout: 30_000,
+      // Ctrl+N is reserved by Chromium (new window), so drive the shell's
+      // key handler directly; the product path (createPageAction + route push)
+      // is still the one under test.
+      await page.evaluate(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true }),
+        );
       });
+      await expect.poll(() => page.url(), { timeout: 30_000 }).not.toBe(before);
       const after = await page.url();
-      expect(after).not.toBe(before);
       const createdId = after.split("?")[0].split("#")[0].split("/").pop()!;
       createdIds.push(createdId);
       expect(createdId).toMatch(/^[a-z0-9]+$/);
