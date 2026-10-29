@@ -94,9 +94,10 @@ export default async function WorkspaceHome({
                   aria-label="Onboarding progress"
                 >
                   <div
-                    className="h-full rounded-full bg-action transition-[width] duration-300"
+                    className="h-full rounded-full bg-action"
                     style={{
                       width: `${checklist.total > 0 ? Math.round((checklist.done / checklist.total) * 100) : 0}%`,
+                      transition: "width var(--dur-2) var(--ease-smooth)",
                     }}
                   />
                 </div>
