@@ -30,7 +30,17 @@ header finding is intentionally absent (headers already apply site-wide).
 
 Data-integrity and user-facing functionality breaks. Each is one commit.
 
-### P1-T01 — Make database creation atomic
+### P1-T01 — Make database creation atomic ✅ DONE
+
+> **Verification (2026-10-27):** commit `e043c6d`, PR #332. Fail-first test
+> `pages-seed-atomic.test.ts` (mock ledger: tx writes recorded only on callback
+> resolve) failed pre-change — the DATABASE page row survived a mid-seed
+> `property.create` rejection — passes post-change: 3/3. Full actions suite
+> 99 files / 839 tests green; `tsc --noEmit` clean. Mechanical accommodation:
+> `$transaction` pass-through added to the db mocks of `pages.test.ts`,
+> `pages-parent-scope.test.ts`, `page-search-text.test.ts` (no assertions
+> weakened; the DATABASE-path payload assertions moved to the tx client — same
+> payloads).
 
 - **Files:** `src/server/actions/pages.ts:176-273` (called from `createPageAction` at `:162-163`)
 - **Defect.** `seedDatabaseStructure` performs ~11 sequential writes (4 × `property.create`,
@@ -44,7 +54,18 @@ Data-integrity and user-facing functionality breaks. Each is one commit.
   `DATABASE` page row survives.
 - **Done when:** the test fails on current code and passes after.
 
-### P1-T02 — Fix the dead short link in the share dialog
+### P1-T02 — Fix the dead short link in the share dialog ✅ DONE
+
+> **Verification (2026-10-27):** Option B implemented — `Page.shortCode` unique
+> nullable alias (migration `20261027000000_page_short_code`, applied to dev DB),
+> stamped lazily by `ensurePageShortCode()` at publish / share-state read.
+> Resolver `shortCodeToken()` in `/s/[token]/page.tsx`: `isValidShortCode` gate →
+> indexed lookup → re-derivation guard → live published page-level ShareLink
+> (`viewId: null`, not deleted, not expired) → redirect to `/s/<liveToken>`
+> (temporary; zero UI duplication — password/expiry/fail-closed come from the
+> canonical path). Direct tokens keep the byte-for-byte original path. New test
+> suites: page.test.ts (7), share-form-link.test.ts (4), share-dialog.test.ts
+> (3) — fail-first evidenced, 118 tests green across 7 touched suites; tsc clean.
 
 - **Files:** `src/components/share-dialog.tsx:371-379,538-545,221-231`; resolver
   `src/app/s/[token]/page.tsx:107`; `src/lib/short-link.ts` (its only production consumer

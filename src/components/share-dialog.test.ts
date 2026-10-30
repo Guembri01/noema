@@ -32,6 +32,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import {
+  generateShortCode,
+  isValidShortCode,
+  SHORT_CODE_LENGTH,
+  shortUrl,
+} from "@/lib/short-link";
+import {
   COPY_FEEDBACK_MS,
   LinkSection,
   PUBLISH_TOGGLES,
@@ -175,3 +181,44 @@ describe("LinkSection", () => {
 
 // The pure public-page model moved to `@/lib/share-page` (a client module cannot
 // export a function a server component may call). Its own spec lives there.
+
+/**
+ * P1-T02 — the "Link" row advertises the deterministic short code derived from
+ * the page id; `/s/<code>` now resolves it (the public page keeps a unique,
+ * indexed alias per page). These pins keep the dialog on its seed: same page
+ * id → same valid code, same URL shape, every render.
+ */
+describe("the deterministic short link (P1-T02)", () => {
+  it("derives the same valid code from a page id on every render", () => {
+    const first = generateShortCode({ seed: "page-1" });
+    const second = generateShortCode({ seed: "page-1" });
+
+    expect(second).toBe(first);
+    expect(first).toBe("FDfpLNM");
+    expect(first.length).toBe(SHORT_CODE_LENGTH);
+    expect(isValidShortCode(first)).toBe(true);
+  });
+
+  it("pins the exact long-lived URL the dialog hands out and the resolver honours", () => {
+    const code = generateShortCode({ seed: "page-1" });
+
+    expect(shortUrl("https://noema.test/s", code)).toBe(
+      `https://noema.test/s/${code}`,
+    );
+    expect(isValidShortCode(code)).toBe(true);
+  });
+
+  it("renders the deterministic short URL, not a session token", () => {
+    const code = generateShortCode({ seed: "page-1" });
+    const html = renderToStaticMarkup(
+      createElement(LinkSection, {
+        url: "https://noema.test/s/public-token",
+        shortUrl: `https://noema.test/s/${code}`,
+        shortCode: code,
+      }),
+    );
+
+    expect(html).toContain(`value="https://noema.test/s/${code}"`);
+    expect(html).toContain(code);
+  });
+});

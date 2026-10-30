@@ -9,6 +9,7 @@ import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions
 import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { randomToken } from "@/lib/slug";
 import { hashPassword, verifyPassword } from "@/lib/auth";
+import { generateShortCode } from "@/lib/short-link";
 
 export type ShareOptions = {
   password?: string;
@@ -37,6 +38,27 @@ export type ShareLinkState = {
   indexing: boolean;
 };
 
+/**
+ * Stamp the deterministic `/s/<code>` alias the share dialog renders. The
+ * code space is a one-way hash of the page id, so the alias must live in the
+ * DB (`Page.shortCode`, unique + indexed) for the public resolver to find it —
+ * no scan, ever. Called lazily at publish and share-state read time so pages
+ * published before the column existed are stamped as soon as their share
+ * panel is opened. Never throws: a rare seeded-collision race leaves the
+ * alias unset, which makes the dialog's short link fail closed instead of
+ * pointing at someone else's page.
+ */
+async function ensurePageShortCode(pageId: string): Promise<void> {
+  try {
+    await prisma.page.updateMany({
+      where: { id: pageId, shortCode: null },
+      data: { shortCode: generateShortCode({ seed: pageId }) },
+    });
+  } catch {
+    // Another page already claimed this seed's code (P2002): no alias.
+  }
+}
+
 /** Current share state of a page for the share panel (fail-closed for guests). */
 export async function getShareLinkStateAction(pageId: string): Promise<ShareLinkState> {
   const empty: ShareLinkState = {
@@ -63,6 +85,8 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) return empty;
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) return empty;
+
+  await ensurePageShortCode(pageId);
 
   // A published form is a separate public surface; the page share panel only
   // reflects the page-level link (`viewId: null`).
@@ -103,6 +127,7 @@ export async function createShareLinkAction(
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to share this page." };
   }
+  await ensurePageShortCode(pageId);
 
   const passwordHash = options.password ? await hashPassword(options.password) : undefined;
   const expiresAt =

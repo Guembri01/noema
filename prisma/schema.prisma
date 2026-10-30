@@ -307,6 +307,10 @@ model Page {
   /// Plain-text mirror of the document, maintained on write, used for Postgres
   /// full-text search (GIN index created by `npm run setup:search`).
   searchText  String?
+  /// Deterministic public alias backing the `/s/<code>` short link the share
+  /// dialog renders: `generateShortCode({ seed: id })`. Filled lazily when the
+  /// share state is read or the link is (re)published; null until then.
+  shortCode   String?  @unique
   position    Float    @default(0)
   isFavorite  Boolean  @default(false)
   isArchived  Boolean  @default(false)
