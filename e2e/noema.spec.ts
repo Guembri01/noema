@@ -17,7 +17,7 @@ test.afterAll(async () => {
 async function signIn(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//);
 }
@@ -771,7 +771,7 @@ test.describe("workspaces", () => {
 
     await page.goto("/login");
     await page.getByLabel("Email").fill(guestEmail);
-    await page.getByLabel("Password").fill(guestPassword);
+    await page.getByRole("textbox", { name: "Password" }).fill(guestPassword);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.waitForURL(/\/w\//);
 
@@ -1166,7 +1166,7 @@ test.describe("guest scoping", () => {
     // Sign in as the guest.
     await page.goto("/login");
     await page.getByLabel("Email").fill(guestEmail);
-    await page.getByLabel("Password").fill(guestPassword);
+    await page.getByRole("textbox", { name: "Password" }).fill(guestPassword);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.waitForURL(/\/w\//);
 
@@ -2120,6 +2120,131 @@ test.describe("actions menu (topbar ⋯)", () => {
         data: { smallText: false, fullWidth: false },
       });
       await prisma.page.deleteMany({ where: { id: probe.id } });
+    }
+  });
+});
+
+/**
+ * R80.12 / D6 — linked references are guest-scoped: a guest reading a shared
+ * page sees mentioners they can open, and never the title/icon of one they
+ * cannot. The mentioners deliberately mention the target while they exist, so
+ * the assertions probe real data (a visible mentioner proves the panel had
+ * rows to scope).
+ */
+test.describe("backlink guest scoping", () => {
+  const guestEmail = `e2e-backlink-guest-${Date.now()}@noema.local`;
+  const guestPassword = "password123";
+  let guestId = "";
+  let targetId = "";
+  let openMentionerId = "";
+  let secretMentionerId = "";
+
+  const mentionDoc = (targetId: string, label: string) => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "mentions " },
+          { type: "mention", attrs: { id: targetId, label, type: "page" } },
+        ],
+      },
+    ],
+  });
+
+  test.beforeAll(async () => {
+    const bcrypt = (await import("bcryptjs")).default;
+    const guest = await prisma.user.create({
+      data: { email: guestEmail, name: "Backlink Guest", passwordHash: await bcrypt.hash(guestPassword, 10) },
+      select: { id: true },
+    });
+    guestId = guest.id;
+  });
+
+  test.afterAll(async () => {
+    await prisma.page.deleteMany({
+      where: { id: { in: [targetId, openMentionerId, secretMentionerId].filter(Boolean) } },
+    });
+    if (guestId) await prisma.user.deleteMany({ where: { id: guestId } });
+    await prisma.$disconnect();
+  });
+
+  test("a guest sees only mentioners they can open", async ({ page }) => {
+    const workspace = await prisma.workspace.findFirst({ where: { slug: "demo-workspace" } });
+    const owner = await prisma.user.findUnique({
+      where: { email: "demo@noema.local" },
+      select: { id: true },
+    });
+    const stamp = Date.now();
+    const targetLabel = `link target ${stamp}`;
+    const openLabel = `open mentioner ${stamp}`;
+    const secretLabel = `secret mentioner ${stamp}`;
+
+    const target = await prisma.page.create({
+      data: {
+        workspaceId: workspace!.id,
+        title: targetLabel,
+        createdById: owner!.id,
+        content: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      select: { id: true },
+    });
+    targetId = target.id;
+    await prisma.pagePermission.create({
+      data: { pageId: target.id, userId: guestId, level: "READ" },
+    });
+    const openMentioner = await prisma.page.create({
+      data: {
+        workspaceId: workspace!.id,
+        title: openLabel,
+        createdById: owner!.id,
+        content: mentionDoc(target.id, targetLabel),
+      },
+      select: { id: true },
+    });
+    openMentionerId = openMentioner.id;
+    await prisma.pagePermission.create({
+      data: { pageId: openMentioner.id, userId: guestId, level: "READ" },
+    });
+    const secretMentioner = await prisma.page.create({
+      data: {
+        workspaceId: workspace!.id,
+        title: secretLabel,
+        createdById: owner!.id,
+        content: mentionDoc(target.id, targetLabel),
+      },
+      select: { id: true },
+    });
+    secretMentionerId = secretMentioner.id;
+    // The guest was never granted access to this one.
+    await prisma.workspaceMember.create({
+      data: { workspaceId: workspace!.id, userId: guestId, role: "GUEST" },
+    });
+
+    try {
+      await page.goto("/login");
+      await page.getByLabel("Email").fill(guestEmail);
+      await page.getByRole("textbox", { name: "Password" }).fill(guestPassword);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await page.waitForURL(/\/w\//);
+
+      await page.goto(`/w/${workspace!.slug}/${target.id}`);
+      const panel = page.locator("#main");
+      await expect(panel.getByRole("heading", { name: /Linked references/i })).toBeVisible({
+        timeout: 15_000,
+      });
+
+      // The mentioner they can open shows up…
+      const openRow = panel.locator(`a[href*="${openMentioner.id}"]`);
+      await expect(openRow.filter({ hasText: openLabel })).toBeVisible();
+
+      // …and the hidden mentioner never leaks its title or link.
+      await expect(panel.getByText(secretLabel)).toHaveCount(0);
+      await expect(panel.locator(`a[href*="${secretMentioner.id}"]`)).toHaveCount(0);
+    } finally {
+      await prisma.pagePermission.deleteMany({
+        where: { pageId: { in: [target.id, openMentioner.id] } },
+      });
     }
   });
 });

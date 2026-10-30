@@ -31,7 +31,7 @@ test.use({ trace: "off", actionTimeout: 20_000 });
 async function signIn(page: Page) {
   await page.goto("/login", NAV_TIMEOUT);
   await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//, NAV_TIMEOUT);
 }

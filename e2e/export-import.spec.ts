@@ -79,7 +79,7 @@ async function gotoStable(page: Page, url: string) {
 async function signIn(page: Page) {
   await gotoStable(page, "/login");
   await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//, NAV_TIMEOUT);
 }

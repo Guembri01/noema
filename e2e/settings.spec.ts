@@ -47,7 +47,7 @@ test.afterAll(async () => {
 async function signIn(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//);
 }

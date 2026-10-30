@@ -50,7 +50,7 @@ test.afterAll(async () => {
 async function signIn(page: Page, creds = CREDENTIALS) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(creds.email);
-  await page.getByLabel("Password").fill(creds.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(creds.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//);
 }

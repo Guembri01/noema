@@ -897,6 +897,8 @@ const en = {
   copyCode: "Copy code",
   linkedReferences: "Linked references",
   unlinkedMentions: "Unlinked mentions",
+  backlinksTruncated:
+    "References scanned the 1,000 most recently edited pages of this workspace; older pages were not scanned.",
   ticketTitle: "Ticket title",
   ticketTypeAria: "Ticket type",
   ticketStatusAria: "Ticket status",
@@ -2210,6 +2212,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     copyCode: "Copier le code",
     linkedReferences: "Références liées",
     unlinkedMentions: "Mentions non liées",
+    backlinksTruncated:
+      "Les références proviennent des 1 000 pages modifiées le plus récemment de cet espace de travail ; les pages plus anciennes n'ont pas été analysées.",
     ticketTitle: "Titre du ticket",
     ticketTypeAria: "Type de ticket",
     ticketStatusAria: "Statut du ticket",
@@ -3518,6 +3522,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     copyCode: "Copiar código",
     linkedReferences: "Referencias vinculadas",
     unlinkedMentions: "Menciones sin enlace",
+    backlinksTruncated:
+      "Las referencias provienen de las 1.000 páginas modificadas más recientemente de este espacio de trabajo; las páginas más antiguas no se analizaron.",
     ticketTitle: "Título del ticket",
     ticketTypeAria: "Tipo de ticket",
     ticketStatusAria: "Estado del ticket",
@@ -4826,6 +4832,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     copyCode: "Code kopieren",
     linkedReferences: "Verknüpfte Referenzen",
     unlinkedMentions: "Nicht verlinkte Erwähnungen",
+    backlinksTruncated:
+      "Die Verweise stammen aus den 1.000 zuletzt bearbeiteten Seiten dieses Arbeitsbereichs; ältere Seiten wurden nicht durchsucht.",
     ticketTitle: "Ticket-Titel",
     ticketTypeAria: "Ticket-Typ",
     ticketStatusAria: "Ticket-Status",
@@ -6134,6 +6142,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     copyCode: "نسخ الكود",
     linkedReferences: "مراجع مرتبطة",
     unlinkedMentions: "إشارات غير مرتبطة",
+    backlinksTruncated:
+      "المراجع من أحدث 1,000 صفحة تم تعديلها في مساحة العمل هذه؛ لم تُفحص الصفحات الأقدم.",
     ticketTitle: "عنوان التذكرة",
     ticketTypeAria: "نوع التذكرة",
     ticketStatusAria: "حالة التذكرة",

@@ -39,7 +39,7 @@ test.afterAll(async () => {
 async function signIn(page: Page) {
   await gotoStable(page, "/login");
   await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByLabel("Password").fill(CREDENTIALS.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   // `domcontentloaded`, not `load`: on the shared dev server every extra
   // chunk can take seconds, and only the document is needed to continue.

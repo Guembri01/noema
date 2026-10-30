@@ -35,7 +35,7 @@ async function signIn(page: Page) {
     try {
       await page.goto("/login", { timeout: 60_000 });
       await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByLabel("Password").fill(CREDENTIALS.password);
+      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
       await page.getByRole("button", { name: "Sign in" }).click();
       await page.waitForURL(/\/w\//, { timeout: 60_000 });
       return;
