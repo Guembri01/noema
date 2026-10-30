@@ -102,8 +102,8 @@ const isEmptyValue = (value: RollupValue): boolean =>
   value === undefined ||
   (typeof value === "string" && value.trim() === "");
 
-/** Coerce a scalar to a finite number; non-numeric strings are excluded (unlike rollup, "abc" never becomes 0). */
-function toNumber(value: RollupValue): number | null {
+/** Coerce a scalar to a finite number; non-numeric strings are excluded ("abc" never becomes 0). Shared with rollup. */
+export function toNumber(value: RollupValue): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value !== "string" || value.trim() === "") return null;

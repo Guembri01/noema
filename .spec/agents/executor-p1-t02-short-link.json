@@ -1,0 +1,18 @@
+{
+  "agent": "executor",
+  "status": "complete",
+  "task": "P1-T02 (Option B) — fix dead short link in share dialog",
+  "timestamp": "2026-10-27T09:00:00Z",
+  "files_changed": [
+    "prisma/schema.prisma",
+    "prisma/migrations/20261027000000_page_short_code/migration.sql",
+    "src/app/s/[token]/page.tsx",
+    "src/server/actions/share.ts",
+    "src/app/s/[token]/page.test.ts",
+    "src/server/actions/share-form-link.test.ts",
+    "src/components/share-dialog.test.ts"
+  ],
+  "packages_installed": [],
+  "mechanic": "Option B (a): nullable unique indexed Page.shortCode; resolver redirects short-code URLs to the LIVE published page-level ShareLink token; lazy stamp at publish/share-state read",
+  "next_steps": ["full vitest suite", "commit via git-wrangler", "apply migration to deploy DBs"]
+}

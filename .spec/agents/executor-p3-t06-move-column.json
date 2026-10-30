@@ -1,0 +1,20 @@
+{
+  "agent": "executor",
+  "status": "complete",
+  "timestamp": "2026-10-28T12:05:00Z",
+  "task": "P3-T06 — moveTicketAction validates that the `beforeId` row lives in the destination column (F10)",
+  "decision": "recompute-at-head (not reject)",
+  "files_changed": [
+    "src/server/actions/tickets.ts",
+    "src/server/actions/tickets-move-column.test.ts"
+  ],
+  "verification": {
+    "tsc": "only pre-existing error remains: src/lib/rollup.ts(50,10) TS2552 'toNumber' — introduced by prior uncommitted P1/P2 edit to rollup.ts, not this change; scoped files compile clean",
+    "vitest_src_server_actions": "108 files / 895 tests passed",
+    "fail_first": "temporarily reverted guard → 2/4 cross-column tests failed with exactly the old positions (1999 / 1999-instead-of-1000); guard re-applied → 4/4 pass",
+    "flaky_note": "one share-settings test failed on the first scoped run, passed on both reruns (pre-existing flake, unrelated)"
+  },
+  "packages_installed": [],
+  "git_mutations": "none — no add/commit/push; changes left uncommitted as instructed",
+  "next_steps": []
+}

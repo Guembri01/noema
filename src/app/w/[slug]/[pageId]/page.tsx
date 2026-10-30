@@ -460,6 +460,7 @@ async function PageReferencesPanel({
     <DeferredBacklinks
       items={data.linked}
       unlinked={data.unlinked}
+      truncated={data.truncated}
       workspaceSlug={workspaceSlug}
       locale={locale}
       showEmpty

@@ -92,9 +92,13 @@ multiply the allowance by the number of instances. The shipped
 If you scale the app horizontally, put a shared limiter (Redis or an equivalent
 atomic store) in front of these calls **before** adding the second instance;
 until then, keep the replica count at one. The same restriction applies to the
-JSON session registry (`SESSION_STORE_PATH`): its on-disk lock serializes
-writers on one host, but it is not a multi-host database. For a multi-host
+JSON session registry (`SESSION_STORE_PATH`) and to the share-unlock lockout
+counters (`src/server/actions/share.ts`): its on-disk lock serializes writers
+on one host, but it is not a multi-host database. For a multi-host
 deployment, move both the limiter and the session registry to shared storage.
+Declaring a scale-out with `NOEMA_INSTANCES=<n>` (n > 1) makes the stateful
+stores answer with a one-line startup warning naming this caveat; see
+[`SECURITY.md` § Single-instance state](../SECURITY.md#single-instance-state-noema_instances).
 
 > **Edge runtime:** `src/middleware.ts` runs in the Edge runtime, where
 > `process.env` is frozen at **build** time. `TRUSTED_PROXY_HOPS` therefore

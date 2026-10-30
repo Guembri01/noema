@@ -13,6 +13,7 @@
 import { createLru, LruCache } from "./lru";
 import { createBucket, tryConsume, type ConsumeResult, type TokenBucket } from "./token-bucket";
 import { normalizeIp } from "./ip-allowlist";
+import { warnIfMultiInstance } from "./multi-instance";
 import {
   parseTrustedProxyHops,
   resolveClientIp,
@@ -70,6 +71,12 @@ const userBuckets = createLru<string, Bucket>({ capacity: MAX_BUCKETS });
 
 /** Timestamp of the last TTL sweep (0 = never swept yet). */
 let lastSweepAt = 0;
+
+// P1-T04 — the buckets above are per process, not shared: the deployment
+// caveat fires once, here at init, when the operator declared more than one
+// instance (`NOEMA_INSTANCES`). See the module doc and
+// docs/OPERATIONS.md §1.1.
+warnIfMultiInstance();
 
 export type RateLimitResult = {
   ok: boolean;

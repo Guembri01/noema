@@ -1,0 +1,14 @@
+{
+  "agent": "explore",
+  "status": "complete",
+  "files": [
+    {"path": "src/server/actions/pages.ts", "relevance": "createPageAction / seedDatabaseStructure non-transactional; transferPageAction two-step non-atomic"},
+    {"path": "src/server/actions/calendar.ts", "relevance": "createMeetingNoteAction notesPage read-then-create race (CalendarEvent.notesPageId not unique)"},
+    {"path": "src/server/row-cells.ts", "relevance": "allocateUniqueIdValue max-read + write race; no unique constraint on PropertyValue.value"},
+    {"path": "src/server/unique.ts", "relevance": "uniqueWorkspaceSlug check-then-insert race causing uncaught P2002 in signupAction (actions/auth.ts:206)"},
+    {"path": "src/server/actions/tickets.ts", "relevance": "moveTicketAction beforeId without status guard / -1 slotting"},
+    {"path": "src/server/actions/cycles.ts", "relevance": "updateCycleAction does not validate parsed dates (create path does)"}
+  ],
+  "patterns": ["codebase heavily hardened (B-numbered fixes)", "position + 1000 read-then-max pattern everywhere without constraints", "most imports/row writes use $transaction; seedDatabaseStructure is the exception"],
+  "connections": ["seedDatabaseStructure called only from createPageAction", "uniqueWorkspaceSlug only caller is signupAction"]
+}

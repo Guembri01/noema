@@ -1,0 +1,31 @@
+{
+  "agent": "git-wrangler",
+  "action_taken": "Merged upstream/main into fix/d6-d7-d8-backlinks-and-teamspace-cleanup resolving the 6 PR-332 conflict files",
+  "commit_hash": "e517997b8e614b1f2f2eeff42c42d74a6b778888",
+  "files_changed": [
+    "src/app/s/[token]/page.test.ts",
+    "src/server/actions/pages-parent-scope.test.ts",
+    "src/server/actions/pages.test.ts",
+    "src/server/actions/pages.ts",
+    "src/server/actions/share-form-link.test.ts",
+    "src/server/actions/share.ts"
+  ],
+  "branches_affected": ["fix/d6-d7-d8-backlinks-and-teamspace-cleanup"],
+  "remote": "upstream = https://github.com/guembri01/noema.git (parent), origin = https://github.com/UgochukwuChidera/noema.git (fork)",
+  "merge_base": "27b0c8ff0f2e0a471d61d7c11c8041b7af53641e",
+  "resolved_conflicts": {
+    "src/server/actions/pages.ts": "kept OUR $transaction wrap (tx.page.create + seedDatabaseStructure + return created); upstream's create body was byte-identical and upstream's scoped-project checks (d3cec54) auto-applied above the conflict",
+    "src/server/actions/share.ts": "2 hunks, trivial: kept OUR ensurePageShortCode stamps in getShareLinkStateAction and createShareLinkAction; parent hunks had no unique content there",
+    "src/app/s/[token]/page.test.ts": "ours is a strict superset of parent (verified via comm on stage:2 vs stage:3): kept HEAD entir ely - short-code resolver tests, navigation mock, pageFindUnique/shareLinkFindFirst mocks, generateShortCode import",
+    "src/server/actions/pages.test.ts": "kept OUR prisma mock shape with $transaction => callback(prisma) accommodation; parent's plain-mock fragment dropped",
+    "src/server/actions/pages-parent-scope.test.ts": "same $transaction mock accommodation kept on our side",
+    "src/server/actions/share-form-link.test.ts": "kept ours: updateMany mock, short-code alias-stamp describe block, generateShortCode import"
+  },
+  "verification": {
+    "tsc": "npx tsc --noEmit -> 0 errors, exit 0",
+    "vitest": "npx vitest run src/server/actions/ src/app/s/ src/components/share-dialog.test.ts -> 102 files passed, 901/901 tests passed",
+    "pr": "gh pr view 332 --repo Guembri01/noema --json mergeable,mergeStateStatus -> {mergeable: MERGEABLE, mergeStateStatus: UNSTABLE}"
+  },
+  "pr_status_note": "Conflicts fully resolved (MERGEABLE). UNSTABLE = parent-repo static gate 'Authoring windows' (scripts/check-commit-dates.mjs) fails on the branch's pre-existing commits: dates outside Wed-Sat-evening policy windows AND authoring identity ugochukwuc762@gmail.com not in the gate's HUMANS allowlist (reisi007/bilel.guembri/wissal.benothmen01). This gate failed identically on the two runs BEFORE the merge; both violations cannot be legitimately fixed by rewriting git history (would also be policy evasion). Not a merge fallout.",
+  "status": "clean"
+}

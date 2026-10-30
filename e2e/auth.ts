@@ -40,7 +40,7 @@ async function login(
     waitUntil: options.waitUntil,
   });
   await page.getByLabel("Email").fill(credentials.email);
-  await page.getByLabel("Password").fill(credentials.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//, { timeout: options.timeout });
   const cookies = await page.context().cookies();

@@ -103,8 +103,6 @@ refused (`?error=sso_email_unverified`).
 
 ### `NOEMA_ALLOW_LOOPBACK_TARGETS`
 
-### `NOEMA_ALLOW_LOOPBACK_TARGETS`
-
 Outbound webhooks may not point at the machine the server runs on: the
 production guard refuses the loopback range (`127.0.0.0/8`, `::1`,
 `localhost`) along with every other private range, so a webhook cannot be
@@ -118,6 +116,33 @@ loopback target — and it never opens more than the loopback range: RFC1918
 metadata addresses and every `.internal`/`.local` name stay refused. It
 applies to the webhook path only; calendar feeds keep refusing a loopback
 feed in production.
+
+### Single-instance state (`NOEMA_INSTANCES`)
+
+Noema is built for a **single-instance** deployment, and that limit is a
+property of its small-state design, not of a configuration you can flip:
+
+- the **session registry** (`SESSION_STORE_PATH`, `src/lib/session-store.ts`)
+  is one JSON file — sessions are revocable and enumerable *through* it;
+- the **rate-limit buckets** (`src/lib/rate-limit.ts`) are in-memory counters
+  — per process, not shared;
+- the **share-unlock lockouts** (`src/server/actions/share.ts`) are an
+  in-process map keyed by the share token.
+
+Run the app on more than one instance and each of these is enforced **per
+instance only**: a session revoked on instance A keeps working on instance B
+until its own 30-day expiry, a brute-forced share password dodges the lockout
+by being tried against a fresh instance, and an attacker who reaches the load
+balancer multiplies every rate budget by the replica count.
+
+Set `NOEMA_INSTANCES=<n>` with n > 1 to declare such a deployment — the
+stateful stores read it at start-up and answer with a one-line
+`console.warn` naming the caveat. The variable does not fix anything; it is
+the acknowledgement, in the log, of the model above. Run a single instance
+(the shipped `docker-compose` setup is exactly that), or move the registry,
+the buckets and the lockouts to a shared atomic store (Redis or an
+equivalent) **before** the second replica is started — see
+[`docs/OPERATIONS.md` §1.1](./docs/OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops).
 
 ## Hardening the desktop app
 

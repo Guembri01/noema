@@ -9,9 +9,11 @@ import { hashPassword, verifyPassword } from "@/lib/auth";
  *
  * bcrypt cost 12 is intentionally slow; under parallel CPU load a single
  * hash/compare can exceed vitest's 5s default, so every bcrypt test gets an
- * explicit timeout and hashes are computed once in beforeAll.
+ * explicit timeout and hashes are computed once in beforeAll. 30 s was
+ * still not enough under full-suite contention (observed 31 s in the
+ * P3-T09 observation run), so the budget is 60 s.
  */
-const BCRYPT_TIMEOUT = 30_000;
+const BCRYPT_TIMEOUT = 60_000;
 
 let sharedHash: string;
 

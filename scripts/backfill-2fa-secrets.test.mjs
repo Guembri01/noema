@@ -51,7 +51,13 @@ if (process.env.VITEST) {
   const { describe, it } = await import("vitest");
 
   describe("the backfill command (B134)", () => {
-    it("runs and prints its usage", () => {
+    it(
+      "runs and prints its usage",
+      // The spawn itself is bounded at 60 s below; vitest's 5 s default
+      // flaked first at ~6 s while the rest of the suite loaded the
+      // machine (P3-T09), so the test gets a matching budget.
+      { timeout: 60_000 },
+      () => {
       const result = runBackfillHelp();
 
       assert.equal(

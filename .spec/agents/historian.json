@@ -1,0 +1,96 @@
+{
+  "agent": "historian",
+  "status": "done",
+  "timestamp": "2026-10-27T07:55:00Z",
+  "findings": [
+    {
+      "severity": "major",
+      "file": "src/server/actions/pages.ts",
+      "line": 176,
+      "issue": "seedDatabaseStructure performs ~11 non-transactional writes after the page.create of a DATABASE page; a mid-seed failure leaves a permanently broken database page",
+      "recommendation": "Run create + seed in one prisma.$transaction(async tx => ...)"
+    },
+    {
+      "severity": "major",
+      "file": "src/components/editor/page-editor.tsx",
+      "line": 772,
+      "issue": "runSave has no in-flight guard and blindly nulls pendingPayloadRef with the older payload — concurrent saves can land out of order and a newer edit typed during a slow save is silently dropped from the server write",
+      "recommendation": "Serialize saves through a single-flight queue and only clear pendingPayloadRef when it still equals the payload just saved"
+    },
+    {
+      "severity": "medium",
+      "file": "src/server/actions/pages.ts",
+      "line": 782,
+      "issue": "transferPageAction moves subtree workspaceId and re-parents root in two separate non-transactional updates; failure between leaves children cross-workspace orphaned",
+      "recommendation": "Wrap both writes in prisma.$transaction([...])"
+    },
+    {
+      "severity": "medium",
+      "file": "src/server/actions/calendar.ts",
+      "line": 198,
+      "issue": "createMeetingNoteAction is check-then-create on CalendarEvent.notesPageId with no unique constraint — concurrent calls create two note pages (orphan)",
+      "recommendation": "Claim via conditional updateMany where notesPageId is null inside a transaction, only create the page when count===1"
+    },
+    {
+      "severity": "medium",
+      "file": "src/server/row-cells.ts",
+      "line": 66,
+      "issue": "UNIQUE_ID numbering uses read-then-max at read-committed isolation; concurrent row creations allocate duplicate numbers",
+      "recommendation": "Use $queryRaw SELECT ... FOR UPDATE on the property row or serializable isolation for the allocation"
+    },
+    {
+      "severity": "medium",
+      "file": "src/components/editor/page-editor.tsx",
+      "line": 1876,
+      "issue": "collab seed registers provider.once('sync') without removing it in cleanup — seeds a destroyed TipTap editor if unmounted mid-sync",
+      "recommendation": "provider.off('sync', seed) in cleanup (matches ticket-description.tsx:396-398)"
+    },
+    {
+      "severity": "medium",
+      "file": "src/components/chat-panel.tsx",
+      "line": 1379,
+      "issue": "Follow-up while streaming: send() lacks a pending guard; second send replaces abortRef and first finally nulls it, making Cancel a no-op",
+      "recommendation": "Early-return send() when streaming; null abortRef only if it is the same controller"
+    },
+    {
+      "severity": "medium",
+      "file": "src/components/quick-find.tsx",
+      "line": 371,
+      "issue": "Debounced search has no request token — a stale useTransition result can overwrite newer results",
+      "recommendation": "Guard setItems with a monotonic request sequence"
+    },
+    {
+      "severity": "low",
+      "file": "src/server/unique.ts",
+      "line": 10,
+      "issue": "slug collision loop has no P2002 retry; concurrent signups surface a raw 500 from workspace.create",
+      "recommendation": "Catch P2002 in signupAction/auth path and regenerate the suffix"
+    },
+    {
+      "severity": "low",
+      "file": "src/server/actions/tickets.ts",
+      "line": 985,
+      "issue": "moveTicketAction does not verify beforeId ticket's status equals input.status — drop above a row from the wrong column can sort incorrectly",
+      "recommendation": "Validate before.status === input.status"
+    },
+    {
+      "severity": "low",
+      "file": "src/components/search-results.tsx",
+      "line": 238,
+      "issue": "Load more appends without id-dedup or in-flight gate — double-click duplicates the same keyset window",
+      "recommendation": "Dedup by row id when merging (database-view.tsx:1816 already does)"
+    },
+    {
+      "severity": "low",
+      "file": "scripts/backup.test.mjs",
+      "line": 224,
+      "issue": "backup.test.mjs and check-npm-audit.test.mjs fail intermittently in full parallel runs (subprocess/env contention) but pass in isolation — flaky tests",
+      "recommendation": "Give each subprocess test its own isolated env fixture or serialize them"
+    }
+  ],
+  "tests_run": [
+    "npx tsc --noEmit --pretty false (clean)",
+    "npx vitest run (2/14945 flaky failures, pass in isolation)"
+  ],
+  "tests_passed": true
+}

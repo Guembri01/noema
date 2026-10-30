@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { warnIfMultiInstance } from "./multi-instance";
 
 /**
  * B54 — the session registry: bookkeeping for stateless JWT sessions.
@@ -98,6 +99,11 @@ const TOUCH_INTERVAL_MS = 60_000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_ATTEMPTS = 200;
 const LOCK_RETRY_MS = 10;
+
+// P1-T04 — this registry is a single JSON file, not a shared store: the
+// deployment-topology caveat fires once, here at init, when the operator
+// declared more than one instance (`NOEMA_INSTANCES`).
+warnIfMultiInstance();
 
 export function storePath(): string {
   return process.env.SESSION_STORE_PATH || join(process.cwd(), ".data", "sessions.json");

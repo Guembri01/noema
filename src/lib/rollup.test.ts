@@ -133,7 +133,10 @@ describe("rollup aggregation", () => {
     expect(aggregate([], "percent_checked")).toBe("0%");
     expect(aggregate(["", null], "avg")).toBe("—");
     expect(aggregate(["", null], "percent_checked")).toBe("0%");
-    expect(aggregate(["abc", "xyz"], "avg")).not.toMatch(/NaN/i);
+    expect(aggregate(["abc", "xyz"], "avg")).toBe("—");
+    expect(aggregate(["12", "abc"], "avg")).toBe("12"); // agrees with the footer: "abc" excluded
+    expect(aggregate(["12", "abc"], "sum")).toBe("12");
+    expect(aggregate(["12", "abc"], "median")).toBe("12");
     expect(aggregate([true, false], "avg")).toBe("0.50");
     expect(aggregate([true, true, false], "percent_checked")).toBe("67%");
     expect(aggregate([true], "percent_checked")).toBe("100%");

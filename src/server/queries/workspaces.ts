@@ -287,8 +287,14 @@ export async function getPageDetail(pageId: string) {
           content: true,
         },
       },
+      // Only the page-level link belongs to the page share panel (P1-T03).
+      // Without the `viewId` filter a published FORM view's token leaked in as
+      // the page token, so unpublishing matched 0 rows while the dialog kept
+      // showing "published". `orderBy` keeps the pick deterministic.
       shareLinks: {
         select: { id: true, token: true },
+        where: { viewId: null },
+        orderBy: { id: "asc" },
         take: 1,
       },
       comments: {

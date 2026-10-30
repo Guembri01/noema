@@ -305,7 +305,7 @@ async function gotoSettings(page: Page) {
 async function signInPlain(page: Page) {
   await page.goto("/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.getByLabel("Email").fill(USER.email);
-  await page.getByLabel("Password").fill(USER.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(USER.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/w\//, { timeout: UI_TIMEOUT });
 }
@@ -418,7 +418,7 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     if (boot?.twoFactorEnabled && boot.twoFactorSecret) {
       await page.goto("/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.getByLabel("Email").fill(USER.email);
-      await page.getByLabel("Password").fill(USER.password);
+      await page.getByRole("textbox", { name: "Password" }).fill(USER.password);
       await page.getByRole("button", { name: "Sign in" }).click();
       const gateInput = page.getByLabel("Two-factor code");
       await expect(gateInput).toBeVisible({ timeout: UI_TIMEOUT });
@@ -464,7 +464,7 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
 
     // Wrong code → rejected at the gate, session NOT issued.
     await login.getByLabel("Email").fill(USER.email);
-    await login.getByLabel("Password").fill(USER.password);
+    await login.getByRole("textbox", { name: "Password" }).fill(USER.password);
     await login.getByRole("button", { name: "Sign in" }).click();
     const codeInput = login.getByLabel("Two-factor code");
     await expect(codeInput).toBeVisible({ timeout: UI_TIMEOUT });

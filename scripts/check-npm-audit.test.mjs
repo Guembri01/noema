@@ -450,29 +450,36 @@ describe("analyzeAuditReport", () => {
 });
 
 describe("the gate as a command", () => {
-  it("fails when the audit cannot be run", () => {
-    // An unreachable registry is not an empty tree: the gate cannot know the
-    // state of the dependencies, so it has to fail — not pass.
-    let code = 0;
-    let output = "";
-    try {
-      output = execFileSync("node", [GATE], {
-        encoding: "utf8",
-        stdio: "pipe",
-        env: {
-          ...process.env,
-          npm_config_registry: "http://127.0.0.1:1",
-          npm_config_fetch_retries: "0",
-        },
-      });
-    } catch (error) {
-      code = error.status ?? 1;
-      output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-    }
+  it(
+    "fails when the audit cannot be run",
+    // Spawning `npm audit` costs ~7-12 s even on a quiet box (npm boot
+    // dominates; the unreachable registry only refuses the fetch), so
+    // vitest's 5 s default flakes — in isolation too (P3-T09).
+    { timeout: 60_000 },
+    () => {
+      // An unreachable registry is not an empty tree: the gate cannot know the
+      // state of the dependencies, so it has to fail — not pass.
+      let code = 0;
+      let output = "";
+      try {
+        output = execFileSync("node", [GATE], {
+          encoding: "utf8",
+          stdio: "pipe",
+          env: {
+            ...process.env,
+            npm_config_registry: "http://127.0.0.1:1",
+            npm_config_fetch_retries: "0",
+          },
+        });
+      } catch (error) {
+        code = error.status ?? 1;
+        output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+      }
 
-    expect(code).toBe(1);
-    expect(output).toContain("the audit could not be run");
-  });
+      expect(code).toBe(1);
+      expect(output).toContain("the audit could not be run");
+    },
+  );
 });
 
 describe("the accepted advisories", () => {
