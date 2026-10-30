@@ -87,7 +87,6 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) return empty;
 
   await ensurePageShortCode(pageId);
-
   // A published form is a separate public surface; the page share panel only
   // reflects the page-level link (`viewId: null`).
   const link = await prisma.shareLink.findFirst({ where: { pageId, viewId: null } });

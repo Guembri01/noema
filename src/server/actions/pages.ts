@@ -162,7 +162,6 @@ export async function createPageAction(input: {
       },
       select: { id: true },
     });
-
     if ((input.type ?? "PAGE") === "DATABASE") {
       await seedDatabaseStructure(tx, created.id);
     }
