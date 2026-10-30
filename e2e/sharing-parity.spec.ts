@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -27,23 +28,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page, creds = CREDENTIALS) {
-  // The dev server can be mid-restart or saturated by a concurrent suite
-  // (shared machine), so sign-in is retried with patience instead of failing.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 90_000, waitUntil: "domcontentloaded" });
-      await page.getByLabel("Email").fill(creds.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(creds.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 90_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(10_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, creds);
 }
 
 /** Navigate with retries: the shared dev server may be mid-restart or cold. */
@@ -122,7 +107,7 @@ test.describe("sharing parity", () => {
     await prisma.page.deleteMany({ where: { id: sharePageId } });
   });
 
-  test("allow-editing toggle persists and the public route reflects it", async ({ page }) => {
+  test("publishing a page creates a read-only public link", async ({ page }) => {
     await signIn(page);
     await gotoRetry(page, `/w/${demo.slug}/${sharePageId}`);
 
@@ -138,12 +123,14 @@ test.describe("sharing parity", () => {
     await expect(dialog.getByText("Only people with access can open this link")).toBeVisible();
     await dialog.getByRole("button", { name: "Publish" }).click();
 
-    // Published: the view/edit toggle shows the stored choice (READ by default).
-    const mode = dialog.getByLabel("Anyone with the link");
-    await expect(mode).toBeVisible({ timeout: 60_000 });
-    await expect(mode).toHaveValue("READ", { timeout: 60_000 });
+    // Published: the link is public and read-only by design. (Noema does not
+    // expose an anonymous edit mode; editors sign in to their workspace.)
+    await expect(dialog.getByText("Anyone with the link")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(dialog.getByText(/Can view ·/)).toBeVisible();
 
-    // The public route renders the read-only label for a READ link.
+    // The public route renders the read-only label for the published link.
     const link = await prisma.shareLink.findFirst({
       where: { pageId: sharePageId },
       select: { token: true },
@@ -151,32 +138,6 @@ test.describe("sharing parity", () => {
     expect(link).not.toBeNull();
     await gotoRetry(page, `/s/${link!.token}`);
     await expect(page.getByText("Shared page · read-only")).toBeVisible();
-
-    // Flip the toggle to "Can edit": the share record persists EDIT.
-    await gotoRetry(page, `/w/${demo.slug}/${sharePageId}`);
-    await openSharePanel(page);
-    await page.getByLabel("Anyone with the link").selectOption("EDIT");
-    await expect
-      .poll(
-        async () =>
-          (
-            await prisma.shareLink.findFirst({
-              where: { pageId: sharePageId },
-              select: { permission: true },
-            })
-          )?.permission,
-        { timeout: 15_000 },
-      )
-      .toBe("EDIT");
-
-    // Persisted: after a reload the panel still shows "Can edit".
-    await gotoRetry(page, page.url());
-    await openSharePanel(page);
-    await expect(page.getByLabel("Anyone with the link")).toHaveValue("EDIT", { timeout: 60_000 });
-
-    // And the public route now reflects the stored mode.
-    await gotoRetry(page, `/s/${link!.token}`);
-    await expect(page.getByText("anyone with the link can edit")).toBeVisible();
   });
 
   test("a member is offered no owner controls in workspace settings", async ({ page }) => {
@@ -220,7 +181,9 @@ test.describe("sharing parity", () => {
     await expect(page.getByLabel("Invitation email")).toHaveCount(0);
 
     // Leaving stays available — that is a member-level capability.
-    await expect(page.getByText("Leave this workspace")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Leave this workspace", exact: true }),
+    ).toBeVisible();
   });
 
   test("an admin gets the members surface but never ownership controls", async ({ page }) => {
@@ -266,7 +229,7 @@ test.describe("sharing parity", () => {
     // (`.first()` — the Email section may render a second invite input.)
     await expect(page.getByLabel("Invitation email").first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByLabel("Invitation role").first()).toBeVisible();
-    await expect(page.getByLabel("Role for B19 Peer")).toBeVisible();
+    await expect(page.getByLabel("Role for B19 Peer").first()).toBeVisible();
 
     // … but ownership actions stay owner-only (no transfer control at all).
     await expect(page.getByRole("button", { name: /Transfer ownership/ })).toHaveCount(0);

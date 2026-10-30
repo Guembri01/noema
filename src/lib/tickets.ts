@@ -288,7 +288,7 @@ export type TrackerTicket = {
   assigneeId: string | null;
   assigneeName: string | null;
   assigneeEmail: string | null;
-  labels: { id: string; name: string; color: string }[];
+  labels: { id: string; name: string; color: string; description: string | null }[];
   labelIds: string[];
   commentCount: number;
   childCount: number;
@@ -312,7 +312,7 @@ type TicketRecord = {
   project: { id: string; name: string; icon: string | null } | null;
   milestone: { id: string; name: string } | null;
   assignee: { id: string; name: string; email: string } | null;
-  labels: { label: { id: string; name: string; color: string } }[];
+  labels: { label: { id: string; name: string; color: string; description: string | null } }[];
   _count: { children: number; comments: number };
 };
 

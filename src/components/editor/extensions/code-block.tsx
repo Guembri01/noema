@@ -18,7 +18,8 @@ import { Z } from "@/lib/design-tokens";
 import { Button } from "@/components/ui/button";
 import { Select, filterOptions, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
-import { MermaidDiagram, isMermaidBlock } from "@/components/diagrams/mermaid-diagram";
+import { MermaidDiagram } from "@/components/diagrams/mermaid-diagram";
+import { isMermaidBlock } from "@/lib/diagrams/mermaid-policy";
 import { PlantUmlDiagram } from "@/components/diagrams/plantuml-diagram";
 import { isPlantUmlLanguage } from "@/lib/diagrams/plantuml-policy";
 
@@ -279,8 +280,13 @@ export function CodeBlockChrome({
           data-code-language-picker=""
           contentEditable={false}
           style={{ zIndex: Z.sticky }}
-          // Keep the editor selection alive while the picker is used.
-          onMouseDown={(event) => event.preventDefault()}
+          // Keep the editor selection alive while the picker is used. Portalled
+          // menu events bubble through this React tree, so let the search field
+          // take focus instead of cancelling every mousedown in the popover.
+          onMouseDown={(event) => {
+            if ((event.target as HTMLElement).closest('[data-testid="select-menu"]')) return;
+            event.preventDefault();
+          }}
         >
           <Select
             options={languageOptions()}
@@ -309,7 +315,10 @@ export function CodeBlockChrome({
         data-copy-state={copy}
         contentEditable={false}
         style={{ zIndex: Z.sticky }}
-        onMouseDown={(event) => event.preventDefault()}
+        onMouseDown={(event) => {
+          if ((event.target as HTMLElement).closest('[data-testid="select-menu"]')) return;
+          event.preventDefault();
+        }}
       >
         <Tooltip label={t(locale, "copyCode")} side="top">
           <Button
@@ -451,7 +460,7 @@ function CodeBlockView({
   };
   const editable = editor.isEditable;
   const language = String(attrs.language ?? "");
-  const isMermaid = isMermaidBlock(language);
+  const isMermaid = isMermaidBlock(language, node.textContent);
   const isPlantUml = isPlantUmlLanguage(language);
   const isDiagram = isMermaid || isPlantUml;
   const blockColor = attrs.blockColor ? String(attrs.blockColor) : null;

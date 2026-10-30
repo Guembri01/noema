@@ -152,11 +152,20 @@ function firstMediaUrl(value: unknown): string | undefined {
   }
   if (value && typeof value === "object") {
     const object = value as Record<string, unknown>;
-    return (
+    const directUrl =
       normalizeText(object.url) ??
       normalizeText(object.src) ??
-      normalizeText(object.href)
-    );
+      normalizeText(object.href);
+    if (directUrl) return directUrl;
+    // FILES values store `{ files: [{ name, url, mimeType }] }`; the legacy
+    // gallery path must read the same shape the FILES cell renders, otherwise
+    // an unconfigured gallery shows a file placeholder instead of its image.
+    if (Array.isArray(object.files)) {
+      for (const file of object.files) {
+        const url = firstMediaUrl(file);
+        if (url) return url;
+      }
+    }
   }
   return undefined;
 }

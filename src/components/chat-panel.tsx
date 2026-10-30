@@ -1240,6 +1240,7 @@ export function ChatPanel({
               : null;
           if (failure) {
             setError({ message: failure, retryBody: body });
+            toast.error(failure);
             if (!acknowledged) restoreDraft();
             dropOptimistic();
           }

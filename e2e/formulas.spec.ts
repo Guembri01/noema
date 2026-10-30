@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient, type Prisma, type PropertyType } from "@prisma/client";
 
 /**
@@ -30,23 +31,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -287,8 +272,15 @@ test("creates a formula column and renders the computed value", async ({ page })
     await openDatabase(page, fixture.pageId);
     await expect(page.locator('tbody input[aria-label="Name"]')).toHaveCount(1);
 
-    // Create the FORMULA column through the New property form.
-    await page.getByRole("button", { name: "New property" }).click();
+    // Create the FORMULA column through the database actions menu. The
+    // "Properties" button opens view settings; New property lives under the
+    // toolbar's overflow menu.
+    await page
+      .locator("#main")
+      .getByRole("button", { name: "More actions" })
+      .last()
+      .click();
+    await page.getByRole("menuitem", { name: "New property" }).click();
     await page.locator("#prop-name").fill("Doubled");
     await page.locator("#prop-type").selectOption("FORMULA");
     // Scoped to #main: the sidebar also has an "Add" button (strict mode).
@@ -323,9 +315,14 @@ test("creates a formula column and renders the computed value", async ({ page })
         { timeout: 60_000, intervals: [2_000] },
       )
       .toBe(true);
-    await expect(page.getByTestId("property-header-Doubled")).toBeVisible({
-      timeout: 60_000,
-    });
+    // The server can persist the property while the client's router refresh is
+    // lost (the same swallowed-action failure mode the poll above handles).
+    // Reload once so the newly-stored column is rendered before assertions.
+    const doubledHeader = page.getByTestId("property-header-Doubled");
+    if (!(await doubledHeader.isVisible().catch(() => false))) {
+      await page.reload({ waitUntil: "domcontentloaded" });
+    }
+    await expect(doubledHeader).toBeVisible({ timeout: 60_000 });
 
     // No expression yet: the cell renders the em-dash placeholder.
     await expect(await cellAt(page, "Doubled", 0)).toHaveText("—");
@@ -344,7 +341,8 @@ test("creates a formula column and renders the computed value", async ({ page })
     // The engine computes 7 * 2 = 14 and the table cell renders it. The save
     // action can be swallowed by the shared dev server: poll the stored
     // expression and re-save idempotently (the dialog re-seeds from config).
-    await dialog.getByRole("button", { name: "Save formula" }).click();
+    // The dialog closes on a successful save, so the retry stays inside the
+    // poll instead of clicking a control that may already be unmounted.
     await expect
       .poll(
         async () => {
@@ -532,24 +530,19 @@ test("links a row through the relation picker", async ({ page }) => {
     await expect(addRelation).toBeVisible();
 
     // Pick the first ticket from the dropdown of the related database's rows.
+    // Selection is written through `onChange` immediately; close the dialog
+    // before polling, and never click the row again while it is open (a second
+    // click would toggle the already-selected target back off).
     await addRelation.click();
-    await page.getByRole("menuitem", { name: /B38 Ticket Alpha/ }).click();
+    await page.getByRole("option", { name: /B38 Ticket Alpha/ }).click();
+    await page.getByRole("button", { name: "Done" }).click();
 
-    // The write persists (re-picked if the shared dev server swallowed it —
-    // only when the UI still shows the stale empty state, so no toggle risk).
+    // The write persists; poll the stored relation rather than re-toggling it.
     await expect
       .poll(
         async () => {
           const ids = await storedPageIds(relation.id, epic.rowIds[0]);
-          if (ids.includes(tickets.rowIds[0])) return true;
-          if (await addRelation.isVisible().catch(() => false)) {
-            await addRelation.click().catch(() => {});
-            await page
-              .getByRole("menuitem", { name: /B38 Ticket Alpha/ })
-              .click()
-              .catch(() => {});
-          }
-          return false;
+          return ids.includes(tickets.rowIds[0]);
         },
         { timeout: 45_000, intervals: [1_000] },
       )

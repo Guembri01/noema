@@ -295,7 +295,7 @@ export function pageRowClass({
  */
 export function pageRowLinkClass(renaming = false): string {
   return cn(
-    "focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-control py-1 text-sm",
+    "focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-control py-1.5 text-sm font-medium",
     renaming && "hidden",
   );
 }
@@ -1436,7 +1436,7 @@ export function PageTree({
             className="absolute left-0 right-0"
             style={{ top: item.top, height: item.height }}
           >
-            <p className="truncate px-1 pt-1 text-2xs font-medium text-muted/90">
+            <p className="truncate px-1 pt-1 text-xs font-semibold text-fg-subtle">
               {item.header.kind === "teamspace" ? `${item.header.icon ?? "👥"} ` : ""}
               {truncateEnd(
                 item.header.kind === "private"
@@ -1462,7 +1462,7 @@ export function PageTree({
   return (
     <>
     <div className="mt-4 flex items-center justify-between px-3">
-      <p className="px-1 text-2xs font-medium text-muted/90">
+      <p className="px-1 text-xs font-semibold text-fg-subtle">
         {t(locale, "pages")}
       </p>
       <Tooltip label={t(locale, "newPage")}>
@@ -1500,7 +1500,7 @@ export function PageTree({
             if (roots.length === 0) return null;
             return (
               <div key={teamspace.id} className="mt-3">
-                <p className="truncate px-1 pb-1 text-2xs font-medium text-muted/90">
+                <p className="truncate px-1 pb-1 text-xs font-semibold text-fg-subtle">
                   {teamspace.icon ?? "👥"}{" "}
                   {truncateEnd(teamspace.name, SECTION_LABEL_MAX)}
                 </p>
@@ -1509,7 +1509,7 @@ export function PageTree({
             );
           })}
           <div className="mt-4">
-            <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
+            <p className="px-1 pb-1 text-xs font-semibold text-fg-subtle">
               {t(locale, "privatePages")}
             </p>
             {renderNodes(null, 0, (node) => !node.teamspaceId)}
@@ -1518,7 +1518,7 @@ export function PageTree({
       )}
       {subPages.length > 0 && (
         <div className="mt-4">
-          <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
+          <p className="px-1 pb-1 text-xs font-semibold text-fg-subtle">
             Sub-pages
           </p>
           <ul className="space-y-px">
@@ -1549,7 +1549,7 @@ export function PageTree({
       )}
       {recentNodes.length > 0 && (
         <div className="mt-4">
-          <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
+          <p className="px-1 pb-1 text-xs font-semibold text-fg-subtle">
             Recent
           </p>
           <ul className="space-y-px">

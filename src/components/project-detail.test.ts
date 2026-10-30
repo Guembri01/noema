@@ -129,9 +129,12 @@ describe("renderToStaticMarkup — project detail", () => {
     expect(html).toContain("Activity");
   });
 
-  it("renders milestones as checkbox-status rows with an inline date picker", () => {
+  it("renders milestones as advance-status rows with an inline date picker", () => {
     expect(html.match(/data-testid="milestone-row"/g)).toHaveLength(2);
-    expect(html).toContain('role="checkbox"');
+    // The status control cycles planned → in progress → done.
+    expect(html).toContain('aria-label="Advance Spec"');
+    expect(html).toContain('aria-label="Advance Build"');
+    expect(html).toContain('data-testid="milestone-status"');
     expect(html).toContain('data-testid="date-picker-trigger"');
   });
 

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -29,23 +30,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 async function gotoWithRetry(page: Page, url: string) {
@@ -157,12 +142,27 @@ test.describe("B18 editor extras", () => {
 
   test("mention picker scopes pages to the current workspace", async ({ page }) => {
     const stamp = Date.now();
+    const hostTitle = `B18 host ${stamp}`;
     const localTitle = `B18 local mention ${stamp}`;
     const foreignTitle = `B18 foreign mention ${stamp}`;
-    const fixture = await buildEditorPage(localTitle);
+    const fixture = await buildEditorPage(hostTitle);
+    let localPageId = "";
     let foreignWorkspaceId = "";
     try {
-      const { owner } = await workspaceAndOwner();
+      const { workspace, owner } = await workspaceAndOwner();
+      // The picker deliberately excludes the page being edited, so the
+      // in-workspace target must be a *different* page from the host.
+      const localPage = await prisma.page.create({
+        data: {
+          workspaceId: workspace.id,
+          type: "PAGE",
+          title: localTitle,
+          createdById: owner.id,
+          position: 1,
+        },
+        select: { id: true },
+      });
+      localPageId = localPage.id;
       const foreignWorkspace = await prisma.workspace.create({
         data: {
           name: `B18 foreign ${stamp}`,
@@ -194,6 +194,9 @@ test.describe("B18 editor extras", () => {
       await expect(menu.getByText(foreignTitle)).toHaveCount(0);
     } finally {
       await fixture.cleanup();
+      if (localPageId) {
+        await prisma.page.delete({ where: { id: localPageId } }).catch(() => {});
+      }
       if (foreignWorkspaceId) {
         await prisma.page
           .deleteMany({ where: { workspaceId: foreignWorkspaceId } })

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient, type Prisma } from "@prisma/client";
 
 /**
@@ -30,21 +31,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 const SECTION_COUNT = 30;

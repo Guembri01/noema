@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -34,25 +35,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  // `domcontentloaded` (not `load`): a busy dev server streams subresources
-  // long after the form is interactive.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000, waitUntil: "domcontentloaded" });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /** Deterministic hydration signal (React has taken over the server HTML). */
@@ -173,7 +156,7 @@ test.describe("media & embeds parity", () => {
       const editor = page.locator(".ProseMirror").first();
       await editor.click();
       await page.keyboard.type("/embed");
-      await page.getByRole("button", { name: /^Embed/ }).click();
+      await page.getByRole("option", { name: /^Embed/ }).click();
 
       await page.keyboard.type("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s");
       await page.keyboard.press("Enter");
@@ -337,7 +320,7 @@ test.describe("media & embeds parity", () => {
       const editor = page.locator(".ProseMirror").first();
       await editor.click();
       await page.keyboard.type("/bookmark");
-      await page.getByRole("button", { name: /^Bookmark/ }).click();
+      await page.getByRole("option", { name: /^Bookmark/ }).click();
 
       // Drive the block's own input rather than trusting autofocus: the editor
       // can reclaim focus right after the node is inserted.

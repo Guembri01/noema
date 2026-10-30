@@ -26,7 +26,7 @@ import {
   TicketTimeline,
   type TicketSortSpec,
 } from "@/components/tickets/ticket-view-renderers";
-import { TicketDrawer, type TicketActivityRow } from "@/components/tickets/ticket-drawer";
+import { TicketDrawer, type TicketActivityRow, type TicketCommentRow } from "@/components/tickets/ticket-drawer";
 import { RecurringTicketsManager } from "@/components/recurring-tickets-manager";
 
 export type { LabelRow, TicketRow } from "@/components/tickets/ticket-types";
@@ -97,6 +97,9 @@ export function TicketsWorkspace({
   const [activityByTicket, setActivityByTicket] = useState<
     Record<string, TicketActivityRow[]>
   >({});
+  const [commentsByTicket, setCommentsByTicket] = useState<Record<string, TicketCommentRow[]>>(
+    {},
+  );
 
   // Keyset pages can echo a row the page already rendered (a `?ticket=` deep link
   // leads the list with a row that a later "Load more" may also return), and two
@@ -177,7 +180,12 @@ export function TicketsWorkspace({
 
   const addLabel = (values: Record<string, string>) =>
     run("Label created", async () => {
-      const result = await createLabelAction({ workspaceId, name: values.name });
+      const result = await createLabelAction({
+        workspaceId,
+        name: values.name,
+        color: values.color || "blue",
+        description: values.description || undefined,
+      });
 
       return "error" in result ? { ok: false, message: result.error } : { ok: true };
     });
@@ -224,20 +232,23 @@ export function TicketsWorkspace({
   // transport failure is swallowed into an empty trail (`safeAction`) so the
   // drawer still renders; the cache guard keeps this effect from looping.
   useEffect(() => {
-    if (!selected || selected in activityByTicket) return;
+    if (!selected || (selected in activityByTicket && selected in commentsByTicket)) return;
     const ticketId = selected;
     let cancelled = false;
     void (async () => {
       const outcome = await safeAction(() => getTicketActivityAction(ticketId), { locale });
       const rows =
         outcome.ok && "activity" in outcome.value ? outcome.value.activity : [];
+      const comments =
+        outcome.ok && "comments" in outcome.value ? outcome.value.comments : [];
       if (cancelled) return;
       setActivityByTicket((current) => ({ ...current, [ticketId]: rows }));
+      setCommentsByTicket((current) => ({ ...current, [ticketId]: comments }));
     })();
     return () => {
       cancelled = true;
     };
-  }, [selected, activityByTicket, locale]);
+  }, [selected, activityByTicket, commentsByTicket, locale]);
 
   return (
     <div>
@@ -355,7 +366,24 @@ export function TicketsWorkspace({
         locale={locale}
         title="Add a label"
         description="Labels are shared across the whole workspace."
-        fields={[{ name: "name", label: "Label name", placeholder: "e.g. bug" }]}
+        fields={[
+          { name: "name", label: "Label name", placeholder: "e.g. bug" },
+          {
+            name: "description",
+            label: "Description",
+            hint: "optional · shown when hovering the label",
+            required: false,
+            multiline: true,
+            placeholder: "What this label means",
+          },
+          {
+            name: "color",
+            label: "Color",
+            kind: "color",
+            defaultValue: "blue",
+            required: false,
+          },
+        ]}
         confirmLabel="Add label"
         onSubmit={(values) => addLabel(values)}
         onClose={() => setLabelDialog(false)}
@@ -425,6 +453,14 @@ export function TicketsWorkspace({
           cycles={cycles}
           patch={patch}
           activity={activityByTicket[active.id] ?? []}
+          comments={commentsByTicket[active.id] ?? []}
+          onCommentAdded={() =>
+            setCommentsByTicket((current) => {
+              const next = { ...current };
+              delete next[active.id];
+              return next;
+            })
+          }
         />
       )}
     </div>

@@ -14,10 +14,12 @@ import {
   ListOrdered,
   ListTodo,
   Minus,
+  Paperclip,
   Palette,
   Strikethrough,
   Underline,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   SwatchButton,
   isActiveSwatch,
@@ -38,8 +40,11 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Z } from "@/lib/design-tokens";
 import { descriptionEntryDoc } from "@/lib/description";
+import { DOCUMENT_ATTACHMENT_ACCEPT } from "@/lib/file-type";
 import { floatingStyle, placeFloating, type Placement } from "@/lib/floating";
 import { t } from "@/lib/i18n";
+import { uploadFile } from "@/lib/upload-client";
+import { mediaKindForMime } from "@/lib/uploaded-media";
 import { cn } from "@/lib/utils";
 
 /** Quiet period after which a typed description is saved. */
@@ -189,6 +194,11 @@ export type TicketDescriptionProps = {
   locale: string;
   /** The ticket whose description this editor owns, for the collaboration room. */
   ticketId?: string;
+  /**
+   * Workspace that owns the ticket. Supplying it enables file attachments in
+   * the description; without it the editor stays text-only.
+   */
+  workspaceId?: string;
   /** Display name advertised to remote collaborators. */
   userName?: string;
   /**
@@ -287,11 +297,14 @@ function TicketDescriptionBody({
   doc,
   text,
   locale,
+  workspaceId,
   onSave,
   collab,
 }: TicketDescriptionProps & { collab: CollaborationSession | null }) {
   const [focused, setFocused] = useState(false);
   const [peers, setPeers] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const [collabStatus, setCollabStatus] = useState<"connecting" | "connected" | "disconnected">(
     "connecting",
   );
@@ -399,6 +412,37 @@ function TicketDescriptionBody({
 
   const choice = editor ? blockChoice(blockFlags(editor)) : "paragraph";
   const hasContent = editor ? !editor.isEmpty : text.trim().length > 0;
+
+  /**
+   * Upload the picked file and drop it in at the caret as a block. The upload
+   * route owns type/size validation; the node stores only the returned URL and
+   * media kind, so an unsupported file never reaches the document.
+   */
+  const attachFile = async (file: File | undefined) => {
+    if (!file || !editor || !workspaceId) return;
+    setUploading(true);
+    try {
+      const asset = await uploadFile(file, workspaceId);
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "image",
+          attrs: {
+            src: asset.url,
+            alt: asset.name,
+            title: asset.name,
+            mediaType: mediaKindForMime(asset.mimeType),
+          },
+        })
+        .run();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
 
   const [panel, setPanel] = useState<DescriptionPanel | null>(null);
   const [linkUrl, setLinkUrl] = useState("");
@@ -652,6 +696,26 @@ function TicketDescriptionBody({
             <Link2 className="h-4 w-4" aria-hidden />
           </ToolButton>
         </span>
+        {workspaceId && (
+          <>
+            <ToolButton
+              label={uploading ? t(locale, "uploading") : t(locale, "attachFile")}
+              active={uploading}
+              onClick={() => fileInput.current?.click()}
+            >
+              <Paperclip className="h-4 w-4" aria-hidden />
+            </ToolButton>
+            <input
+              ref={fileInput}
+              type="file"
+              accept={DOCUMENT_ATTACHMENT_ACCEPT}
+              className="sr-only"
+              tabIndex={-1}
+              aria-label={t(locale, "attachFile")}
+              onChange={(event) => void attachFile(event.target.files?.[0])}
+            />
+          </>
+        )}
         <ToolButton
           label={t(locale, "clearFormatting")}
           onClick={() => run((chain) => chain.clearNodes().unsetAllMarks().run())}

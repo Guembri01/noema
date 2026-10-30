@@ -532,14 +532,14 @@ export function CyclesBoard({
           {
             name: "start",
             label: "Starts",
+            kind: "date",
             defaultValue: editing ? day(editing.startDate) : "",
-            placeholder: "2026-04-01",
           },
           {
             name: "end",
             label: "Ends",
+            kind: "date",
             defaultValue: editing ? day(editing.endDate) : "",
-            placeholder: "2026-04-14",
           },
           {
             name: "goal",

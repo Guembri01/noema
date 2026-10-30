@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_MERMAID_SOURCE_CHARS,
   MERMAID_TEMPLATES,
+  isMermaidBlock,
   isMermaidLanguage,
+  looksLikeMermaidSource,
   mermaidRenderId,
   validateMermaidSource,
 } from "./mermaid-policy";
@@ -34,6 +36,23 @@ describe("Mermaid source policy", () => {
     expect(isMermaidLanguage("mermaid")).toBe(true);
     expect(isMermaidLanguage(" Mermaid ")).toBe(true);
     expect(isMermaidLanguage("typescript")).toBe(false);
+  });
+
+  it("infers Mermaid only for an empty language fence", () => {
+    expect(looksLikeMermaidSource("\n  flowchart TD\n  A --> B")).toBe(true);
+    expect(looksLikeMermaidSource("sequenceDiagram\n  Alice->>Bob: Hi")).toBe(true);
+    expect(looksLikeMermaidSource("classDiagram-v2\n  A <|-- B")).toBe(true);
+    expect(looksLikeMermaidSource("C4Context\n  title System")).toBe(true);
+    expect(looksLikeMermaidSource("const graph = 1;")).toBe(false);
+
+    expect(isMermaidBlock("", "flowchart TD\nA-->B")).toBe(true);
+    expect(isMermaidBlock("   ", "graph LR\nA-->B")).toBe(true);
+    // A directive without a body is still being typed; don't hide the source.
+    expect(isMermaidBlock("", "flowchart TD")).toBe(false);
+    expect(isMermaidBlock("mermaid", "")).toBe(true);
+    // An explicit language always wins; inference must not hijack a real fence.
+    expect(isMermaidBlock("text", "flowchart TD\nA-->B")).toBe(false);
+    expect(isMermaidBlock("typescript", "graph TD")).toBe(false);
   });
 
   it("generates stable, distinct render ids", () => {

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
+import { signInWithSession } from "./auth";
 
 /**
  * B12 — object descriptions:
@@ -22,11 +23,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//);
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -88,7 +85,7 @@ async function openDrawer(page: Page, key: string) {
   // Row buttons are server-rendered; clicking before hydration does nothing.
   await waitForHydration(page, "#main button");
   await page.getByRole("button", { name: key }).first().click();
-  const drawer = page.getByRole("dialog", { name: new RegExp(`Ticket ${key}`) });
+  const drawer = page.getByRole("dialog", { name: new RegExp(key) });
   await expect(drawer).toBeVisible();
   return drawer;
 }
@@ -159,7 +156,10 @@ test.describe("descriptions", () => {
 
     try {
       await page.goto(`/w/demo-workspace/projects/${created.id}`);
-      const field = page.getByLabel("Project description");
+      // Streamed Suspense boundaries can leave an inert, hidden copy of the
+      // server segment in `<body>` until React clears it. Scope to `#main` so
+      // the locator only sees the live project surface, not that staging copy.
+      const field = page.locator("#main").getByLabel("Project description");
       // The header form is client-rendered: wait for hydration, or fill()
       // writes to a DOM node React then reconciles away on takeover.
       await waitForHydration(page, 'textarea[aria-label="Project description"]');
@@ -184,7 +184,7 @@ test.describe("descriptions", () => {
         .toBe("B12 project description edited");
 
       await page.reload();
-      await expect(page.getByLabel("Project description")).toHaveValue(
+      await expect(page.locator("#main").getByLabel("Project description")).toHaveValue(
         "B12 project description edited",
         { timeout: 15_000 },
       );

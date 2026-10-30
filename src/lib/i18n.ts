@@ -428,7 +428,7 @@ const en = {
   removeLink: "Remove link",
   linkUrl: "Link URL",
   comment: "Comment",
-  askAI: "Ask AI",
+  askAI: "Ask the AI",
   undo: "Undo",
   redo: "Redo",
   importFromNotion: "Import from Notion",

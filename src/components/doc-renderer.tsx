@@ -4,7 +4,7 @@ import { MermaidDiagram } from "@/components/diagrams/mermaid-diagram";
 import { UmlDiagramView } from "@/components/diagrams/uml-diagram-view";
 import { PlantUmlDiagram } from "@/components/diagrams/plantuml-diagram";
 import { isPlantUmlLanguage } from "@/lib/diagrams/plantuml-policy";
-import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
+import { isMermaidBlock } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { embedMeta, isSafePdfUrl, resolveEmbed } from "@/lib/embeds";
@@ -848,11 +848,12 @@ function renderBlock(
       // this on the same node is what makes the existing collaboration,
       // import/export and version-history paths work unchanged.
       const language = String(node.attrs?.language ?? "").trim();
-      if (isMermaidLanguage(language)) {
+      const source = nodeText(node);
+      if (isMermaidBlock(language, source)) {
         return (
           <MermaidDiagram
             key={key}
-            source={nodeText(node)}
+            source={source}
             caption={formatCaption(typeof node.attrs?.caption === "string" ? node.attrs.caption : "")}
           />
         );
@@ -1063,7 +1064,14 @@ function renderBlock(
           className={cn("noema-image-block", docClasses("image"))}
           data-width={width === null ? undefined : `${width}%`}
           data-align={align}
-          style={{ width: width === null ? undefined : `${width}%`, ...alignStyle(align) }}
+          // Shrink-wrap when no width is set. A full-width figure would make
+          // `margin: auto` a no-op and every centered/right image would still
+          // sit on the left edge in the read-only/export renderer.
+          style={{
+            width: width === null ? "fit-content" : `${width}%`,
+            maxWidth: "100%",
+            ...alignStyle(align),
+          }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

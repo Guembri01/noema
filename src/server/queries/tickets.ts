@@ -79,7 +79,7 @@ const ticketListSelect = (workspaceId: string) =>
     },
     labels: {
       where: { label: { workspaceId } },
-      select: { label: { select: { id: true, name: true, color: true } } },
+      select: { label: { select: { id: true, name: true, color: true, description: true } } },
     },
     _count: { select: { children: { where: { workspaceId } }, comments: true } },
   }) as const;
@@ -388,7 +388,10 @@ export async function getTicketDetail(ticketId: string, workspaceId: string) {
       reporter: { select: { id: true, name: true, email: true } },
       labels: {
         where: { label: { workspaceId } },
-        select: { id: true, label: { select: { id: true, name: true, color: true } } },
+        select: {
+          id: true,
+          label: { select: { id: true, name: true, color: true, description: true } },
+        },
       },
       children: {
         where: { workspaceId },

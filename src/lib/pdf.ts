@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { existsSync } from "node:fs";
 import { estimateBlockHeight, LINE_HEIGHT, paginateBlocks, type PrintBlock } from "./print-layout";
 import type { RichNode } from "./blocks";
 
@@ -11,10 +12,71 @@ const PT_PER_PX = 0.75;
 /** Row height for a table row, mirroring `print-layout`'s table measurement. */
 const ROW_HEIGHT_PX = 32;
 
-/** Keep only characters the PDF base-14 fonts can encode. */
-function clean(value: string): string {
-  return value.replace(/[^\u0000-\u00ff]/g, "").trimEnd();
+/**
+ * The base-14 PDF fonts only encode Latin-1. A bundled font is ideal, but the
+ * deployment may be offline and the repository does not ship one, so the
+ * exporter probes for a Unicode-capable system face and falls back to the
+ * standard fonts (with Latin-only cleaning) when none is present.
+ */
+const UNICODE_FONT_CANDIDATES = {
+  regular: [
+    process.env.NOEMA_PDF_FONT,
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "C:\\Windows\\Fonts\\calibri.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+  ].filter((path): path is string => Boolean(path)),
+  bold: [
+    process.env.NOEMA_PDF_FONT_BOLD,
+    "C:\\Windows\\Fonts\\segoeuib.ttf",
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+    "C:\\Windows\\Fonts\\calibrib.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+  ].filter((path): path is string => Boolean(path)),
+} as const;
+
+function firstExistingFont(paths: readonly string[]): string | null {
+  for (const path of paths) {
+    try {
+      if (existsSync(path)) return path;
+    } catch {
+      // An unreadable/malformed path is simply not a candidate.
+    }
+  }
+  return null;
 }
+
+/** Register a Unicode font when one is available. */
+function registerFonts(pdf: PDFKit.PDFDocument): {
+  body: string;
+  bold: string;
+  unicode: boolean;
+} {
+  const regular = firstExistingFont(UNICODE_FONT_CANDIDATES.regular);
+  if (!regular) return { body: "Helvetica", bold: "Helvetica-Bold", unicode: false };
+  const bold = firstExistingFont(UNICODE_FONT_CANDIDATES.bold) ?? regular;
+  try {
+    pdf.registerFont("NoemaBody", regular);
+    pdf.registerFont("NoemaBold", bold);
+    return { body: "NoemaBody", bold: "NoemaBold", unicode: true };
+  } catch {
+    return { body: "Helvetica", bold: "Helvetica-Bold", unicode: false };
+  }
+}
+
+/** Keep only characters the PDF base-14 fonts can encode. */
+function clean(value: string, unicode = false): string {
+  return unicode ? value.trimEnd() : value.replace(/[^\u0000-\u00ff]/g, "").trimEnd();
+}
+
 
 function inline(nodes: RichNode[] = []): string {
   return nodes
@@ -67,6 +129,8 @@ export function docToPdf(title: string, doc: unknown): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
       const pdf = new PDFDocument({ size: "A4", margin: 56 });
+      const fonts = registerFonts(pdf);
+      const cleanText = (value: string) => clean(value, fonts.unicode);
       const chunks: Buffer[] = [];
       pdf.on("data", (chunk: Buffer) => chunks.push(chunk));
       pdf.on("end", () => resolve(Buffer.concat(chunks)));
@@ -82,7 +146,7 @@ export function docToPdf(title: string, doc: unknown): Promise<Buffer> {
         marginTop: (topMargin + pdf.page.margins.bottom) / PT_PER_PX,
       };
 
-      const titleText = clean(title || "Untitled");
+      const titleText = cleanText(title || "Untitled");
       const root = doc as RichNode | null;
       const nodes: RichNode[] = Array.isArray(root?.content) ? root.content : [];
 
@@ -105,33 +169,33 @@ export function docToPdf(title: string, doc: unknown): Promise<Buffer> {
       /** Draw one node's content at an absolute page `y`. */
       function drawNode(node: RichNode | null, y: number): void {
         if (!node) {
-          pdf.font("Helvetica-Bold").fontSize(22).text(titleText, leftMargin, y);
+          pdf.font(fonts.bold).fontSize(22).text(titleText, leftMargin, y);
           return;
         }
         switch (node.type) {
           case "heading": {
             const level = Number(node.attrs?.level ?? 1);
             pdf
-              .font("Helvetica-Bold")
+              .font(fonts.bold)
               .fontSize(level === 1 ? 17 : level === 2 ? 14 : 12)
               .fillColor("#000000")
-              .text(clean(inline(node.content)), leftMargin, y)
-              .font("Helvetica");
+              .text(cleanText(inline(node.content)), leftMargin, y)
+              .font(fonts.body);
             break;
           }
           case "paragraph":
             pdf
-              .font("Helvetica")
+              .font(fonts.body)
               .fontSize(11)
               .fillColor("#000000")
-              .text(clean(inline(node.content)) || " ", leftMargin, y);
+              .text(cleanText(inline(node.content)) || " ", leftMargin, y);
             break;
           case "bulletList":
           case "orderedList":
           case "taskList":
-            pdf.font("Helvetica").fontSize(11).fillColor("#000000");
+            pdf.font(fonts.body).fontSize(11).fillColor("#000000");
             (node.content ?? []).forEach((item, index) => {
-              const text = clean(
+              const text = cleanText(
                 inline(item.content?.flatMap((child) => child.content ?? []) ?? []),
               );
               const prefix = node.type === "orderedList" ? `${index + 1}. ` : "- ";
@@ -144,19 +208,19 @@ export function docToPdf(title: string, doc: unknown): Promise<Buffer> {
             break;
           case "blockquote":
             pdf
-              .font("Helvetica")
+              .font(fonts.body)
               .fontSize(11)
               .fillColor("#666666")
-              .text("| " + clean(inline(node.content)), leftMargin + 12, y)
+              .text("| " + cleanText(inline(node.content)), leftMargin + 12, y)
               .fillColor("#000000");
             break;
           case "codeBlock":
             pdf
-              .font("Courier")
+              .font(fonts.unicode ? fonts.body : "Courier")
               .fontSize(9)
               .fillColor("#000000")
-              .text(clean(inline(node.content)), leftMargin, y)
-              .font("Helvetica");
+              .text(cleanText(inline(node.content)), leftMargin, y)
+              .font(fonts.body);
             break;
           case "horizontalRule":
             pdf
@@ -167,23 +231,23 @@ export function docToPdf(title: string, doc: unknown): Promise<Buffer> {
             break;
           case "callout":
             pdf
-              .font("Helvetica")
+              .font(fonts.body)
               .fontSize(11)
               .fillColor("#000000")
-              .text(clean(inline(node.content)), leftMargin, y);
+              .text(cleanText(inline(node.content)), leftMargin, y);
             break;
           case "table":
-            pdf.font("Helvetica").fontSize(10).fillColor("#000000");
+            pdf.font(fonts.body).fontSize(10).fillColor("#000000");
             (node.content ?? []).forEach((row, index) => {
               const cells = (row.content ?? []).map((cell) =>
-                clean(inline(cell.content?.flatMap((child) => child.content ?? []) ?? [])),
+                cleanText(inline(cell.content?.flatMap((child) => child.content ?? []) ?? [])),
               );
               pdf.text(cells.join("   |   "), leftMargin, y + index * ROW_HEIGHT_PX * PT_PER_PX);
             });
             break;
           case "image":
             pdf
-              .font("Helvetica")
+              .font(fonts.body)
               .fontSize(10)
               .fillColor("#666666")
               .text("[image]", leftMargin, y)

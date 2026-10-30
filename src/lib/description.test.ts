@@ -122,8 +122,18 @@ describe("descriptionEntryDoc", () => {
     );
   });
 
-  it("yields an empty doc for an empty description (the placeholder shows)", () => {
-    expect(descriptionEntryDoc(null, "")).toEqual({ type: "doc", content: [] });
+  it("yields one empty paragraph for an empty description (the placeholder shows)", () => {
+    const empty = { type: "doc", content: [] };
+    expect(descriptionEntryDoc(null, "")).toEqual({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
+    // A stored empty doc is normalised on entry too: `content: []` renders as a
+    // zero-height surface, so neither the hint nor the caret would be visible.
+    expect(descriptionEntryDoc(empty, "")).toEqual({
+      type: "doc",
+      content: [{ type: "paragraph" }],
+    });
   });
 });
 

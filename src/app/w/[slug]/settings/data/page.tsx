@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { safeAction } from "@/lib/actions-client";
 import { Section } from "@/components/ui/section";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cleanDisplayText, uniqueRows } from "@/lib/display-text";
 import { SettingsNav } from "../settings-nav";
 import {
   eraseSubjectDataAction,
@@ -96,7 +97,7 @@ export default function DataControlsPage() {
     if (!outcome.ok) {
       setError(outcome.error);
     } else if (outcome.value.ok) {
-      setMessage(outcome.value.summary.text);
+      setMessage(cleanDisplayText(outcome.value.summary.text));
     } else {
       setError(outcome.value.error);
     }
@@ -105,6 +106,14 @@ export default function DataControlsPage() {
     void refresh([]);
   }
 
+  // The plan can name the same row twice after a refresh; render each record
+  // once. Labels come from page/version text, so strip Markdown heading
+  // markers and repeated lines before they reach the UI.
+  const records = useMemo(
+    () =>
+      uniqueRows(snapshot?.records ?? [], (record) => `${record.entity}:${record.id}`),
+    [snapshot],
+  );
   const redactedPreview = useMemo(
     () => snapshot?.redacted.entries.slice(0, 8) ?? [],
     [snapshot],
@@ -158,7 +167,7 @@ export default function DataControlsPage() {
           <Section className="mt-8" title="Export (Art. 15)">
             <div className="rounded-lg border border-border p-4">
               <p className="text-sm">
-                {snapshot.records.length} record{snapshot.records.length === 1 ? "" : "s"} across{" "}
+                {records.length} record{records.length === 1 ? "" : "s"} across{" "}
                 {counts.length} personal-data {counts.length === 1 ? "entity" : "entities"}.
               </p>
               {counts.length > 0 && (
@@ -195,7 +204,7 @@ export default function DataControlsPage() {
 
           <Section className="mt-10" title="Erasure plan (Art. 17)">
             <div className="rounded-lg border border-border p-4">
-              <p className="text-sm">{snapshot.summary.text}</p>
+              <p className="text-sm">{cleanDisplayText(snapshot.summary.text)}</p>
               <p className="mt-1 text-xs text-muted">
                 {snapshot.validation.ok
                   ? `Plan validated: ${snapshot.validation.checked} personal field(s) covered.`
@@ -203,7 +212,7 @@ export default function DataControlsPage() {
               </p>
 
               <ul className="mt-4 divide-y divide-border rounded-card border border-border">
-                {snapshot.records.map((record) => (
+                {records.map((record) => (
                   <li key={record.key} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <input
                       type="checkbox"
@@ -213,14 +222,14 @@ export default function DataControlsPage() {
                     />
                     <span className="w-20 shrink-0 text-xs uppercase text-muted">{record.entity}</span>
                     <span className="min-w-0 flex-1 truncate" title={record.key}>
-                      {record.label}
+                      {cleanDisplayText(record.label)}
                     </span>
                     {holds.has(record.key) && (
                       <span className="shrink-0 text-xs text-warning">legal hold</span>
                     )}
                   </li>
                 ))}
-                {snapshot.records.length === 0 && (
+                {records.length === 0 && (
                   <li className="px-3 py-2 text-sm text-muted">No personal records found.</li>
                 )}
               </ul>

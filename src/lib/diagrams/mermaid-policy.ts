@@ -53,6 +53,44 @@ export function isMermaidLanguage(value: string | null | undefined): boolean {
   return String(value ?? "").trim().toLowerCase() === "mermaid";
 }
 
+/** First non-empty line of a fence, lowercased, without leading whitespace. */
+function firstSignificantLine(source: string): string {
+  return (
+    source
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? ""
+  ).toLowerCase();
+}
+
+/**
+ * A fence whose language was left blank still reads as a Mermaid diagram when
+ * its first line is a Mermaid header. Pasting `flowchart TD` into a plain code
+ * block used to leave the source visible forever, which looked like the diagram
+ * renderer was broken; inference only applies to an empty language so an
+ * explicit `text`/`python` fence is never hijacked.
+ */
+export function looksLikeMermaidSource(source: string): boolean {
+  const first = firstSignificantLine(source);
+  return /^(?:flowchart(?:-elk)?|graph|sequencediagram|classdiagram(?:-v2)?|statediagram(?:-v2)?|erdiagram|gantt|pie|journey|mindmap|timeline|quadrantchart|xychart(?:-beta)?|gitgraph|block-beta|architecture-beta|requirementdiagram|sankey-beta|packet-beta|kanban|radar-beta|treemap-beta|zenuml|c4(?:context|container|component|dynamic|deployment))\b/.test(
+    first,
+  );
+}
+
+/** Whether a code block should use the diagram renderer. */
+export function isMermaidBlock(
+  language: string | null | undefined,
+  source = "",
+): boolean {
+  return (
+    isMermaidLanguage(language) ||
+    (String(language ?? "").trim() === "" &&
+      source.includes("\n") &&
+      looksLikeMermaidSource(source))
+  );
+}
+
 /** Stable, filesystem-free id for Mermaid's render call. */
 export function mermaidRenderId(seed: string): string {
   let hash = 2166136261;

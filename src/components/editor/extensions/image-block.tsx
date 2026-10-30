@@ -120,7 +120,7 @@ const MEDIA_KINDS: readonly MediaKind[] = ["image", "video", "audio", "file"];
 const VIDEO_EXTENSION = /\.(mp4|m4v|webm|ogv|mov)$/;
 const AUDIO_EXTENSION = /\.(mp3|wav|m4a|aac|oga|ogg|flac)$/;
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|tiff?)$/;
-const FILE_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|csv|txt|md|json|zip|rar|7z|tar|gz)$/;
+const FILE_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv|txt|md|json|zip|rar|7z|tar|gz)$/;
 
 /** Normalise a stored `mediaType` (an explicit declaration wins over the URL). */
 export function mediaKindAttr(value: unknown): MediaKind | null {
@@ -443,6 +443,10 @@ export function ImageView({
                 data-testid={`image-align-${value}`}
                 aria-label={t(locale, labelKey)}
                 aria-pressed={align === value}
+                // Keep focus where it is (usually the caption/alt input).
+                // Blurring it commits an attribute update, which replaces this
+                // button between mousedown and mouseup and swallows the click.
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => updateAttributes({ align: value })}
               >
                 <Icon className="h-3.5 w-3.5" />

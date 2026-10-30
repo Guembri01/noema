@@ -214,6 +214,22 @@ describe("DocRenderer external images (B69)", () => {
     expect(srcsOf(render(imageDoc("javascript:alert(1)")))).toEqual([]);
   });
 
+  it("shrink-wraps an unsized picture so centring can take effect", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "image",
+          attrs: { src: "/api/files/ws-1/a.png", align: "center", alt: "centred" },
+        },
+      ],
+    });
+    expect(html).toContain("width:fit-content");
+    expect(html).toContain("max-width:100%");
+    expect(html).toContain("margin-left:auto");
+    expect(html).toContain("margin-right:auto");
+  });
+
   it("proxies the favicon and the og:image of a bookmark card", () => {
     const html = render({
       type: "doc",

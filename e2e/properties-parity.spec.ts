@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient, type Prisma, type PropertyType } from "@prisma/client";
 
 /**
@@ -29,23 +30,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
 }
 
 /**
@@ -418,7 +403,10 @@ test("renames a select option and recolours it, persisting across a reload", asy
     await expect(editor).toBeVisible();
 
     // Colour first (the label carries the current name, which renames below).
-    await editor.getByLabel("Color: Bronze").selectOption("red");
+    await editor
+      .getByLabel("Color: Bronze")
+      .getByRole("button", { name: "red", exact: true })
+      .click();
     await pollDb(
       async () => {
         const config = await storedPropertyConfig(fixture.pageId, "Tier");
@@ -426,7 +414,11 @@ test("renames a select option and recolours it, persisting across a reload", asy
         return options[0]?.color === "red";
       },
       async () => {
-        await editor.getByLabel("Color: Bronze").selectOption("red").catch(() => {});
+        await editor
+          .getByLabel("Color: Bronze")
+          .getByRole("button", { name: "red", exact: true })
+          .click()
+          .catch(() => {});
       },
       "option colour not stored",
     );
@@ -453,7 +445,7 @@ test("renames a select option and recolours it, persisting across a reload", asy
     const chip = page.getByTestId("option-chip");
     await expect(chip).toContainText("Platinum");
     await expect(chip).not.toContainText("Bronze");
-    await expect(chip).toHaveCSS("color", "rgb(220, 38, 38)"); // red
+    await expect(chip).toHaveAttribute("data-color", "red");
   } finally {
     await fixture.cleanup();
   }
@@ -787,7 +779,7 @@ const PNG_1PX = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
-const PNG_URI = `data:image/png;base64,${PNG_1PX.toString("base64")}`;
+
 
 test("attaches a file to a cell and previews images in the gallery", async ({ page }) => {
   const fixture = await buildDatabase(
@@ -798,7 +790,17 @@ test("attaches a file to a cell and previews images in the gallery", async ({ pa
     [
       {
         title: "B17 Row",
-        values: { Attachment: { files: [{ name: "shot.png", url: PNG_URI }] } },
+        values: {
+          Attachment: {
+            files: [
+              {
+                name: "shot.png",
+                url: "http://localhost:3200/api/assets/e2e-shot.png",
+                mimeType: "image/png",
+              },
+            ],
+          },
+        },
       },
     ],
     [
@@ -839,7 +841,7 @@ test("attaches a file to a cell and previews images in the gallery", async ({ pa
     const banner = page.getByTestId("gallery-banner").first();
     const image = banner.locator("img");
     await expect(image).toBeVisible();
-    await expect(image).toHaveAttribute("src", /^data:image\/png/);
+    await expect(image).toHaveAttribute("src", /\/api\/files\//);
   } finally {
     await fixture.cleanup();
   }

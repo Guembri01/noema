@@ -30,7 +30,6 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
-import { NotionImportDialog } from "@/components/notion-import-dialog";
 import { WorkspaceDialog } from "@/components/workspace-dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,7 +39,6 @@ import { useIsMac } from "@/lib/use-is-mac";
 import { WorkspaceSwitcher } from "@/components/sidebar/workspace-switcher";
 import { HomeQuickLinks, FavoritesList } from "@/components/sidebar/home-links";
 import { PageTree } from "@/components/sidebar/page-tree";
-import { ImportSection } from "@/components/sidebar/importers";
 import { SidebarFooter } from "@/components/sidebar/sidebar-footer";
 import {
   SIDEBAR_DEFAULT_WIDTH,
@@ -111,7 +109,6 @@ export function Sidebar({
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(tree.filter((p) => p.parentId === null).map((p) => p.id)),
   );
-  const [notionOpen, setNotionOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [sections, setSections] = useState<SidebarSectionVisibility>({
@@ -334,15 +331,7 @@ export function Sidebar({
               addPage={addPage}
               discuss={discuss}
               startTransition={startTransition}
-            >
-              <ImportSection
-                workspace={workspace}
-                addPage={addPage}
-                locale={locale}
-                startTransition={startTransition}
-                onOpenNotion={() => setNotionOpen(true)}
-              />
-            </PageTree>
+            />
           )}
 
           {!hasVisibleSidebarSection(sections) && (
@@ -403,13 +392,6 @@ export function Sidebar({
         mode="create"
         locale={locale}
         onClose={() => setCreateOpen(false)}
-      />
-
-      <NotionImportDialog locale={locale}
-        open={notionOpen}
-        onOpenChange={setNotionOpen}
-        workspaceId={workspace.id}
-        slug={workspace.slug}
       />
 
       <Dialog open={customizeOpen} onOpenChange={setCustomizeOpen}>

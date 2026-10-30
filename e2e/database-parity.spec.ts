@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 import { PrismaClient } from "@prisma/client";
 
 /**
@@ -27,23 +28,18 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another suite's
-  // Tier HEAVY build), so sign-in is retried instead of failing the test.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto("/login", { timeout: 60_000 });
-      await page.getByLabel("Email").fill(CREDENTIALS.email);
-      await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-      await page.getByRole("button", { name: "Sign in" }).click();
-      await page.waitForURL(/\/w\//, { timeout: 60_000 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(5_000);
-    }
-  }
-  throw lastError;
+  await signInWithSession(page, CREDENTIALS);
+}
+
+/**
+ * Pick one option from the app's custom combobox. The database settings use
+ * the design-system `Select` (a `role="combobox"` trigger + a portalled
+ * `role="option"` list), not a native `<select>`, so `selectOption()` cannot
+ * drive it.
+ */
+async function chooseOption(page: Page, trigger: Locator, label: string) {
+  await trigger.getByRole("combobox").click();
+  await page.getByRole("option", { name: label, exact: true }).click();
 }
 
 /**
@@ -305,28 +301,27 @@ test.describe("database parity", () => {
       // Every step is asserted against the stored configuration: the shared
       // dev server hot-reloads while other suites edit, and one swallowed
       // update must not read as a feature failure (the retry is idempotent).
-      await pollConfig(fixture, (c) => (c.filters?.length ?? 0) >= 1, () =>
-        popover.getByTestId("add-filter").click(),
-      );
+      await popover.getByTestId("add-filter").click();
+      await pollConfig(fixture, (c) => (c.filters?.length ?? 0) >= 1);
       await expect(page.getByRole("button", { name: "Filter (1)" })).toBeVisible();
 
-      await propertySelect.selectOption(fixture.propertyIds.name);
+      await chooseOption(page, propertySelect, "Name");
       await pollConfig(
         fixture,
         (c) => c.filters?.[0]?.propertyId === fixture.propertyIds.name,
-        () => propertySelect.selectOption(fixture.propertyIds.name),
+        () => chooseOption(page, propertySelect, "Name"),
       );
       // Wait for the browser to re-render with the stored value too: the next
-      // write is built from these props, so acting on a stale select would
+      // write is built from these props, so acting on a stale control would
       // revert the property we just changed.
-      await expect(propertySelect).toHaveValue(fixture.propertyIds.name);
-      await operatorSelect.selectOption("starts_with");
+      await expect(propertySelect).toContainText("Name");
+      await chooseOption(page, operatorSelect, "starts with");
       await pollConfig(
         fixture,
         (c) => c.filters?.[0]?.operator === "starts_with",
-        () => operatorSelect.selectOption("starts_with"),
+        () => chooseOption(page, operatorSelect, "starts with"),
       );
-      await expect(operatorSelect).toHaveValue("starts_with");
+      await expect(operatorSelect).toContainText("starts with");
       await valueInput.fill("B15 B");
       await pollConfig(
         fixture,
@@ -363,24 +358,23 @@ test.describe("database parity", () => {
       await expect(popover).toBeVisible();
 
       // Key 1: Estimate, descending.
-      await pollConfig(fixture, (c) => (c.sorts?.length ?? 0) >= 1, () =>
-        popover.getByTestId("add-sort").click(),
-      );
+      await popover.getByTestId("add-sort").click();
+      await pollConfig(fixture, (c) => (c.sorts?.length ?? 0) >= 1);
       await expect(page.getByRole("button", { name: "Sort (1)" })).toBeVisible();
-      await popover.getByTestId("sort-direction").first().selectOption("desc");
+      const firstDirection = popover.getByTestId("sort-direction").first();
+      await chooseOption(page, firstDirection, "Descending");
       await pollConfig(
         fixture,
         (c) => c.sorts?.[0]?.direction === "desc",
-        () => popover.getByTestId("sort-direction").first().selectOption("desc"),
+        () => chooseOption(page, firstDirection, "Descending"),
       );
       // The browser must show the new direction before the next write is
       // composed from these props (otherwise it reverts to "asc").
-      await expect(popover.getByTestId("sort-direction").first()).toHaveValue("desc");
+      await expect(firstDirection).toContainText("Descending");
 
       // Key 2: the next unused property (Due), ascending — breaks the tie.
-      await pollConfig(fixture, (c) => (c.sorts?.length ?? 0) >= 2, () =>
-        popover.getByTestId("add-sort").click(),
-      );
+      await popover.getByTestId("add-sort").click();
+      await pollConfig(fixture, (c) => (c.sorts?.length ?? 0) >= 2);
       await expect(page.getByRole("button", { name: "Sort (2)" })).toBeVisible();
 
       // Render straight from the persisted configuration: two sort keys are
@@ -391,10 +385,10 @@ test.describe("database parity", () => {
       await page.getByTestId("sort-trigger").click();
       const reopened = page.getByTestId("db-sort-popover");
       await expect(reopened.getByTestId("sort-property")).toHaveCount(2);
-      await expect(reopened.getByTestId("sort-property").nth(1)).toHaveValue(
-        fixture.propertyIds.due,
+      await expect(reopened.getByTestId("sort-property").nth(1)).toContainText("Due");
+      await expect(reopened.getByTestId("sort-direction").nth(1)).toContainText(
+        "Ascending",
       );
-      await expect(reopened.getByTestId("sort-direction").nth(1)).toHaveValue("asc");
 
       // …and the visible order needs both keys: Estimate desc puts Gamma
       // first, Alpha/Beta tie at 5 and Due asc decides between them.
@@ -420,17 +414,16 @@ test.describe("database parity", () => {
       await expect(filterPopover).toBeVisible();
       const filterProperty = filterPopover.getByTestId("filter-property");
       const filterValue = filterPopover.getByTestId("filter-value");
-      await pollConfig(fixture, (c) => (c.filters?.length ?? 0) >= 1, () =>
-        filterPopover.getByTestId("add-filter").click(),
-      );
+      await filterPopover.getByTestId("add-filter").click();
+      await pollConfig(fixture, (c) => (c.filters?.length ?? 0) >= 1);
       await expect(page.getByRole("button", { name: "Filter (1)" })).toBeVisible();
-      await filterProperty.selectOption(fixture.propertyIds.name);
+      await chooseOption(page, filterProperty, "Name");
       await pollConfig(
         fixture,
         (c) => c.filters?.[0]?.propertyId === fixture.propertyIds.name,
-        () => filterProperty.selectOption(fixture.propertyIds.name),
+        () => chooseOption(page, filterProperty, "Name"),
       );
-      await expect(filterProperty).toHaveValue(fixture.propertyIds.name);
+      await expect(filterProperty).toContainText("Name");
       await filterValue.fill("Beta");
       await pollConfig(
         fixture,
@@ -491,7 +484,7 @@ test.describe("database parity", () => {
 
       await openDatabase(page, fixture.pageId);
 
-      await page.getByRole("button", { name: "View options" }).click();
+      await page.getByRole("button", { name: "View options" }).first().click();
       await page.getByRole("menuitem", { name: "Duplicate" }).click();
 
       // The copy exists in the database (asserted first: the shared dev server
@@ -533,10 +526,13 @@ test.describe("database parity", () => {
       await openDatabase(page, fixture.pageId);
       await expect(nameCells(page)).toHaveCount(3);
 
-      // Third row = B15 Gamma — deleted, then restored from the panel. The
-      // write is verified against the database and re-clicked if the shared
-      // dev server swallowed the first update.
+      // Third row = B15 Gamma — deleted, then restored from the panel. Row
+      // deletion is confirmed in a dialog before the write happens.
       await page.getByTitle("Delete row").nth(2).click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "Delete row" })
+        .click();
       await expect
         .poll(
           async () => {
@@ -544,9 +540,7 @@ test.describe("database parity", () => {
               where: { id: fixture.rowIds.gamma },
               select: { deletedAt: true },
             });
-            if (row?.deletedAt) return true;
-            await page.getByTitle("Delete row").nth(2).click();
-            return false;
+            return row?.deletedAt !== null;
           },
           { timeout: 30_000, intervals: [1_000] },
         )
@@ -554,7 +548,8 @@ test.describe("database parity", () => {
       await expect(nameCells(page)).toHaveCount(2);
       await expect(page.locator("table")).not.toContainText("B15 Gamma");
 
-      await page.getByRole("button", { name: "Deleted rows" }).click();
+      await page.getByRole("button", { name: "More actions" }).last().click();
+      await page.getByRole("menuitem", { name: "Deleted rows" }).click();
       const panel = page.getByRole("region", { name: "Deleted rows" });
       await expect(panel).toBeVisible();
       await expect(panel).toContainText("B15 Gamma");
@@ -568,7 +563,13 @@ test.describe("database parity", () => {
               select: { deletedAt: true },
             });
             if (row?.deletedAt === null) return true;
-            await panel.getByRole("button", { name: "Restore" }).click();
+            // The panel removes the row as soon as the restore succeeds. Do
+            // not wait the default 30s for a Restore button that may have just
+            // disappeared between the read and this click.
+            const restore = panel.getByRole("button", { name: "Restore" });
+            if (await restore.isVisible().catch(() => false)) {
+              await restore.click({ timeout: 2_000 }).catch(() => {});
+            }
             return false;
           },
           { timeout: 30_000, intervals: [1_000] },
@@ -614,7 +615,7 @@ test.describe("database parity", () => {
       await openDatabase(page, fixture.pageId);
       await expect(page.locator("main table")).toBeVisible();
 
-      await page.getByRole("button", { name: "View options" }).click();
+      await page.getByRole("button", { name: "View options" }).first().click();
       await page.getByRole("menuitem", { name: "Type" }).click();
       // The submenu item renders its view glyph next to the label, so the
       // accessible name is "☰ List" — match on the substring.
@@ -632,7 +633,7 @@ test.describe("database parity", () => {
             });
             if (view?.type === "LIST") return true;
             // Retry the switch if the shared dev server swallowed the update.
-            await page.getByRole("button", { name: "View options" }).click();
+            await page.getByRole("button", { name: "View options" }).first().click();
             await page.getByRole("menuitem", { name: "Type" }).click();
             await page
               .getByRole("menuitem", { name: "List" })
@@ -645,6 +646,11 @@ test.describe("database parity", () => {
         .toBe(true);
 
       // …and the same tab now renders the list view (config kept, type swapped).
+      // The type update can persist while the client refresh is lost; reload
+      // once so the tab reflects the stored view, not the stale table.
+      if (await page.locator("main table").count()) {
+        await page.reload({ waitUntil: "domcontentloaded" });
+      }
       await expect(page.locator("main table")).toHaveCount(0);
       await expect(page.locator("main ul li a").first()).toBeVisible();
       await reloadPage(page);

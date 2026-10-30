@@ -24,6 +24,14 @@ export type FileCategory =
 export const DEFAULT_MIME = "application/octet-stream";
 
 /**
+ * `accept` value for attachment/file pickers: pictures plus every document,
+ * spreadsheet, presentation and archive the upload route stores. Keep this as
+ * the single source of truth so page, ticket and comment pickers cannot drift.
+ */
+export const DOCUMENT_ATTACHMENT_ACCEPT =
+  "image/*,.pdf,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.md,.csv,.json,.zip,.rar,.7z,.gz,.tar";
+
+/**
  * Extension → MIME pairs. Ordered: the first extension listed for a MIME type
  * is the canonical one `extForMime` returns (so `jpg` wins over `jpeg`).
  */
@@ -62,6 +70,9 @@ const EXT_MIME: ReadonlyArray<readonly [string, string]> = [
   ["docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
   ["odt", "application/vnd.oasis.opendocument.text"],
   ["rtf", "application/rtf"],
+  ["ppt", "application/vnd.ms-powerpoint"],
+  ["pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  ["odp", "application/vnd.oasis.opendocument.presentation"],
   // spreadsheets
   ["xls", "application/vnd.ms-excel"],
   ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
@@ -132,6 +143,9 @@ const CATEGORY_BY_MIME: Readonly<Record<string, FileCategory>> = {
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "doc",
   "application/vnd.oasis.opendocument.text": "doc",
   "application/rtf": "doc",
+  "application/vnd.ms-powerpoint": "doc",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "doc",
+  "application/vnd.oasis.opendocument.presentation": "doc",
   "application/vnd.ms-excel": "sheet",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "sheet",
   "application/vnd.oasis.opendocument.spreadsheet": "sheet",

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  commentMentionedUserIds,
+  commentMentionHref,
+  commentMentionToken,
   extractMentions,
   hasMentions,
   parseCommentBody,
@@ -13,8 +16,9 @@ import {
  *
  * A comment string is split into ordered `text` / `mention` / `link` / `emoji`
  * segments. Mentions use the wire token `@[Label](userId)`, links are bare
- * `http(s)://` or `www.` URLs, emoji are `:shortcode:` resolved through
- * `emojiForShortcode`. Malformed input never throws — it degrades to text.
+ * `http(s)://`, `www.` or app-asset `/api/files/...` URLs, and emoji are
+ * `:shortcode:` resolved through `emojiForShortcode`. Malformed input never
+ * throws - it degrades to text.
  */
 
 describe("parseCommentBody", () => {
@@ -56,6 +60,14 @@ describe("parseCommentBody", () => {
       { type: "text", value: ", then " },
       { type: "link", value: "www.b.test" },
       { type: "text", value: "." },
+    ]);
+  });
+
+  it("parses app-owned uploaded assets as links", () => {
+    expect(parseCommentBody("report /api/files/ws-1/report.pdf now")).toEqual([
+      { type: "text", value: "report " },
+      { type: "link", value: "/api/files/ws-1/report.pdf" },
+      { type: "text", value: " now" },
     ]);
   });
 
@@ -132,6 +144,49 @@ describe("hasMentions", () => {
     expect(hasMentions(parseCommentBody("hi @[Ada](u1)"))).toBe(true);
     expect(hasMentions(parseCommentBody("hi 🙂"))).toBe(false);
     expect(hasMentions(undefined as unknown as CommentSegment[])).toBe(false);
+  });
+});
+
+describe("commentMentionedUserIds", () => {
+  it("keeps typed people and legacy ids, ignores navigable targets", () => {
+    const body =
+      "@[Ada](user:u1) @[Bob](u2) @[Roadmap](project:p1) " +
+      "@[Bugs](page:pg1) @[Ship it](milestone:p1:m1) @[Ada](user:u1)";
+    expect(commentMentionedUserIds(body)).toEqual(["u1", "u2"]);
+  });
+
+  it("does not mistake a page token for a user id", () => {
+    expect(commentMentionedUserIds("@[Bugs](page:pg1)")).toEqual([]);
+  });
+});
+
+describe("comment mention links", () => {
+  it("builds the route for each navigable target", () => {
+    expect(commentMentionHref("page:pg1", "acme")).toBe("/w/acme/pg1");
+    expect(commentMentionHref("project:p1", "acme")).toBe("/w/acme/projects/p1");
+    expect(commentMentionHref("milestone:p1:m1", "acme")).toBe(
+      "/w/acme/projects/p1#milestone-m1",
+    );
+    expect(commentMentionHref("user:u1", "acme")).toBeNull();
+    expect(commentMentionHref("page:pg1", "")).toBeNull();
+  });
+
+  it("emits typed tokens the parser round-trips", () => {
+    expect(
+      commentMentionToken({ id: "p1", label: "Roadmap (Q4)", type: "project" }),
+    ).toBe("@[Roadmap Q4](project:p1)");
+    expect(
+      commentMentionToken({
+        id: "m1",
+        label: "Ship it",
+        type: "milestone",
+        projectId: "p1",
+      }),
+    ).toBe("@[Ship it](milestone:p1:m1)");
+    const token = commentMentionToken({ id: "pg1", label: "Bugs", type: "page" });
+    expect(parseCommentBody(token)).toEqual([
+      { type: "mention", value: "Bugs", id: "page:pg1" },
+    ]);
   });
 });
 

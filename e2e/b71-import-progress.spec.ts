@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInWithSession } from "./auth";
 
 /**
  * B71 — Notion import dialog progress surface (D23.4, spec `import-export.md`
@@ -29,24 +30,23 @@ test.setTimeout(300_000);
 test.use({ trace: "off", actionTimeout: 20_000 });
 
 async function signIn(page: Page) {
-  await page.goto("/login", NAV_TIMEOUT);
-  await page.getByLabel("Email").fill(CREDENTIALS.email);
-  await page.getByRole("textbox", { name: "Password" }).fill(CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/w\//, NAV_TIMEOUT);
+  await signInWithSession(page, CREDENTIALS, { timeout: NAV_TIMEOUT.timeout });
 }
 
 test("notion import dialog shows a stage/count status line, not a bare pending flag", async ({
   page,
 }) => {
   await signIn(page);
+  // Import moved out of the sidebar into its own settings section.
+  await page.goto("/w/demo-workspace/settings/import", { waitUntil: "domcontentloaded" });
 
-  await page.getByRole("button", { name: "Import from Notion (API)" }).click();
+  await page.getByTestId("import-source-notion").click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible(NAV_TIMEOUT);
 
   await dialog.locator("#notion-token").fill("secret_b71_dummy_token");
   await dialog.locator("#notion-page").fill("b71-dummy-page-id");
+  await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
 
   // The status region exists and is visible while the action runs (this is
@@ -60,6 +60,7 @@ test("notion import dialog shows a stage/count status line, not a bare pending f
   const summary = status.locator("p", { hasText: "Imported" });
   await expect(alert.or(summary)).toBeVisible({ timeout: 90_000 });
 
-  // The dialog returns to a usable import action after the failure settles.
-  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toBeEnabled();
+  // The dialog remains usable after the failure settles (its footer offers
+  // Cancel; the import action is not re-offered once the run finished).
+  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
 });

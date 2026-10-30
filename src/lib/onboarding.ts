@@ -32,14 +32,14 @@ export function buildOnboardingChecklist(
       id: "page",
       title: "Create your first page",
       description: "Start with a blank page or one of the quick-start templates.",
-      href: home,
+      href: `${home}#quick-start`,
       done: counts.pages > 0,
     },
     {
       id: "database",
       title: "Create a database",
       description: "Track tasks, projects or any structured list with views.",
-      href: home,
+      href: `${home}#quick-start`,
       done: counts.databases > 0,
     },
     {
@@ -53,7 +53,7 @@ export function buildOnboardingChecklist(
       id: "file",
       title: "Upload a file",
       description: "Images, PDFs and documents live beside your notes.",
-      href: home,
+      href: `${home}#quick-start`,
       done: counts.assets > 0,
     },
   ];

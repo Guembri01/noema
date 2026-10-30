@@ -414,6 +414,8 @@ export default async function PageRoute({
       <DeferredCommentPanel
           locale={locale}
         pageId={page.id}
+        workspaceId={workspace.id}
+        workspaceSlug={slug}
         comments={comments}
         currentUserId={user.id}
         canComment={canComment}

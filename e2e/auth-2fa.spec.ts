@@ -16,7 +16,7 @@ import { decryptSecret } from "../src/lib/secrets";
  *      the gate, and the session lands back in the workspace.
  *
  * Fixture discipline: a DEDICATED prisma-created
- * user + workspace (`b95-2fa-user@example.test`), never `demo@noema.local` —
+ * user + workspace (`b95-2fa-user-<run>@example.test`), never `demo@noema.local` —
  * the demo account's 2FA columns are snapshotted in beforeAll and asserted
  * untouched at the end of the enrollment test. Cleanup is try/finally in
  * afterAll: the TOTP secret rows (`User.twoFactorSecret` / `twoFactorEnabled`
@@ -39,12 +39,13 @@ import { decryptSecret } from "../src/lib/secrets";
  *    skipped/xfailed tests are not allowed).
  */
 
+const RUN = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 const USER = {
-  email: "b95-2fa-user@example.test",
+  email: `b95-2fa-user-${RUN}@example.test`,
   password: "B95-2fa-passw0rd!",
   name: "B95 Two-Factor",
 };
-const WORKSPACE = { slug: "b95-2fa-ws", name: "B95 2FA Workspace" };
+const WORKSPACE = { slug: `b95-2fa-ws-${RUN}`, name: "B95 2FA Workspace" };
 const DEMO_EMAIL = "demo@noema.local";
 const SETTINGS_URL = `/w/${WORKSPACE.slug}/settings`;
 const UI_TIMEOUT = 30_000;
@@ -209,10 +210,11 @@ async function demoTwoFactorSnapshot() {
 
 let demoBefore: Awaited<ReturnType<typeof demoTwoFactorSnapshot>> = null;
 
-test.beforeAll(async () => {
-  // Idempotent: a crashed previous run must not leave the fixture behind.
-  await prisma.workspace.deleteMany({ where: { slug: WORKSPACE.slug } });
-  await prisma.user.deleteMany({ where: { email: USER.email } });
+async function setupFixtureWorkspace() {
+  // Idempotent: a crashed previous run must not leave a fixture behind. The
+  // prefix sweep also clears old runs whose random suffix differs.
+  await prisma.workspace.deleteMany({ where: { slug: { startsWith: "b95-2fa-ws-" } } });
+  await prisma.user.deleteMany({ where: { email: { startsWith: "b95-2fa-user-" } } });
   const user = await prisma.user.create({
     data: {
       email: USER.email,
@@ -231,7 +233,9 @@ test.beforeAll(async () => {
     },
   });
   demoBefore = await demoTwoFactorSnapshot();
-});
+}
+
+test.beforeAll(setupFixtureWorkspace);
 
 test.afterAll(async () => {
   try {
@@ -330,7 +334,13 @@ async function enrollThroughSettings(page: Page): Promise<string> {
   expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
 
   await tf.getByLabel("Authentication code").fill(totp(secret));
-  await tf.getByRole("button", { name: "Verify & enable" }).click();
+  // The setup UI verifies automatically as soon as the sixth digit lands.
+  // Keep the explicit click as a fallback for environments where onChange
+  // does not auto-submit, but do not wait for a button the UI already removed.
+  const verifyButton = tf.getByRole("button", { name: "Verify & enable" });
+  if (await verifyButton.isVisible().catch(() => false)) {
+    await verifyButton.click();
+  }
 
   await expect(page.getByText("Two-factor enabled").first()).toBeVisible({
     timeout: UI_TIMEOUT,
@@ -372,7 +382,7 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     // to their authenticator was rendered exactly once by the setup panel.
     const tf = twoFactorSection(page);
     await expect(
-      tf.locator("p").filter({ hasText: "Two-factor authentication is" }),
+      tf.getByRole("heading", { name: "Two-factor authentication is" }),
     ).toBeVisible({ timeout: UI_TIMEOUT });
     await expect(tf.getByRole("button", { name: "Enable two-factor" })).toHaveCount(0);
 
@@ -442,24 +452,30 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
 
     // Logout through the real sidebar control.
     await gotoSettings(page);
-    await page.getByRole("button", { name: "Sign out" }).click();
+    await page
+      .getByTestId("sidebar")
+      .getByRole("button", { name: "Sign out", exact: true })
+      .click();
     await page.waitForURL(/\/login/, { timeout: UI_TIMEOUT });
-    await expect(page.getByLabel("Email")).toBeVisible();
+    // Next can leave a hidden copy of the previous app route in <body>; the
+    // login card is the only form inside #main.
+    const login = page.locator("#main");
+    await expect(login.getByLabel("Email")).toBeVisible();
 
     // Wrong code → rejected at the gate, session NOT issued.
-    await page.getByLabel("Email").fill(USER.email);
-    await page.getByRole("textbox", { name: "Password" }).fill(USER.password);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    const codeInput = page.getByLabel("Two-factor code");
+    await login.getByLabel("Email").fill(USER.email);
+    await login.getByRole("textbox", { name: "Password" }).fill(USER.password);
+    await login.getByRole("button", { name: "Sign in" }).click();
+    const codeInput = login.getByLabel("Two-factor code");
     await expect(codeInput).toBeVisible({ timeout: UI_TIMEOUT });
     await expect(
-      page.locator("p").filter({ hasText: "Enter the 6-digit code" }).first(),
+      login.locator("p").filter({ hasText: "Enter the 6-digit code" }).first(),
     ).toBeVisible({ timeout: UI_TIMEOUT });
     await codeInput.fill(staleTotp(secret));
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await login.getByRole("button", { name: "Sign in" }).click();
     // B24 — a wrong code answers with the same text as a wrong password, so
     // the reply never confirms that the password was right.
-    await expect(page.getByRole("alert").first()).toHaveText(
+    await expect(login.getByRole("alert").first()).toHaveText(
       "Incorrect email or password.",
       { timeout: UI_TIMEOUT },
     );
@@ -472,7 +488,7 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     // a fresh code and not a replay (B25).
     await clearSpentStep();
     await codeInput.fill(totp(secret));
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await login.getByRole("button", { name: "Sign in" }).click();
     await page.waitForURL(new RegExp(`/w/${WORKSPACE.slug}`), {
       timeout: UI_TIMEOUT,
     });

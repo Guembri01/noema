@@ -11,6 +11,7 @@ import { commentSchema } from "@/lib/validation";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { logActivity } from "@/lib/activity";
 import { extractMentions, mentionMatches } from "@/lib/comments";
+import { commentMentionedUserIds } from "@/lib/comment-body";
 import {
   blockTextById,
   validateCommentAnchor,
@@ -291,9 +292,13 @@ export async function addCommentAction(input: {
   }
 
   // Mentions: `@Ada` or `@ada@example.com` notifies workspace members whose name
-  // (or email address) matches. The author is never notified of themselves.
+  // (or email address) matches. Typed mention tokens from the composer
+  // (`@[Ada](user:<id>)`) carry the user id directly and must notify too; page,
+  // project and milestone tokens are navigable references, not user mentions.
+  // The author is never notified of themselves.
   const mentions = extractMentions(parsed.data.body);
-  if (mentions.length > 0) {
+  const mentionedUserIds = new Set(commentMentionedUserIds(parsed.data.body));
+  if (mentions.length > 0 || mentionedUserIds.size > 0) {
     const members = await prisma.workspaceMember.findMany({
       where: { workspaceId: page.workspaceId },
       select: {
@@ -305,7 +310,8 @@ export async function addCommentAction(input: {
     const targets = members.filter(
       (member) =>
         member.userId !== user.id &&
-        mentions.some((mention) => mentionMatches(mention, member.user)),
+        (mentionedUserIds.has(member.userId) ||
+          mentions.some((mention) => mentionMatches(mention, member.user))),
     );
     // A guest only reaches the pages in their read scope. A mention is a
     // notification carrying the page id, so a guest outside that scope must

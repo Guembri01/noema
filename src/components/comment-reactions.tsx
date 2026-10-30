@@ -239,11 +239,21 @@ export function CommentReactions({
   userId?: string;
 }) {
   const router = useRouter();
-  const rows = useMemo(() => aggregateReactions(reactions), [reactions]);
+  // A click updates the chips immediately. The server list replaces this
+  // override when the refreshed props arrive; an error drops it again.
+  const [optimisticRows, setOptimisticRows] = useState<ReactionRow[] | null>(null);
+  useEffect(() => {
+    setOptimisticRows(null);
+  }, [reactions]);
+  const rows = useMemo(
+    () => optimisticRows ?? aggregateReactions(reactions),
+    [optimisticRows, reactions],
+  );
   const { popping, clearPop } = useCountPop(reactions);
 
   const toggle = async (emoji: string) => {
     const next = toggleReactionRow(rows, emoji);
+    setOptimisticRows(next);
     onChanged?.(next);
 
     const outcome = await safeAction(
@@ -252,12 +262,14 @@ export function CommentReactions({
     );
     if (!outcome.ok) {
       toast.error(outcome.error);
+      setOptimisticRows(null);
       onChanged?.(rows);
       return;
     }
     const value = outcome.value;
     if (value && typeof value === "object" && "error" in value && value.error) {
       toast.error(String(value.error));
+      setOptimisticRows(null);
       onChanged?.(rows);
       return;
     }

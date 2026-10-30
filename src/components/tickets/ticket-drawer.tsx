@@ -2,6 +2,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useTransition, useState, type ReactNode } from "react";
 import { Archive, MessageSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { CommentComposerTools } from "@/components/comment-composer-tools";
+import {
+  commentMentionHref,
+  parseCommentBody,
+  toPlainText,
+  type CommentSegment,
+} from "@/lib/comment-body";
+import { sanitizeHref } from "@/lib/validation";
 import {
   addTicketCommentAction,
   archiveTicketAction,
@@ -87,6 +95,14 @@ export type TicketActivityRow = {
   actor: { id: string; name: string } | null;
 };
 
+/** One stored ticket comment, as `getTicketDetail` returns it. */
+export type TicketCommentRow = {
+  id: string;
+  body: string;
+  createdAt: string | number | Date;
+  author: { id: string; name: string; email: string };
+};
+
 /** Turn an activity `kind` into a readable verb ("status_changed" → "Status changed"). */
 function activityVerb(kind: string): string {
   const words = kind.replace(/[_-]+/g, " ").trim();
@@ -120,6 +136,65 @@ function activityDetail(detail: unknown): string {
 function activityIso(value: string | number | Date): string | undefined {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/**
+ * Render a ticket comment with the same inline grammar as page comments:
+ * mention chips, bare links and emoji. Attachment lines are plain text plus a
+ * URL, so the URL still becomes a clickable link without a schema change.
+ */
+function TicketCommentText({ body, slug }: { body: string; slug: string }) {
+  const segments = parseCommentBody(body);
+  if (!segments.some((segment) => segment.type !== "text")) {
+    return <p className="whitespace-pre-wrap text-sm">{toPlainText(segments)}</p>;
+  }
+  return (
+    <p className="whitespace-pre-wrap text-sm">
+      {segments.map((segment: CommentSegment, index) => {
+        if (segment.type === "mention") {
+          const href = commentMentionHref(segment.id, slug);
+          const chip = (
+            <span className="rounded-chip bg-surface-2 px-1 font-medium">
+              <bdi>@{segment.value}</bdi>
+            </span>
+          );
+          return href ? (
+            <a key={index} href={href} className="underline-offset-2 hover:underline">
+              {chip}
+            </a>
+          ) : (
+            <span key={index}>{chip}</span>
+          );
+        }
+        if (segment.type === "link") {
+          const href = sanitizeHref(
+            /^www\./i.test(segment.value) ? `https://${segment.value}` : segment.value,
+          );
+          return href ? (
+            <a
+              key={index}
+              href={href}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-accent underline underline-offset-2"
+            >
+              <bdi>{segment.value}</bdi>
+            </a>
+          ) : (
+            <span key={index}>{segment.value}</span>
+          );
+        }
+        if (segment.type === "emoji") {
+          return (
+            <span key={index} role="img" aria-label={`:${segment.id}:`}>
+              {segment.value}
+            </span>
+          );
+        }
+        return <span key={index}>{segment.value}</span>;
+      })}
+    </p>
+  );
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -290,9 +365,12 @@ export type TicketDrawerBodyProps = {
   }[];
   allTickets: TicketRow[];
   activity: TicketActivityRow[];
+  comments?: TicketCommentRow[];
   cycles: { id: string; name: string }[];
   slug: string;
   locale: string;
+  /** Workspace that owns the ticket; enables attach + mention tools. */
+  workspaceId?: string;
   /** Persist a field patch on this ticket. */
   onPatch: (data: Record<string, unknown>, label?: string) => void;
   /** Open another ticket in the same drawer. */
@@ -305,8 +383,8 @@ export type TicketDrawerBodyProps = {
   onToggleLabel: (labelId: string) => void;
   /** Link a related ticket. */
   onLinkTicket: (toId: string, type: string) => void;
-  /** Post a comment. */
-  onAddComment: (body: string) => void;
+  /** Post a comment. Resolves true once the server accepted it. */
+  onAddComment: (body: string) => Promise<boolean>;
 };
 
 /**
@@ -326,9 +404,11 @@ export function TicketDrawerBody({
   projects,
   allTickets,
   activity,
+  comments = [],
   cycles,
   slug,
   locale,
+  workspaceId,
   onPatch,
   onOpen,
   onAddChild,
@@ -338,8 +418,28 @@ export function TicketDrawerBody({
   onAddComment,
 }: TicketDrawerBodyProps) {
   const [comment, setComment] = useState("");
+  const [localComments, setLocalComments] = useState<TicketCommentRow[]>(comments);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
   const [relationQuery, setRelationQuery] = useState("");
   const [relationType, setRelationType] = useState("relates");
+
+  // Server comments replace the local list once they arrive, but an empty
+  // response while the post is in flight must not wipe the optimistic row.
+  useEffect(() => {
+    if (comments.length > 0) setLocalComments(comments);
+  }, [comments]);
+
+  const insertCommentText = (text: string) => {
+    const element = commentRef.current;
+    const start = Math.min(element?.selectionStart ?? comment.length, comment.length);
+    const end = Math.min(element?.selectionEnd ?? start, comment.length);
+    setComment(`${comment.slice(0, start)}${text}${comment.slice(end)}`);
+    window.requestAnimationFrame(() => {
+      element?.focus();
+      const caret = start + text.length;
+      element?.setSelectionRange(caret, caret);
+    });
+  };
 
   // Description: the rich editor owns its own autosave state (see
   // `TicketDescription`), so the drawer only supplies the stored doc.
@@ -560,6 +660,7 @@ export function TicketDrawerBody({
                     key={label.id}
                     hue={label.color}
                     size="sm"
+                    title={label.description || undefined}
                     selected={on}
                     onSelectedChange={() => onToggleLabel(label.id)}
                   >
@@ -584,6 +685,7 @@ export function TicketDrawerBody({
           text={ticket.description ?? ""}
           locale={locale}
           ticketId={ticket.id}
+          workspaceId={workspaceId}
           onSave={(next) => onPatch({ descriptionDoc: next })}
         />
       </DrawerSection>
@@ -732,12 +834,34 @@ export function TicketDrawerBody({
         title={
           <>
             <MessageSquare className="h-3 w-3" aria-hidden /> {t(locale, "commentsHeading")}
-            <Badge tone="neutral" size="sm" count={ticket.commentCount} />
+            <Badge tone="neutral" size="sm" count={Math.max(ticket.commentCount, localComments.length)} />
           </>
         }
       >
-        <div className="flex items-end gap-2">
+        {localComments.length > 0 && (
+          <ul className="mb-3 space-y-3" data-testid="ticket-comments">
+            {localComments.map((entry) => (
+              <li key={entry.id} className="flex gap-2">
+                <Avatar user={{ id: entry.author.id, name: entry.author.name }} size={24} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="truncate text-sm font-medium">{entry.author.name}</span>
+                    <time
+                      dateTime={activityIso(entry.createdAt)}
+                      className="text-2xs text-muted"
+                    >
+                      {formatRelativeTime(entry.createdAt, { locale })}
+                    </time>
+                  </div>
+                  <TicketCommentText body={entry.body} slug={slug} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="space-y-2">
           <textarea
+            ref={commentRef}
             value={comment}
             aria-label={t(locale, "addTicketCommentAria")}
             rows={2}
@@ -745,18 +869,42 @@ export function TicketDrawerBody({
             onChange={(event) => setComment(event.target.value)}
             className="focus-ring u-colors w-full rounded-control border-control bg-bg px-2 py-1.5 text-sm outline-none placeholder:text-muted"
           />
-          <Button
-            type="button"
-            size="sm"
-            variant="primary"
-            disabled={!comment.trim()}
-            onClick={() => {
-              onAddComment(comment);
-              setComment("");
-            }}
-          >
-            {t(locale, "comment")}
-          </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CommentComposerTools
+              compact
+              workspaceId={workspaceId}
+              onInsert={insertCommentText}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              disabled={!comment.trim()}
+              onClick={() => {
+                const text = comment.trim();
+                if (!text) return;
+                const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                setLocalComments((current) => [
+                  ...current,
+                  {
+                    id: optimisticId,
+                    body: text,
+                    createdAt: new Date(),
+                    author: { id: "you", name: "You", email: "" },
+                  },
+                ]);
+                setComment("");
+                void onAddComment(text).then((accepted) => {
+                  if (accepted) return;
+                  setLocalComments((current) =>
+                    current.filter((entry) => entry.id !== optimisticId),
+                  );
+                });
+              }}
+            >
+              {t(locale, "comment")}
+            </Button>
+          </div>
         </div>
       </DrawerSection>
 
@@ -833,7 +981,9 @@ export function TicketDrawer({
   members,
   projects,
   allTickets,
+  workspaceId,
   activity = [],
+  comments = [],
   slug,
   locale,
   onClose,
@@ -841,6 +991,7 @@ export function TicketDrawer({
   onAddChild,
   cycles,
   patch,
+  onCommentAdded,
 }: {
   ticket: TicketRow;
   labels: LabelRow[];
@@ -856,6 +1007,8 @@ export function TicketDrawer({
   workspaceId: string;
   /** Per-ticket activity trail; omit/empty hides the section. */
   activity?: TicketActivityRow[];
+  /** Stored comments for the drawer list. */
+  comments?: TicketCommentRow[];
   slug: string;
   locale: string;
   onClose: () => void;
@@ -864,6 +1017,8 @@ export function TicketDrawer({
   onAddChild: (title: string) => void;
   cycles: { id: string; name: string }[];
   patch: (ticketId: string, data: Record<string, unknown>, label?: string) => void;
+  /** Called after a comment is accepted, so the host refreshes its detail cache. */
+  onCommentAdded?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -945,12 +1100,24 @@ export function TicketDrawer({
     });
 
   const addComment = (body: string) =>
-    startTransition(async () => {
-      const outcome = await safeAction(() => addTicketCommentAction(ticket.id, body), { locale });
-      if (!outcome.ok) toast.error(outcome.error);
-      else if ("error" in outcome.value) toast.error(outcome.value.error);
-      else toast.success(t(locale, "commentAdded"));
-      router.refresh();
+    new Promise<boolean>((resolve) => {
+      startTransition(async () => {
+        const outcome = await safeAction(() => addTicketCommentAction(ticket.id, body), {
+          locale,
+        });
+        if (!outcome.ok) {
+          toast.error(outcome.error);
+          resolve(false);
+        } else if ("error" in outcome.value) {
+          toast.error(outcome.value.error);
+          resolve(false);
+        } else {
+          toast.success(t(locale, "commentAdded"));
+          onCommentAdded?.();
+          resolve(true);
+        }
+        router.refresh();
+      });
     });
 
   const archiveLabel = t(locale, "archiveTicket");
@@ -1014,15 +1181,18 @@ export function TicketDrawer({
         bodyClassName="space-y-5"
       >
         <TicketDrawerBody
+          key={ticket.id}
           ticket={ticket}
           labels={labels}
           members={members}
           projects={projects}
           allTickets={allTickets}
           activity={activity}
+          comments={comments}
           cycles={cycles}
           slug={slug}
           locale={locale}
+          workspaceId={workspaceId}
           onPatch={onPatch}
           onOpen={onOpen}
           onAddChild={onAddChild}

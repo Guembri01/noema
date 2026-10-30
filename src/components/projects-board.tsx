@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DatePicker } from "@/components/ui/date-picker";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AvatarGroup } from "@/components/ui/avatar";
 import { Progress, type ProgressTone } from "@/components/ui/progress";
@@ -556,12 +557,14 @@ export function ProjectsBoard({
             onChange={(event) => setSummary(event.target.value)}
             className="h-9 w-72 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
-          <input
-            type="date"
-            value={dueDate}
+          <DatePicker
+            mode="date"
+            value={{ date: dueDate || null }}
             aria-label={t(locale, "projectDue")}
-            onChange={(event) => setDueDate(event.target.value)}
-            className="h-9 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
+            locale={locale}
+            placeholder={t(locale, "projectDue")}
+            onChange={(next) => setDueDate(next.date ?? "")}
+            className="w-40"
           />
           <Button
             type="button"

@@ -12,7 +12,9 @@ describe("buildOnboardingChecklist", () => {
     expect(checklist.done).toBe(3);
     expect(checklist.complete).toBe(false);
     expect(checklist.steps.find((step) => step.id === "file")?.done).toBe(false);
-    expect(checklist.steps.find((step) => step.id === "database")?.href).toBe("/w/acme");
+    expect(checklist.steps.find((step) => step.id === "database")?.href).toBe(
+      "/w/acme#quick-start",
+    );
     expect(checklist.steps.find((step) => step.id === "member")?.href).toBe("/w/acme/settings");
   });
 

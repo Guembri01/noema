@@ -4,7 +4,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { MermaidConfig } from "mermaid";
 import { cn } from "@/lib/utils";
 import {
-  isMermaidLanguage,
   mermaidRenderId,
   validateMermaidSource,
 } from "@/lib/diagrams/mermaid-policy";
@@ -202,9 +201,4 @@ export function MermaidDiagram({ source, caption = "", className }: MermaidDiagr
       {caption && <p className="noema-image-caption-view">{caption}</p>}
     </div>
   );
-}
-
-/** True when a code-block language should use the diagram renderer. */
-export function isMermaidBlock(language: string | null | undefined): boolean {
-  return isMermaidLanguage(language);
 }
