@@ -20,7 +20,7 @@ vi.mock("@/server/actions/share", () => ({
     expiresAt: null,
     indexing: true,
   })),
-  revokeShareLinkAction: vi.fn(async () => ({ ok: true })),
+  revokeShareLinkAction: vi.fn(async () => ({ ok: true, removed: 0 })),
 }));
 vi.mock("@/server/actions/page-permissions", () => ({
   listPagePermissionsAction: vi.fn(async () => []),
@@ -39,12 +39,15 @@ import {
 } from "@/lib/short-link";
 import {
   COPY_FEEDBACK_MS,
+  LinkSecuritySection,
   LinkSection,
   PUBLISH_TOGGLES,
   PublishSettingsSection,
   ShareSection,
   Switch,
+  linkSecurityPatch,
   publishTogglePatch,
+  type LinkSecurityIntent,
   type PublishToggleId,
 } from "./share-dialog";
 
@@ -150,6 +153,139 @@ describe("Switch", () => {
       createElement(Switch, { checked: false, label: "Indexing", onCheckedChange: vi.fn() }),
     );
     expect(off).toContain('aria-checked="false"');
+  });
+});
+
+/**
+ * P3-T01 — the live link's password and expiry used to be frozen: the publish
+ * form (the only place either was set) is hidden once the link exists. These
+ * pins cover the intent→patch mapping and the rendered clea/replace affordances
+ * of the new settings section.
+ */
+describe("linkSecurityPatch (P3-T01)", () => {
+  it("maps one security intent to exactly one explicit patch key", () => {
+    expect(linkSecurityPatch("clearPassword")).toEqual({ clearPassword: true });
+    expect(linkSecurityPatch("clearExpiry")).toEqual({ clearExpiry: true });
+    expect(linkSecurityPatch("setPassword", { password: "s3cret" })).toEqual({
+      password: "s3cret",
+    });
+    expect(linkSecurityPatch("setExpiry", { expiresInDays: 7 })).toEqual({
+      expiresInDays: 7,
+    });
+  });
+
+  it("patches nothing for a set intent without a usable value", () => {
+    expect(linkSecurityPatch("setPassword", {})).toEqual({});
+    expect(linkSecurityPatch("setPassword", { password: "   " })).toEqual({});
+    expect(linkSecurityPatch("setExpiry", { expiresInDays: 0 })).toEqual({});
+    expect(linkSecurityPatch("setExpiry", { expiresInDays: -3 })).toEqual({});
+  });
+
+  it("never smuggles an unrelated field onto the wire", () => {
+    // Each intent is exactly one key; provided set values ride on that key
+    // and nothing else (no allowEditing, no indexing, no stray fields).
+    const expectedKeys: Record<LinkSecurityIntent, string[]> = {
+      setPassword: ["password"],
+      clearPassword: ["clearPassword"],
+      setExpiry: ["expiresInDays"],
+      clearExpiry: ["clearExpiry"],
+    };
+    for (const intent of Object.keys(expectedKeys) as LinkSecurityIntent[]) {
+      const patch = linkSecurityPatch(intent, { password: "p", expiresInDays: 7 });
+      expect({ intent, keys: Object.keys(patch).sort() }).toEqual({
+        intent,
+        keys: expectedKeys[intent],
+      });
+    }
+  });
+});
+
+describe("LinkSecuritySection (P3-T01)", () => {
+  it("offers clearing a set password and replacing it", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: true,
+        expiresAt: null,
+        onUpdate: vi.fn(),
+      }),
+    );
+    expect(html).toContain('aria-label="Remove password"');
+    expect(html).toContain('aria-label="Update password"');
+    expect(html).toContain("Password-protected");
+    expect(html).not.toContain('aria-label="Add password"');
+  });
+
+  it("offers adding a password when none is set", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: false,
+        expiresAt: null,
+        onUpdate: vi.fn(),
+      }),
+    );
+    expect(html).toContain('aria-label="Add password"');
+    expect(html).toContain("No password");
+    expect(html).not.toContain("Remove password");
+  });
+
+  it("offers clearing a set expiry and shows when the link expires", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: false,
+        expiresAt: "2026-12-01T00:00:00Z",
+        onUpdate: vi.fn(),
+      }),
+    );
+    expect(html).toContain('aria-label="Remove expiry"');
+    expect(html).toContain('aria-label="Update expiry"');
+    expect(html).toContain("Expiring link");
+    expect(html).toContain("2026");
+    expect(html).not.toContain('aria-label="Add expiry"');
+  });
+
+  it("offers adding an expiry when the link never expires", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: false,
+        expiresAt: null,
+        onUpdate: vi.fn(),
+      }),
+    );
+    expect(html).toContain('aria-label="Add expiry"');
+    expect(html).toContain("Never expires");
+    expect(html).not.toContain("Remove expiry");
+  });
+
+  it("disables its controls while a change is pending", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: true,
+        expiresAt: "2026-12-01T00:00:00Z",
+        pending: true,
+        onUpdate: vi.fn(),
+      }),
+    );
+    // All four action buttons render and are locked while pending.
+    for (const label of ["Remove password", "Update password", "Remove expiry", "Update expiry"]) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
+    expect(html).toContain('type="password"');
+    // Inputs stay editable; only the four actions disable, so a draft
+    // survives a slow roundtrip. (`disabled=""` per button — the class list
+    // alone mentions the word more often.)
+    expect(count(html, 'disabled=""')).toBe(4);
+  });
+
+  it("carries typed password inputs on both rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinkSecuritySection, {
+        hasPassword: false,
+        expiresAt: null,
+        onUpdate: vi.fn(),
+      }),
+    );
+    expect(html).toContain('type="password"');
+    expect(html).toContain('type="number"');
   });
 });
 

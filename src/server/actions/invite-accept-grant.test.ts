@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   inviteFindUnique: vi.fn(),
-  inviteUpdate: vi.fn(),
+  inviteUpdateMany: vi.fn(),
   memberFindUnique: vi.fn(),
   workspaceFindUnique: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
@@ -31,7 +31,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    invite: { findUnique: h.inviteFindUnique, update: h.inviteUpdate },
+    invite: { findUnique: h.inviteFindUnique, updateMany: h.inviteUpdateMany },
     workspaceMember: { findUnique: h.memberFindUnique, upsert: h.workspaceMemberUpsert },
     workspace: { findUnique: h.workspaceFindUnique },
     projectMember: { upsert: h.projectMemberUpsert },
@@ -68,7 +68,7 @@ function inviteFixture(overrides: Record<string, unknown> = {}) {
 const writes = () => [
   h.workspaceMemberUpsert,
   h.projectMemberUpsert,
-  h.inviteUpdate,
+  h.inviteUpdateMany,
   h.revalidatePath,
 ];
 
@@ -88,7 +88,7 @@ beforeEach(() => {
     }
     return picked;
   });
-  h.inviteUpdate.mockResolvedValue({ id: "inv-1" });
+  h.inviteUpdateMany.mockResolvedValue({ count: 1 });
   // The sender's access: a member row with the admin role.
   h.memberFindUnique.mockResolvedValue({ role: "ADMIN" });
   h.workspaceFindUnique.mockResolvedValue({ ownerId: "owner-1" });

@@ -79,6 +79,7 @@ is empty until you sign up.
 | `STORAGE_DIR` | no | `/data/uploads` | Uploaded files (local driver). |
 | `S3_BUCKET` | no | — | Store uploads in an S3-compatible bucket instead of `STORAGE_DIR`; pair with `S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_PREFIX`. |
 | `SESSION_STORE_PATH` | no | `/data/sessions.json` | Session store. |
+| `NOEMA_INSTANCES` | no | `1` | Declared replica count. Unset/`1` = the supported single-instance deployment; any n > 1 makes the stateful stores answer with a startup warning — session revocation, rate limits and share-unlock lockouts are per instance only ([`SECURITY.md`](../SECURITY.md#single-instance-state-noema_instances)). |
 | `BACKUP_DIR` | no | `/data/backups` | Backup output directory. |
 | `BACKUP_S3_BUCKET` | no | — | Offsite sealed-backup destination; pair with `BACKUP_S3_ENDPOINT` / `BACKUP_S3_REGION` / `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` / `BACKUP_S3_PREFIX`. |
 

@@ -80,6 +80,38 @@ export function publishTogglePatch(id: PublishToggleId, value: boolean): Publish
   }
 }
 
+/**
+ * P3-T01: one link-security intent as a single-key `ShareOptions` patch, the
+ * exact counterpart of {@link publishTogglePatch} for the live link's
+ * password and expiry. Setting checks its value (an empty password or a
+ * non-positive day count patches nothing); the clear intents send the
+ * explicit booleans the action needs to remove a stored value — the `??`
+ * merge cannot express removal.
+ */
+export type LinkSecurityIntent =
+  | "setPassword"
+  | "clearPassword"
+  | "setExpiry"
+  | "clearExpiry";
+
+export function linkSecurityPatch(
+  intent: LinkSecurityIntent,
+  value: { password?: string; expiresInDays?: number } = {},
+): PublishOptions {
+  switch (intent) {
+    case "setPassword":
+      return value.password && value.password.trim() ? { password: value.password } : {};
+    case "clearPassword":
+      return { clearPassword: true };
+    case "setExpiry":
+      return value.expiresInDays && value.expiresInDays > 0
+        ? { expiresInDays: value.expiresInDays }
+        : {};
+    case "clearExpiry":
+      return { clearExpiry: true };
+  }
+}
+
 /** How long the copy button shows its success (checkmark) state, in ms. */
 export const COPY_FEEDBACK_MS = 1500;
 
@@ -311,6 +343,137 @@ export function LinkSection({
   );
 }
 
+/** Secondary action button styling for the link-settings rows. */
+const LINK_SETTINGS_BUTTON =
+  "focus-ring u-colors flex h-9 shrink-0 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40";
+
+/**
+ * P3-T01: the live link's password and expiry settings.
+ *
+ * The publish form is hidden once the link exists, but a set password or
+ * expiry used to be frozen forever — the only escape was to unpublish and
+ * republish (a new token). This section lets the owner clear either with an
+ * explicit sentinel and set/replace them on the live link, without touching
+ * the token itself.
+ *
+ * Self-contained drafts (client state) so the rendered rows are testable with
+ * `renderToStaticMarkup`; the mapping from an intent to the wire patch is the
+ * pure {@link linkSecurityPatch}, and the parent mirrors the change locally
+ * only after the server accepts it.
+ */
+export function LinkSecuritySection({
+  hasPassword,
+  expiresAt,
+  pending = false,
+  onUpdate,
+}: {
+  hasPassword: boolean;
+  expiresAt: string | null;
+  pending?: boolean;
+  onUpdate: (patch: PublishOptions) => void;
+}) {
+  const [passwordDraft, setPasswordDraft] = useState("");
+  const [daysDraft, setDaysDraft] = useState("");
+
+  const passwordReady = passwordDraft.trim().length > 0;
+  const daysNumber = Number(daysDraft);
+  const daysReady = daysDraft.trim() !== "" && Number.isFinite(daysNumber) && daysNumber > 0;
+
+  /** A no-op patch changes nothing server-side and stays unmirrored. */
+  const emit = (intent: LinkSecurityIntent, value?: { password?: string; expiresInDays?: number }) => {
+    const patch = linkSecurityPatch(intent, value);
+    if (Object.keys(patch).length === 0) return;
+    onUpdate(patch);
+  };
+
+  return (
+    <div className="space-y-3">
+      <label className="block text-sm">
+        <span className="flex items-center gap-1.5">
+          <Lock className="h-3.5 w-3.5 text-muted" aria-hidden /> {t("en", "passwordLabel")}
+          <span className="text-2xs text-muted">
+            {hasPassword ? "· on — leave empty to keep the current one" : `· ${t("en", "optional")}`}
+          </span>
+        </span>
+        <input
+          type="password"
+          value={passwordDraft}
+          onChange={(event) => setPasswordDraft(event.target.value)}
+          placeholder={t("en", "passwordHint")}
+          className="focus-ring mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
+        />
+      </label>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-2xs text-muted">{hasPassword ? "Password-protected" : "No password"}</span>
+        <span className="flex gap-2">
+          {hasPassword ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => emit("clearPassword")}
+              aria-label="Remove password"
+              className={LINK_SETTINGS_BUTTON}
+            >
+              Remove password
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={pending || !passwordReady}
+            onClick={() => emit("setPassword", { password: passwordDraft.trim() })}
+            aria-label={hasPassword ? "Update password" : "Add password"}
+            className={LINK_SETTINGS_BUTTON}
+          >
+            {hasPassword ? "Update password" : "Add password"}
+          </button>
+        </span>
+      </div>
+
+      <label className="block text-sm">
+        <span className="flex items-center gap-1.5">
+          {t("en", "expiresLabel")}
+          <span className="text-2xs text-muted">
+            · {expiresAt ? `until ${new Date(expiresAt).toLocaleDateString("en")}` : t("en", "never")}
+          </span>
+        </span>
+        <input
+          type="number"
+          min="1"
+          value={daysDraft}
+          onChange={(event) => setDaysDraft(event.target.value)}
+          placeholder={t("en", "never")}
+          className="focus-ring mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
+        />
+      </label>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-2xs text-muted">{expiresAt ? "Expiring link" : "Never expires"}</span>
+        <span className="flex gap-2">
+          {expiresAt ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => emit("clearExpiry")}
+              aria-label="Remove expiry"
+              className={LINK_SETTINGS_BUTTON}
+            >
+              Remove expiry
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={pending || !daysReady}
+            onClick={() => emit("setExpiry", { expiresInDays: daysNumber })}
+            aria-label={expiresAt ? "Update expiry" : "Add expiry"}
+            className={LINK_SETTINGS_BUTTON}
+          >
+            {expiresAt ? "Update expiry" : "Add expiry"}
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Notion-like share panel: "Invite" (who has access), "General access" (the
  * public link's view/edit choice), "Publish settings" (the three switches) and
@@ -338,6 +501,14 @@ export function ShareDialog({
   const [days, setDays] = useState("");
   const [created, setCreated] = useState<string | null>(null);
   const [indexing, setIndexing] = useState(false);
+  /**
+   * P3-T01: the live link's stored password/expiry, mirrored locally so the
+   * settings section can offer clear affordances. Kept in sync with the
+   * server: re-read when the panel opens, mirrored after this session accepted
+   * a change.
+   */
+  const [hasPassword, setHasPassword] = useState(false);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
 
   // The stored link choices travel with the link, so re-read them every time
@@ -351,6 +522,8 @@ export function ShareDialog({
       .then((state) => {
         if (!live) return;
         setIndexing(state.indexing);
+        setHasPassword(state.hasPassword);
+        setExpiresAt(state.expiresAt);
       })
       .catch(() => {
         // Fail closed: keep the default read-only choice on any error.
@@ -396,10 +569,39 @@ export function ShareDialog({
         const value = result.url.replace("/s/", "");
         setCreated(value);
         onTokenChange(value);
+        // P3-T01: mirror what this publish persisted, so the live-link
+        // settings section reflects the link's state without another fetch.
+        setHasPassword(Boolean(options.password));
+        setExpiresAt(
+          options.expiresInDays && options.expiresInDays > 0
+            ? new Date(Date.now() + options.expiresInDays * 86_400_000).toISOString()
+            : null,
+        );
         router.refresh();
       },
     });
   };
+
+  /**
+   * P3-T01: persist one link-security change on the live link — set or clear
+   * the password/expiry with an explicit patch ({@link linkSecurityPatch}).
+   * The token survives: this is an update, not a rebublish. Mirrored locally
+   * only once the server accepts it, and a no-op patch (already empty) is
+   * dropped server-side without an audit line.
+   */
+  const updateLinkSecurity = (patch: PublishOptions) =>
+    run(() => createShareLinkAction(pageId, patch), {
+      onSuccess: () => {
+        if (patch.clearPassword) setHasPassword(false);
+        else if (patch.password) setHasPassword(true);
+        if (patch.clearExpiry) setExpiresAt(null);
+        else if (patch.expiresInDays && patch.expiresInDays > 0) {
+          setExpiresAt(
+            new Date(Date.now() + patch.expiresInDays * 86_400_000).toISOString(),
+          );
+        }
+      },
+    });
 
   /**
    * Persist one publish setting on the share link, mirroring it locally only
@@ -419,10 +621,17 @@ export function ShareDialog({
   const unpublish = () => {
     setConfirmUnpublish(false);
     run(() => revokeShareLinkAction(pageId), {
-      success: "Unpublished",
-      onSuccess: () => {
+      onSuccess: (result) => {
+        if (!("removed" in result)) return;
+        // A form-only published page has no page-level link: deleting 0 rows
+        // is a no-op, so the feedback says "not published" instead of "Unpublished".
+        toast[result.removed > 0 ? "success" : "info"](
+          result.removed > 0 ? "Unpublished" : "Not published",
+        );
         setCreated(null);
         setIndexing(false);
+        setHasPassword(false);
+        setExpiresAt(null);
         onTokenChange(null);
         router.refresh();
       },
@@ -532,6 +741,22 @@ export function ShareDialog({
                   settings={{ indexing }}
                   pending={pending}
                   onToggle={toggleSetting}
+                />
+              </ShareSection>
+
+              {/* P3-T01: the publish form hides once the link is live, so the
+                  password and expiry used to be frozen — only an unpublish
+                  (which rotates the token) could lift them. This section
+                  edits them in place on the live link. */}
+              <ShareSection
+                title="Link settings"
+                hint="Change the password or expiry without changing the link."
+              >
+                <LinkSecuritySection
+                  hasPassword={hasPassword}
+                  expiresAt={expiresAt}
+                  pending={pending}
+                  onUpdate={updateLinkSecurity}
                 />
               </ShareSection>
 

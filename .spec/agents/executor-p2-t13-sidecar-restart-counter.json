@@ -1,0 +1,36 @@
+{
+  "agent": "executor",
+  "status": "complete",
+  "timestamp": "2026-10-27T00:00:00Z",
+  "task": "P2-T13 — reset sidecar restart counter on readiness (attempt was a lifetime count, disabling auto-restart after 8 starts)",
+  "files_changed": ["src-tauri/src/sidecar.rs"],
+  "implementation": {
+    "fix": "In start()'s `Readiness::Ready` branch (src-tauri/src/sidecar.rs:653-655 post-edit), alongside the info write and before `Ok`/emit: `*state.attempt.lock().await = attempt_after_start(attempt, true);`",
+    "race_free_because": "The reset lives on the same task/future that observed `Readiness::Ready`, inside start() itself — NOT in a spawned background task. The mutex write completes before start() returns Ok, so any subsequent `Terminated` event → spawn_log_pump → restart() necessarily reads the already-reset counter. Only one future ever holds the increment and the reset; no background task races a stale count.",
+    "extracted_seams": [
+      "pub const MAX_RESTART_ATTEMPTS: u32 = 8 (beside should_restart, same free-function testability convention)",
+      "pub fn will_attempt_restart(attempt: u32) -> bool — replaces inline `attempt < 8` in restart()",
+      "pub fn attempt_after_start(attempt: u32, ready: bool) -> u32 — ready ⇒ 0 (mean-revert), not-ready ⇒ unchanged (crash-loop accumulation preserved); called literally from start()'s Ready branch"
+    ]
+  },
+  "tests_added": [
+    "attempt_after_ready_mean_reverts_the_budget (7→0 on ready; 7→7 when never ready)",
+    "eight_healthy_starts_and_a_crash_still_auto_restart (replays the exact start()/restart() transitions; 8 incremented+reset runs leave attempt==0, one crash ⇒ will_attempt_restart true — the issue's headline scenario)",
+    "eight_consecutive_failures_still_give_up (never-ready starts keep the count standing ⇒ budget still stops crash loops)"
+  ],
+  "fail_first_evidence": {
+    "method": "defect-semantics mutation probe — set attempt_after_start to return `attempt` when ready (i.e., what pre-fix production did: ready never resets), ran `cargo test --lib --offline sidecar`",
+    "red": "attempt_after_ready_mean_reverts_the_budget FAILED ('a ready start erases every failure before it') and eight_healthy_starts_and_a_crash_still_auto_restart FAILED ('eight ready starts leave no failure behind'); 19 passed, 2 failed",
+    "restore": "file restored from /tmp/opencode/sidecar.rs.fixed, sha256 de3bfbb1e56b6e24d5f41cda02151f121828f972266917f4da89aa62ad32acd1 byte-identical both sides; suite back to green 59/0",
+    "residual_gap": "No unit test can execute start() itself (needs a tauri AppHandle + a spawned sidecar process; no existing scaffolding mocks either). Chosen per the issue's fallback: test the extracted decision functions, which are wired literally (not duplicated) into both call sites — restart() contains `will_attempt_restart(attempt)` and start()'s Ready branch contains `attempt_after_start(attempt, true)`. The mutation probe is genuine red for the defect's semantics (reset no-op); wiring drift is mitigated by the seams living adjacent to the call sites and by MAX_RESTART_ATTEMPTS being the only budget constant."
+  },
+  "verification": {
+    "cargo_test": "cargo test --lib --offline (src-tauri) → 59 passed; 0 failed (was 56 pre-change; +3 new). Placeholder dance not needed — lib-only target avoids the icon/sidecar-binary resource gaps from T12.",
+    "cargo_fmt": "cargo fmt -- --check src/sidecar.rs → clean, exit 0",
+    "tsc": "skipped per instructions (npx tsc --noEmit already passed post-T12; no TS/TSX files touched)"
+  },
+  "no_git_mutations": true,
+  "prior_files_untouched": true,
+  "git_diff_stat": "src-tauri scoped diff: src-tauri/src/sidecar.rs (this change, +92/-0 lines net incl. tests) and src-tauri/src/secrets.rs (T12's prior uncommitted change — NOT touched by this task). No untracked placeholder artifacts in src-tauri.",
+  "packages_installed": []
+}

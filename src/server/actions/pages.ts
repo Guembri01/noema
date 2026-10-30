@@ -788,12 +788,17 @@ export async function transferPageAction(
     for (const child of childrenByParent.get(current) ?? []) queue.push(child);
   }
 
-  await prisma.page.updateMany({
-    where: { id: { in: ids } },
-    data: { workspaceId: targetWorkspaceId },
-  });
-  // The moved root becomes a top-level page in the target workspace.
-  await prisma.page.update({ where: { id: pageId }, data: { parentId: null } });
+  // P2-T02: both writes are one atomic unit. A subtree that moved workspaces
+  // while the root re-parent failed would strand cross-workspace orphaned
+  // children — the transaction rolls both writes back together.
+  await prisma.$transaction([
+    prisma.page.updateMany({
+      where: { id: { in: ids } },
+      data: { workspaceId: targetWorkspaceId },
+    }),
+    // The moved root becomes a top-level page in the target workspace.
+    prisma.page.update({ where: { id: pageId }, data: { parentId: null } }),
+  ]);
 
   revalidatePath("/w", "layout");
   return { ok: true };
@@ -813,10 +818,19 @@ export async function archivePageAction(pageId: string): Promise<Result> {
     select: { id: true, parentId: true },
   });
   const ids = subtreeClosure(nodes, [pageId]);
-  await prisma.page.updateMany({
-    where: { id: { in: ids }, workspaceId: auth.page.workspaceId, deletedAt: null },
-    data: { deletedAt: new Date(), isArchived: true },
-  });
+  // P2-T08: the trash write and the revoke of the subtree's page-level share
+  // links are one transaction — a link that outlives its trashed page would
+  // keep serving it (and silently revive on restore). Form links are
+  // view-scoped and stay; they are gated at the form endpoints themselves.
+  await prisma.$transaction([
+    prisma.page.updateMany({
+      where: { id: { in: ids }, workspaceId: auth.page.workspaceId, deletedAt: null },
+      data: { deletedAt: new Date(), isArchived: true },
+    }),
+    prisma.shareLink.deleteMany({
+      where: { pageId: { in: ids }, viewId: null },
+    }),
+  ]);
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

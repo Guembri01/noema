@@ -174,6 +174,10 @@ import {
 import { DatabaseViewToolbar } from "@/components/database/view-toolbar";
 import { DatabasePeek } from "@/components/database/database-peek";
 import { DatabaseActions } from "@/components/database/database-actions";
+import {
+  claimRowCreation,
+  settleRowCreation,
+} from "@/components/database/add-row-guard";
 import { FormBuilder } from "@/components/database/form-builder";
 import { Dialog } from "@/components/ui/dialog";
 import { t } from "@/lib/i18n";
@@ -866,6 +870,12 @@ export function DatabaseView({
   const [extraDependencyEdges, setExtraDependencyEdges] = useState<DependencyEdge[]>([]);
   const [rowCursor, setRowCursor] = useState<string | null>(nextRowCursor);
   const [loadingMoreRows, setLoadingMoreRows] = useState(false);
+  // P2-T10 (M7) — the "New row" in-flight guard: transitions do not dedupe
+  // server actions, so a rapid double click must be dropped while one create
+  // is on the wire. The ref claims synchronously (state alone is too late for
+  // the second click), the boolean drives `disabled`/`aria-busy` on all five
+  // add-row buttons. See `./add-row-guard`.
+  const creatingRowRef = useRef(false);
   useEffect(() => {
     setRowCursor(nextRowCursor);
   }, [nextRowCursor]);
@@ -926,6 +936,9 @@ export function DatabaseView({
    */
   const [propertyToDelete, setPropertyToDelete] = useState<DBProperty | null>(null);
   const [rowToDelete, setRowToDelete] = useState<string | null>(null);
+  // P2-T10 (M7) — renders `disabled`/`aria-busy` on every "New row" button
+  // while the create is in flight; reset in `addRow`'s `finally`.
+  const [creatingRow, setCreatingRow] = useState(false);
   /** Table multi-selection for bulk row actions (trash → one undo step). */
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1873,20 +1886,40 @@ export function DatabaseView({
   };
 
   /** Create a row from a chosen template ("New from template"). */
-  const addRowFromTemplate = (template: ViewTemplate) =>
-    startTransition(() => prefillFromTemplate(template));
-
-  const addRow = () =>
+  const addRowFromTemplate = (template: ViewTemplate) => {
+    // P2-T10 (M7) — the same single-flight slot as the plain new row: a
+    // template create is 1+N writes, so a double selection must be dropped.
+    if (!claimRowCreation(creatingRowRef, setCreatingRow)) return;
     startTransition(async () => {
-      // R31.13 — when a default template is exposed, a plain new row starts
-      // from it; otherwise this is the blank row it has always been.
-      if (defaultTemplate) {
-        await prefillFromTemplate(defaultTemplate);
-        return;
+      try {
+        await prefillFromTemplate(template);
+      } finally {
+        settleRowCreation(creatingRowRef, setCreatingRow);
       }
-      await createRowAction(databasePageId);
-      router.refresh();
     });
+  };
+
+  const addRow = () => {
+    // P2-T10 (M7) — claim the slot synchronously (a second click of a fast
+    // double click lands before React state re-renders) and drop it while one
+    // create is on the wire; `settle` lives in `finally` so a failed create
+    // re-enables the buttons and never blocks retry.
+    if (!claimRowCreation(creatingRowRef, setCreatingRow)) return;
+    startTransition(async () => {
+      try {
+        // R31.13 — when a default template is exposed, a plain new row starts
+        // from it; otherwise this is the blank row it has always been.
+        if (defaultTemplate) {
+          await prefillFromTemplate(defaultTemplate);
+          return;
+        }
+        await createRowAction(databasePageId);
+        router.refresh();
+      } finally {
+        settleRowCreation(creatingRowRef, setCreatingRow);
+      }
+    });
+  };
 
   /**
    * Submit a FORM view through the atomic server action.
@@ -2246,6 +2279,7 @@ export function DatabaseView({
           showReadOnlyLock={schemaLockedState || (lockedPropertyIds?.length ?? 0) > 0}
           onToggleLock={toggleSchemaLock}
           onAddRow={addRow}
+          addRowPending={creatingRow}
           defaultTemplateName={defaultTemplate?.name ?? null}
           templates={templates}
           onAddRowFromTemplate={addRowFromTemplate}
@@ -2403,6 +2437,7 @@ export function DatabaseView({
           aggregationPropertyId={boardAggregationPropertyId}
           loading={loading}
           onAddRow={editable ? addRow : undefined}
+          addRowPending={creatingRow}
         />
       ) : activeView.type === "LIST" ? (
         <ListView
@@ -2416,6 +2451,7 @@ export function DatabaseView({
           onReorderRows={onReorderRows}
           loading={loading}
           onAddRow={editable ? addRow : undefined}
+          addRowPending={creatingRow}
         />
       ) : activeView.type === "GALLERY" ? (
         <GalleryView
@@ -2430,6 +2466,7 @@ export function DatabaseView({
           previewPropertyId={galleryPreviewPropertyId}
           loading={loading}
           onAddRow={editable ? addRow : undefined}
+          addRowPending={creatingRow}
         />
       ) : activeView.type === "CALENDAR" ? (
         <LazyCalendarView
@@ -2531,6 +2568,7 @@ export function DatabaseView({
           rowHeight={rowHeight}
           loading={loading}
           onAddRow={editable ? addRow : undefined}
+          addRowPending={creatingRow}
           footer={tableFooter}
           selectedRowIds={selectedRowIds}
           onToggleRow={

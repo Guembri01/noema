@@ -18,7 +18,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *  - a code from a LATER step is still accepted — the guard is a replay guard,
  *    not a lockout;
  *  - a wrong code spends nothing;
- *  - the setup gates (enable / disable) spend the step as well.
+ *  - the disabling gate still spends the step (enrolment does NOT since
+ *    P2-T09 — that step must survive for the first sign-in).
  *
  * Only the database edge, the session helpers and `next/*` are mocked — the
  * sealing, the opening, the TOTP comparison and the guard itself run for real.
@@ -237,15 +238,30 @@ describe("loginAction — a two-factor code is spent once", () => {
   });
 });
 
-describe("enableTwoFactorAction — the enrolment code is spent once", () => {
-  it("refuses the second use of the same code", async () => {
+describe("enableTwoFactorAction — the enrolment step is NOT spent (P2-T09)", () => {
+  // Since P2-T09 the enrolment no longer spends its time step: the row keeps
+  // `step - 1`, so the same code is still spendable once at sign-in. The
+  // enable replay of an observed code is therefore not refused by the guard
+  // any more — it takes an authenticated session to call this action, and the
+  // sign-in replay guard still holds (see the enrolment-step tests).
+  it("keeps the enrolment step spendable at sign-in", async () => {
     const first = await enableTwoFactorAction(totp(SEED));
+    // Replaying the enrolment itself also succeeds (the step was not spent).
     const second = await enableTwoFactorAction(totp(SEED));
 
     expect(first).toEqual({ ok: true });
-    expect(second).toEqual({
-      error: "That code is not valid. Check your authenticator app.",
-    });
+    expect(second).toEqual({ ok: true });
+    // The row holds `step - 1`, never the enrolment step itself.
+    expect(user.twoFactorCounter).toBe(STEP - 1);
+  });
+
+  it("never moves the counter backwards", async () => {
+    // A sign-in under a previous cycle already spent the enrolment step.
+    user.twoFactorCounter = STEP;
+    await enableTwoFactorAction(totp(SEED));
+
+    expect(user.twoFactorCounter).toBe(STEP);
+    expect(db.userUpdateMany).toHaveBeenCalledTimes(1);
   });
 });
 

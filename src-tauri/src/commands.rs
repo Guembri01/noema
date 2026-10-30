@@ -210,22 +210,143 @@ pub fn set_zoom(app: AppHandle, factor: f64) -> Result<(), String> {
 /// Deliberately absent right now: the updater needs a signing key pair and a
 /// release endpoint, and shipping an updater that cannot verify a signature is
 /// worse than shipping none. See docs/DESKTOP.md §"Deferred".
+///
+/// So until that lands, the three answers mean three different things and the
+/// webview routes on exactly that (`updateCheckOutcome` in
+/// `src/lib/runtime-mode.ts`): `Ok(Some(version))` announces an update, and
+/// `Ok(None)` — the only answer this build can give — means "this build cannot
+/// check at all", not "checked, nothing new". A command that fails never says
+/// "up to date": the rejection arrives in the webview as `undefined`
+/// (`invokeShell` swallows it) and is shown as a failed check.
 #[tauri::command]
 pub async fn check_update() -> Result<Option<String>, String> {
     Ok(None)
 }
 
+/// The steps `swap_database_url` performs against the running shell.
+///
+/// The command itself needs an `AppHandle`, which no unit test has; wiring
+/// these four moves behind a trait lets the *decision logic* — restore on
+/// failure, give up with the truth on double failure — be tested at all.
+trait DatabaseUrlSwapOps {
+    /// Persist (or clear) a connection string in the encrypted store.
+    fn persist(&mut self, url: &str) -> Result<(), String>;
+    /// Log a line the diagnostics panel will show.
+    fn note(&mut self, message: &str);
+    /// Stop the server (a no-op when it is not running).
+    fn stop(&mut self) -> impl std::future::Future<Output = ()>;
+    /// Start the server and wait for readiness. Readiness failing — a wrong
+    /// password, a database that will not answer — comes back as an error too.
+    fn start(&mut self) -> impl std::future::Future<Output = Result<SidecarInfo, String>>;
+}
+
+/// Serialise overlapping `set_database_url` invocations.
+///
+/// Tauri runs commands concurrently, and a swap interleaves stop/persist/start:
+/// two calls running at once could stop each other's freshly started server or
+/// persist in the wrong order, giving last-writer-wins instead of either
+/// user's value. The shell state locks cover single sidecar operations, not
+/// the whole sequence, so the swap holds one of its own.
+static SWAP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Save the database connection string and restart the server with it.
 ///
 /// The string is validated first, then written to the encrypted store. A bad
-/// value must not stop a healthy server or replace a working URL with garbage.
+/// value must not stop a healthy server or replace a working URL with garbage:
+/// the previous value is snapshotted before anything is touched, and if the
+/// server will not start on the new URL, the snapshot is written back and the
+/// server is started again on it. The command still reports an error — the
+/// user's URL was not applied — but the app ends up running, not offline.
 #[tauri::command]
 pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo, String> {
-    state::set_database_url(&app, &url)?;
-    sidecar::stop(&app).await;
-    sidecar::start(&app)
-        .await
-        .map_err(|error| error.to_string())
+    let _guard = SWAP_LOCK.lock().await;
+    // The last-known-good value. It is the currently stored one — possibly the
+    // empty string, which means the embedded database — and it is only read,
+    // never guessed from the failure.
+    let previous = state::database_url(&app)?;
+    swap_database_url(&mut ShellSwapOps { app: &app }, previous, url).await
+}
+
+/// Apply a connection string with a restore-on-failure fallback.
+///
+/// Stop, persist, start. If starting fails — including the server answering
+/// but reporting unhealthy, which is how a wrong password surfaces — write the
+/// snapshot back and try to start again on it. Free function so a test can
+/// drive every branch with fake steps.
+async fn swap_database_url(
+    ops: &mut impl DatabaseUrlSwapOps,
+    previous: String,
+    url: String,
+) -> Result<SidecarInfo, String> {
+    ops.stop().await;
+    // The first failure — a rejected value or a server that will not come up —
+    // is only half the story; the restore below decides the final answer.
+    let failure = match ops.persist(&url) {
+        Ok(()) => match ops.start().await {
+            Ok(info) => return Ok(info),
+            Err(error) => error,
+        },
+        Err(error) => error,
+    };
+
+    // Put the last-known-good value back. The failed start may have left an
+    // unhealthy child behind with the new URL in its environment, so stop
+    // before the server is started on the restored value.
+    ops.stop().await;
+    ops.note("the new database URL failed, restoring the previous one");
+    if let Err(restore_error) = ops.persist(&previous) {
+        let message = format!(
+            "the change failed ({failure}) and restoring the previous connection \
+             string failed too ({restore_error}); the server is stopped — check the \
+             connection string and restart the app"
+        );
+        ops.note(&message);
+        return Err(message);
+    }
+    match ops.start().await {
+        // The server is healthy again — but on the old value, so the change
+        // must still be reported as failed: an `Ok` would read as applied.
+        Ok(_info) => Err(format!(
+            "the server would not start with the new connection string ({failure}); \
+             it is running again on the previous one"
+        )),
+        Err(restart_error) => {
+            let message = format!(
+                "the server is down: the new connection string failed ({failure}) and \
+                 starting on the previous one failed too ({restart_error}); the previous \
+                 value is saved — fix the connection string, then set it again or restart"
+            );
+            ops.note(&message);
+            // `sidecar::start` already emitted its own failure event for the
+            // page's offline banner; this is the command-level report.
+            Err(message)
+        }
+    }
+}
+
+/// The real steps: the encrypted store, the log and the supervised sidecar.
+struct ShellSwapOps<'a> {
+    app: &'a AppHandle,
+}
+
+impl DatabaseUrlSwapOps for ShellSwapOps<'_> {
+    fn persist(&mut self, url: &str) -> Result<(), String> {
+        state::set_database_url(self.app, url)
+    }
+
+    fn note(&mut self, message: &str) {
+        logging::line(self.app, "lifecycle", message);
+    }
+
+    async fn stop(&mut self) {
+        sidecar::stop(self.app).await;
+    }
+
+    async fn start(&mut self) -> Result<SidecarInfo, String> {
+        sidecar::start(self.app)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// The connection string currently in use (for the diagnostics panel).
@@ -639,6 +760,183 @@ mod tests {
         let error = copy_backup_units(&root, "noema-20261016-143012").expect_err("must fail");
         assert!(error.contains("nothing to back up"));
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The swap records every step it asks for, so the restore decision is
+    /// observable without an `AppHandle`.
+    struct FakeSwap {
+        store: String,
+        start_results: Vec<Result<SidecarInfo, String>>,
+        calls: Vec<String>,
+        notes: Vec<String>,
+    }
+
+    impl FakeSwap {
+        /// A swap whose server starts keep failing, or succeed `ok_count`
+        /// times before failing.
+        fn new(store: &str, start_results: Vec<Result<SidecarInfo, String>>) -> Self {
+            Self {
+                store: store.to_string(),
+                start_results,
+                calls: Vec::new(),
+                notes: Vec::new(),
+            }
+        }
+    }
+
+    fn test_info() -> SidecarInfo {
+        SidecarInfo {
+            api_base: "http://127.0.0.1:47821".to_string(),
+            port: 47821,
+            pid: 1234,
+            data_dir: "/tmp/noema-test".to_string(),
+        }
+    }
+
+    impl DatabaseUrlSwapOps for FakeSwap {
+        fn persist(&mut self, url: &str) -> Result<(), String> {
+            self.calls.push(format!("persist:{url}"));
+            if url.is_empty() {
+                self.store.clear();
+            } else {
+                self.store = url.to_string();
+            }
+            Ok(())
+        }
+
+        fn note(&mut self, message: &str) {
+            self.notes.push(message.to_string());
+        }
+
+        async fn stop(&mut self) {
+            self.calls.push("stop".to_string());
+        }
+
+        async fn start(&mut self) -> Result<SidecarInfo, String> {
+            self.calls.push("start".to_string());
+            self.start_results.remove(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_restores_the_previous_url_exactly_once() {
+        let good = "postgresql://u:p@working-host:5432/db".to_string();
+        let bad = "postgresql://u:p@broken-host:5432/db".to_string();
+        let mut ops = FakeSwap::new(
+            &good,
+            vec![
+                Err("the server did not become ready".into()),
+                Ok(test_info()),
+            ],
+        );
+
+        let result = swap_database_url(&mut ops, good.clone(), bad.clone()).await;
+
+        // The command must fail — the new URL was not applied — but the
+        // last-known-good URL must be back in the store exactly once, and the
+        // server must have been retried on it.
+        assert!(result.is_err(), "an unapplied URL must not read as success");
+        assert_eq!(ops.store, good, "the previous URL must win");
+        assert_eq!(
+            ops.calls
+                .iter()
+                .filter(|call| **call == format!("persist:{good}"))
+                .count(),
+            1,
+            "restore must happen exactly once: {:?}",
+            ops.calls
+        );
+        assert!(
+            ops.calls.contains(&format!("persist:{bad}")),
+            "{:?}",
+            ops.calls
+        );
+        assert_eq!(
+            ops.calls.iter().filter(|call| **call == "start").count(),
+            2,
+            "the server must be started again on the restored URL: {:?}",
+            ops.calls
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("running again on the previous one"),
+            "the error must say what actually happened"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_double_failure_reports_the_server_down_with_the_previous_url_saved() {
+        let good = "postgresql://u:p@working-host:5432/db".to_string();
+        let mut ops = FakeSwap::new(
+            &good,
+            vec![
+                Err("readiness timeout".into()),
+                Err("readiness timeout again".into()),
+            ],
+        );
+
+        let result = swap_database_url(
+            &mut ops,
+            good.clone(),
+            "postgresql://u:p@broken-host:5432/db".to_string(),
+        )
+        .await;
+
+        let error = result.expect_err("both starts failed");
+        assert!(error.contains("the server is down"), "{error}");
+        assert!(error.contains("previous"), "{error}");
+        assert_eq!(ops.store, good, "the snapshot must still be the stored URL");
+        assert!(!ops.notes.is_empty(), "the degrade path must leave a trace");
+    }
+
+    #[tokio::test]
+    async fn a_successful_change_persists_the_new_url_and_never_restores() {
+        let good = "postgresql://u:p@working-host:5432/db".to_string();
+        let mut ops = FakeSwap::new(&good, vec![Ok(test_info())]);
+
+        let result = swap_database_url(
+            &mut ops,
+            good.clone(),
+            "postgresql://u:p@new-host:5432/db".to_string(),
+        )
+        .await;
+
+        assert_ok_swap(&result, &ops, "postgresql://u:p@new-host:5432/db");
+    }
+
+    /// Shared assertions for the success path: the change is Ok, the new URL
+    /// is persisted, and not a single restore step ran.
+    fn assert_ok_swap(result: &Result<SidecarInfo, String>, ops: &FakeSwap, new_url: &str) {
+        assert!(result.is_ok(), "a healthy start must succeed: {:?}", result);
+        let info = result.as_ref().expect("checked");
+        assert_eq!(
+            info.port,
+            test_info().port,
+            "the started server is returned"
+        );
+        assert_eq!(ops.store, new_url, "the new URL must be persisted");
+        let restores = ops
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("persist:postgresql://u:p@working-host"))
+            .count();
+        assert_eq!(
+            restores, 0,
+            "a healthy start must not restore: {:?}",
+            ops.calls
+        );
+        assert_eq!(ops.calls.iter().filter(|call| **call == "start").count(), 1);
+        assert!(ops.calls.iter().filter(|call| **call == "stop").count() >= 1);
+    }
+
+    /// Until the real updater lands, the only answer is "this build cannot
+    /// check" — `Ok(None)`. Pinning the stub keeps the semantics from drifting
+    /// into a silent "checked, nothing new": the webview renders `null` as
+    /// "updates are not available in this build", never as "up to date".
+    #[tokio::test]
+    async fn check_update_stub_reports_no_updater() {
+        assert_eq!(check_update().await, Ok(None));
     }
 
     #[test]

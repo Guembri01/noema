@@ -68,6 +68,22 @@ export const PageEmbed = Node.create<PageEmbedOptions>({
   },
 });
 
+/**
+ * Pure completion path of the mention search, extracted so the stale-response
+ * guard can be pinned in the node sandbox (effects do not run there). It
+ * follows the `cancelled`-flag pattern of the content-fetch effect below: a
+ * cleanup (unmount, or a newer query replacing this one) drops the in-flight
+ * response whole — `null` means "no state write" — before it can overwrite
+ * newer results or leak a superseded query's rows.
+ */
+export function pageMentionResults(
+  cancelled: boolean,
+  found: { id: string; label: string; type: string; icon?: string | null }[],
+): { id: string; label: string; icon?: string | null }[] | null {
+  if (cancelled) return null;
+  return found.filter((r) => r.type === "page");
+}
+
 function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeViewProps) {
   const options = extension.options as PageEmbedOptions;
   const locale = options.locale;
@@ -80,11 +96,18 @@ function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeVi
 
   useEffect(() => {
     if (!query && !pageId) return;
+    // Stale-response guard: the same `cancelled` flag the content-fetch effect
+    // below uses — a newer query (or unmount) drops this instance's in-flight
+    // response before it can overwrite the newer one's results.
+    let cancelled = false;
     const timer = setTimeout(async () => {
-      const found = await mentionSearchAction(options.workspaceId, query);
-      setResults(found.filter((r) => r.type === "page"));
+      const rows = pageMentionResults(cancelled, await mentionSearchAction(options.workspaceId, query));
+      if (rows) setResults(rows);
     }, 150);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [query, pageId, options.workspaceId]);
 
   useEffect(() => {

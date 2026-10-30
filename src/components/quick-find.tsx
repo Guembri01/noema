@@ -109,6 +109,44 @@ export const DEFAULT_QUICK_FIND_MAX_RESULTS = 6;
  * ------------------------------------------------------------------ */
 
 /**
+ * F8 — monotonic request tokens. `startTransition` does not dedupe server
+ * actions, so a slower older search can resolve after a newer one and clobber
+ * the results. Every issued search bumps a counter; the completion path applies
+ * results only while its token is still the newest issued one.
+ */
+export type RequestSequence = {
+  /** Issue a fresh token; the newest token issued wins. */
+  issue(): number;
+  /** Whether a just-resolved token is still the newest issued one. */
+  isLatest(seq: number): boolean;
+};
+
+export function createRequestSequence(): RequestSequence {
+  let latest = 0;
+  return {
+    issue: () => ++latest,
+    isLatest: (seq) => seq === latest,
+  };
+}
+
+/**
+ * Pure completion path of the debounced search, extracted so the stale-response
+ * guard can be pinned in the node sandbox (effects do not run there). A stale
+ * token drops the response whole — rows *and* its error toast — before it can
+ * reach state or resurface an error belonging to a superseded query.
+ */
+export function settleSearchResults(
+  sequence: RequestSequence,
+  seq: number,
+  results: QuickFindResult[] | { error: string },
+  handlers: { onRows(rows: QuickFindResult[]): void; onError(error: string): void },
+): void {
+  if (!sequence.isLatest(seq)) return;
+  if ("error" in results) handlers.onError(results.error);
+  else handlers.onRows(results);
+}
+
+/**
  * Record a visit and return a most-recent-first, de-duplicated, capped list.
  * A blank id is ignored (the list is still copied); a non-finite `now` is
  * coerced to `0`; the input list is never mutated.
@@ -350,6 +388,9 @@ export function QuickFind({
   const [loading, startTransition] = useTransition();
   const listRef = useRef<HTMLDivElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // F8: monotonic search tokens — a slower older response must never overwrite
+  // a newer one's results (see `createRequestSequence`).
+  const requests = useRef(createRequestSequence()).current;
 
   // Recents are restored on mount (not during render) so the first client
   // paint matches the server HTML.
@@ -367,7 +408,10 @@ export function QuickFind({
   }, [open]);
 
   // Debounced server search. An empty query is served from the local recents,
-  // so no request goes out.
+  // so no request goes out. Each search is tokenised on issue; the completion
+  // path (F8 guard) drops a token that is no longer the newest — a slower
+  // older response cannot overwrite newer results, and a superseded query's
+  // error toast is dropped with its rows.
   useEffect(() => {
     if (!open) return;
     if (query.trim() === "") {
@@ -376,19 +420,18 @@ export function QuickFind({
     }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
+      const seq = requests.issue();
       startTransition(async () => {
-        const results = await quickFindAction(workspaceId, query);
-        if ("error" in results) {
-          toast.error(results.error);
-          return;
-        }
-        setItems(results);
+        settleSearchResults(requests, seq, await quickFindAction(workspaceId, query), {
+          onRows: setItems,
+          onError: toast.error,
+        });
       });
     }, 180);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [query, open, workspaceId]);
+  }, [query, open, workspaceId, requests]);
 
   const cap = Number.isFinite(maxResults) && maxResults > 0 ? Math.floor(maxResults) : Infinity;
   const recentRank = useMemo(() => recentOrder(recents), [recents]);

@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { ChatResult } from "@/server/actions/chat";
 import {
   createChatThreadAction,
   deleteChatThreadAction,
@@ -57,7 +58,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tag } from "@/components/ui/tag";
 import { Textarea } from "@/components/ui/input";
 import { ChatAnswerItems } from "@/components/chat-answer-menu";
-import { describeActionError, safeAction } from "@/lib/actions-client";
+import { describeActionError, safeAction, type ActionOutcome } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown";
@@ -465,6 +466,86 @@ export function streamReducer(state: StreamState, event: StreamEvent): StreamSta
     default:
       return state;
   }
+}
+
+/* --- Send gate + thread orchestration -------------------------------------- */
+
+/**
+ * Whether a question must wait: the panel serializes sends (F7+F13), so
+ * anything already in flight closes the gate. `inFlight` is the authority —
+ * `send()` sets it synchronously, before any state can have re-rendered —
+ * while `phase`/`pending` are the render-time belt-and-braces around a settle.
+ */
+export function sendBlocked(state: {
+  inFlight: boolean;
+  phase: StreamPhase;
+  pending: boolean;
+}): boolean {
+  return state.inFlight || state.pending || state.phase !== "idle";
+}
+
+/**
+ * Clear the panel's abort handle — but only when it is still this send's
+ * controller. With overlapping sends the handle could already point at a
+ * newer stream; blindly nulling it there destroyed the newer controller and
+ * turned Cancel into a no-op, which is exactly the defect this guards.
+ */
+export function releaseStreamController(
+  handle: { current: AbortController | null },
+  own: AbortController,
+): void {
+  if (handle.current === own) handle.current = null;
+}
+
+/** What resolving the destination for a question produced. */
+export type AcquiredThread =
+  | {
+      status: "ready";
+      threadId: string;
+      /** True when this send ran the create itself (it resolved the id). */
+      created: boolean;
+    }
+  | { status: "failed"; error: string }
+  | {
+      status: "aborted";
+      /** True when a thread created by this send was deleted again. */
+      orphanDeleted: boolean;
+    };
+
+/**
+ * The thread a question streams into, with the cancel checks around thread
+ * creation: the send's signal is consulted BEFORE the create (a Stop pressed
+ * while the panel had no discussion yet never creates a row) and again after
+ * it resolves, where a thread this send created fresh is deleted instead of
+ * being left empty in the sidebar ("no active orphan"). A thread that was
+ * merely REUSED predates this send, so its fate is not the cancelled
+ * question's to decide.
+ */
+export async function acquireChatThread({
+  threadId,
+  signal,
+  createThread,
+  deleteThread,
+}: {
+  /** The open discussion, when the panel already has one. */
+  threadId: string | null;
+  /** The send's abort signal. */
+  signal: AbortSignal;
+  /** `safeAction(() => createChatThreadAction(workspaceId))`. */
+  createThread: () => Promise<ActionOutcome<ChatResult<{ id: string; reused: boolean }>>>;
+  /** `safeAction(() => deleteChatThreadAction(id))`. */
+  deleteThread: (id: string) => Promise<unknown>;
+}): Promise<AcquiredThread> {
+  if (signal.aborted) return { status: "aborted", orphanDeleted: false };
+  if (threadId) return { status: "ready", threadId, created: false };
+  const outcome = await createThread();
+  if (!outcome.ok) return { status: "failed", error: outcome.error };
+  if ("error" in outcome.value) return { status: "failed", error: outcome.value.error };
+  if (signal.aborted) {
+    if (!outcome.value.reused) await deleteThread(outcome.value.id);
+    return { status: "aborted", orphanDeleted: !outcome.value.reused };
+  }
+  return { status: "ready", threadId: outcome.value.id, created: true };
 }
 
 /* --- Auto-scroll ----------------------------------------------------------- */
@@ -950,6 +1031,8 @@ export function ChatPanel({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** True while a `send()` round-trip is in flight — the send gate's authority. */
+  const sendInFlightRef = useRef(false);
   const atBottomRef = useRef(true);
 
   const active = threads.find((item) => item.id === activeThreadId) ?? thread ?? null;
@@ -1064,6 +1147,11 @@ export function ChatPanel({
   const send = (text?: string) => {
     const body = (text ?? draft).trim();
     if (!body) return;
+    // F7+F13 — serialized sends: refuse while a question is still in flight.
+    // The in-flight ref is set synchronously below, so this also closes the
+    // same-frame race a follow-up click cannot slip past on its own.
+    if (sendBlocked({ inFlight: sendInFlightRef.current, phase: stream.phase, pending })) return;
+    sendInFlightRef.current = true;
     setError(null);
     const optimisticId = `pending-${Date.now()}`;
     // Only a composer send consumes the draft. Prompts sent from the quick
@@ -1080,7 +1168,12 @@ export function ChatPanel({
       const restoreDraft = () => setDraft((current) => current || body);
       const dropOptimistic = () =>
         setOptimistic((current) => current.filter((item) => item.id !== optimisticId));
-      const settle = () => dispatch({ type: "settle" });
+      // Every exit path funnels through `settle`, so this also re-opens the
+      // send gate no matter how the round-trip ended.
+      const settle = () => {
+        dispatch({ type: "settle" });
+        sendInFlightRef.current = false;
+      };
       const bail = (message: string) => {
         setError(message ? { message, retryBody: body } : null);
         restoreDraft();
@@ -1091,29 +1184,30 @@ export function ChatPanel({
       const controller = new AbortController();
       abortRef.current = controller;
 
-      let threadId = active?.id ?? null;
-      if (!threadId) {
-        const created = await safeAction(() => createChatThreadAction(workspaceId));
-        if (!created.ok) {
-          bail(created.error);
-          return;
-        }
-        if ("error" in created.value) {
-          bail(created.value.error);
-          return;
-        }
-        threadId = created.value.id;
-        setActiveThreadId(threadId);
+      // F7+F13 — resolve the destination with the cancel checked around the
+      // create: a Stop pressed while the thread is being created never leaves
+      // an orphan row behind (a fresh thread is deleted again; a reused empty
+      // thread predates this send). The abort check after the create used to
+      // be the only one — cancel-during-create created the row, jumped the
+      // panel onto it and bailed.
+      const acquired = await acquireChatThread({
+        threadId: active?.id ?? null,
+        signal: controller.signal,
+        createThread: () => safeAction(() => createChatThreadAction(workspaceId)),
+        deleteThread: (id) => safeAction(() => deleteChatThreadAction(id)),
+      });
+      if (acquired.status === "failed") {
+        bail(acquired.error);
+        return;
       }
-      if (controller.signal.aborted) {
+      if (acquired.status === "aborted" || controller.signal.aborted) {
+        // Cancel arrived before the question left: nothing reached the server.
         bail("");
         return;
       }
+      if (acquired.created) setActiveThreadId(acquired.threadId);
+      const threadId = acquired.threadId;
       dropOptimistic();
-      if (!threadId) {
-        settle();
-        return;
-      }
 
       // Stream the answer; if the stream cannot start (AI off, transport down),
       // fall back to the single-shot action so the user still gets an answer.
@@ -1189,7 +1283,10 @@ export function ChatPanel({
         dropOptimistic();
         router.refresh();
       } finally {
-        abortRef.current = null;
+        // Clear only our own handle: if an interleaved send ever re-pointed
+        // the ref, nulling blindly destroyed the other stream's controller
+        // and made Cancel a no-op.
+        releaseStreamController(abortRef, controller);
       }
     });
   };
@@ -1322,6 +1419,10 @@ export function ChatPanel({
           variant="ghost"
           aria-label={t(locale, "chatNew")}
           onClick={() => {
+            // Stop any stream still running: once the phase resets the Stop
+            // button is gone, and with serialized sends the in-flight stream
+            // would otherwise block questions with nothing visible to stop.
+            cancelStream();
             setActiveThreadId(null);
             setDraft("");
             setError(null);

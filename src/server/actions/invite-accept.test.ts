@@ -17,13 +17,13 @@ import { generateInviteToken } from "@/lib/invite-token";
 
 const db = vi.hoisted(() => ({
   inviteFindUnique: vi.fn(),
-  inviteUpdate: vi.fn(),
+  inviteUpdateMany: vi.fn(),
   memberFindUnique: vi.fn(),
   workspaceFindUnique: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
   projectMemberUpsert: vi.fn(),
   teamspaceInviteFindUnique: vi.fn(),
-  teamspaceInviteUpdate: vi.fn(),
+  teamspaceInviteUpdateMany: vi.fn(),
   teamspaceMemberUpsert: vi.fn(),
 }));
 
@@ -32,13 +32,13 @@ const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    invite: { findUnique: db.inviteFindUnique, update: db.inviteUpdate },
+    invite: { findUnique: db.inviteFindUnique, updateMany: db.inviteUpdateMany },
     workspaceMember: { findUnique: db.memberFindUnique, upsert: db.workspaceMemberUpsert },
     workspace: { findUnique: db.workspaceFindUnique },
     projectMember: { upsert: db.projectMemberUpsert },
     teamspaceInvite: {
       findUnique: db.teamspaceInviteFindUnique,
-      update: db.teamspaceInviteUpdate,
+      updateMany: db.teamspaceInviteUpdateMany,
     },
     teamspaceMember: { upsert: db.teamspaceMemberUpsert },
   },
@@ -76,6 +76,11 @@ function teamspaceFixture(overrides: Partial<Record<string, unknown>> = {}) {
     teamspaceId: "ts-1",
     email: MEMBER.email,
     role: "ADMIN",
+    // The invitation carries its sender: redemption re-checks that the
+    // sender still holds a member-management role. The mocked sender
+    // resolves as the workspace owner (`ownerId` below), so the re-check
+    // passes by default.
+    invitedById: "owner-1",
     acceptedAt: null,
     expiresAt: new Date("2026-03-24T09:00:00.000Z"),
     teamspace: { name: "Design", workspace: { id: "ws-1", slug: "acme" } },
@@ -85,10 +90,10 @@ function teamspaceFixture(overrides: Partial<Record<string, unknown>> = {}) {
 
 /** Every write the two acceptance paths can make. */
 const writes = () => [
-  db.inviteUpdate,
+  db.inviteUpdateMany,
   db.workspaceMemberUpsert,
   db.projectMemberUpsert,
-  db.teamspaceInviteUpdate,
+  db.teamspaceInviteUpdateMany,
   db.teamspaceMemberUpsert,
 ];
 
@@ -100,14 +105,14 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-03-10T09:00:00.000Z"));
   auth.requireUser.mockResolvedValue(MEMBER);
   db.inviteFindUnique.mockResolvedValue(inviteFixture());
-  db.inviteUpdate.mockResolvedValue({ id: "inv-1" });
+  db.inviteUpdateMany.mockResolvedValue({ count: 1 });
   // The sender of the invitation: the workspace owner (no membership row).
   db.memberFindUnique.mockResolvedValue(null);
   db.workspaceFindUnique.mockResolvedValue({ ownerId: "owner-1" });
   db.workspaceMemberUpsert.mockResolvedValue({ id: "wm-1" });
   db.projectMemberUpsert.mockResolvedValue({ id: "pm-1" });
   db.teamspaceInviteFindUnique.mockResolvedValue(teamspaceFixture());
-  db.teamspaceInviteUpdate.mockResolvedValue({ id: "ts-inv-1" });
+  db.teamspaceInviteUpdateMany.mockResolvedValue({ count: 1 });
   db.teamspaceMemberUpsert.mockResolvedValue({ id: "tm-1" });
 });
 
@@ -142,7 +147,7 @@ describe("previewing a workspace invitation", () => {
     expect(first).toEqual(second);
     // The essence of the fix: a preview (which is what a GET renders, and what a
     // scanner or prefetch triggers) leaves `acceptedAt` alone.
-    expect(db.inviteUpdate).not.toHaveBeenCalled();
+    expect(db.inviteUpdateMany).not.toHaveBeenCalled();
   });
 
   it("names the project a client invitation is scoped to", async () => {
@@ -207,8 +212,8 @@ describe("accepting a workspace invitation", () => {
       role: "MEMBER",
     });
     expect(db.workspaceMemberUpsert).toHaveBeenCalledTimes(1);
-    expect(db.inviteUpdate).toHaveBeenCalledWith({
-      where: { id: "inv-1" },
+    expect(db.inviteUpdateMany).toHaveBeenCalledWith({
+      where: { id: "inv-1", acceptedAt: null },
       data: { acceptedAt: expect.any(Date) },
     });
     // Only legal because acceptance is a POST: the invite page used to accept
@@ -258,8 +263,8 @@ describe("teamspace invitations", () => {
     // Joining a teamspace implies workspace membership.
     expect(db.workspaceMemberUpsert).toHaveBeenCalledTimes(1);
     expect(db.teamspaceMemberUpsert).toHaveBeenCalledTimes(1);
-    expect(db.teamspaceInviteUpdate).toHaveBeenCalledWith({
-      where: { id: "ts-inv-1" },
+    expect(db.teamspaceInviteUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ts-inv-1", acceptedAt: null },
       data: { acceptedAt: expect.any(Date), acceptedById: MEMBER.id },
     });
     expect(cache.revalidatePath).toHaveBeenCalledWith("/w", "layout");

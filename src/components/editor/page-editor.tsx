@@ -142,6 +142,7 @@ const editEquation = (node: { type: { name: string }; attrs: { latex?: string } 
   );
 };
 import { actionError, safeAction } from "@/lib/actions-client";
+import { clearIfPayload, runSaveQueue } from "@/lib/save-queue";
 import {
   clearDraft,
   readDraft,
@@ -709,6 +710,8 @@ function PageEditorBody({
   const lastSavedRef = useRef<string>("");
   /** Latest document payload not yet acknowledged by the server. */
   const pendingPayloadRef = useRef<string | null>(null);
+  /** Single-flight lock: at most one save write (or offline replay) on the wire. */
+  const saveInFlightRef = useRef(false);
   /** Local buffer of writes made while offline; replayed once back online. */
   const offlineRef = useRef<QueuedMutation[]>([]);
   /** Monotonic counter so each buffered write gets a unique queue id. */
@@ -752,6 +755,17 @@ function PageEditorBody({
       );
       return;
     }
+    if (content === lastSavedRef.current) {
+      // A direct save already acknowledged exactly this snapshot: replaying
+      // the write could land after a newer one, so retire the buffer without
+      // a wire round-trip or a watermark change.
+      offlineRef.current = markDone(
+        offlineRef.current,
+        batch.map((mutation) => mutation.id),
+      );
+      pendingPayloadRef.current = clearIfPayload(pendingPayloadRef.current, content);
+      return;
+    }
     const outcome = await safeAction(() => updatePageAction(pageId, { content }));
     const failure = outcome.ok ? actionError(outcome.value) : outcome.error;
     if (!outcome.ok || failure) {
@@ -765,58 +779,77 @@ function PageEditorBody({
       batch.map((mutation) => mutation.id),
     );
     lastSavedRef.current = content;
-    pendingPayloadRef.current = null;
+    // Retire the pending payload only when the flush saved exactly what it
+    // holds — an edit persisted while the replay was in flight stays pending.
+    pendingPayloadRef.current = clearIfPayload(pendingPayloadRef.current, content);
     setSaveState("saved");
   }, [pageId]);
 
   const runSave = useCallback(async () => {
-    const editor = editorRef.current;
-    // Prefer the payload captured at edit time: by the time a deferred save
-    // fires (or teardown flushes), the editor may already be torn down.
-    let payload = pendingPayloadRef.current;
-    if (payload === null && editor) {
-      try {
-        payload = JSON.stringify(editor.getJSON());
-      } catch {
-        payload = null; // editor already destroyed — nothing left to write
-      }
-    }
-    if (payload === null) return;
-    if (payload === lastSavedRef.current) {
-      pendingPayloadRef.current = null;
-      setSaveState("saved");
-      return;
-    }
-    // With no network, a collaborative page buffers the snapshot locally
-    // instead of failing the write; it is replayed once back online. A
-    // single-user page keeps its original attempt-and-report behaviour.
-    if (collab && isOffline()) {
-      bufferSave(payload);
-      return;
-    }
-    // Send the document as JSON text: ProseMirror shares one `attrs` object
-    // across nodes, and React's action encoder converts a shared object graph
-    // into a temporary reference the server cannot persist.
-    const outcome = await safeAction(() => updatePageAction(pageId, { content: payload }));
-    if (!outcome.ok) {
-      setSaveState("error");
-      toast.error(outcome.error);
-      return;
-    }
-    const failure = actionError(outcome.value);
-    if (failure) {
-      setSaveState("error");
-      toast.error(failure);
-      return;
-    }
-    lastSavedRef.current = payload;
-    pendingPayloadRef.current = null;
-    try {
-      clearDraft(window.localStorage, pageId);
-    } catch {
-      // storage unavailable
-    }
-    setSaveState("saved");
+    // Serialize through the save queue: overlapping launches could otherwise
+    // commit older-after-newer server-side, and a resolved save must never
+    // retire a pending payload it did not save (a newer edit may have landed
+    // while the request was in flight).
+    await runSaveQueue({
+      pendingRef: pendingPayloadRef,
+      lastSavedRef,
+      inFlightRef: saveInFlightRef,
+      resolvePayload: (pendingOnly) => {
+        // Capture the pending payload BEFORE depending on the editor
+        // lifecycle: by the time a deferred save or teardown flush runs, the
+        // editor may already be destroyed. The live editor is only a fallback
+        // for the first round of an invocation, never for later drains, and
+        // only reachable when nothing is pending.
+        const pending = pendingPayloadRef.current;
+        if (pending !== null) return pending;
+        if (pendingOnly) return null;
+        const editor = editorRef.current;
+        if (!editor) return null;
+        try {
+          return JSON.stringify(editor.getJSON());
+        } catch {
+          return null; // editor already destroyed — nothing left to write
+        }
+      },
+      bufferOffline: (payload) => {
+        // With no network, a collaborative page buffers the snapshot locally
+        // instead of failing the write; it is replayed once back online. A
+        // single-user page keeps its original attempt-and-report behaviour.
+        if (collab && isOffline()) {
+          bufferSave(payload);
+          return true;
+        }
+        return false;
+      },
+      send: async (payload) => {
+        // Send the document as JSON text: ProseMirror shares one `attrs`
+        // object across nodes, and React's action encoder converts a shared
+        // object graph into a temporary reference the server cannot persist.
+        const outcome = await safeAction(() =>
+          updatePageAction(pageId, { content: payload }),
+        );
+        if (!outcome.ok) return outcome.error;
+        return actionError(outcome.value);
+      },
+      onSaved: () => {
+        // The draft mirrors the last persisted payload: retire it only once
+        // nothing newer is pending — a newer draft is the crash-recovery copy
+        // of an edit this save did not observe.
+        if (pendingPayloadRef.current === null) {
+          try {
+            clearDraft(window.localStorage, pageId);
+          } catch {
+            // storage unavailable
+          }
+        }
+        setSaveState("saved");
+      },
+      onAlreadySaved: () => setSaveState("saved"),
+      onError: (error) => {
+        setSaveState("error");
+        toast.error(error);
+      },
+    });
   }, [pageId, bufferSave, collab]);
 
   const persist = useCallback(
@@ -1886,11 +1919,14 @@ function PageEditorBody({
     };
     if (collab.provider.synced) seed();
     else collab.provider.once("sync", seed);
+    return () => collab.provider.off("sync", seed);
   }, [editor, collab, initialContent]);
 
   // Persist the last edit when the editor unmounts: cancel the debounce and
   // flush both the in-flight snapshot and anything buffered offline. Without
-  // this the pending write dies with the timer.
+  // this the pending write dies with the timer. `runSave` captures the pending
+  // payload (via the save queue) before ever touching the editor, so a destroyed
+  // editor unmount cannot swallow the write.
   useEffect(
     () => () => {
       if (saveTimer.current) {

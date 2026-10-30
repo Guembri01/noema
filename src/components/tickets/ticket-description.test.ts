@@ -50,7 +50,12 @@ describe("autosave cadence", () => {
  * contract the panels are opened through: each control is a labelled dialog
  * trigger that names its own panel, and nothing renders until one is opened.
  */
-describe("description toolbar panels", () => {
+describe(
+  "description toolbar panels",
+  // Radix-backed static renders stretched past the 5 s default under
+  // full-suite contention (8.2 s, P3-T09).
+  { timeout: 60_000 },
+  () => {
   const render = (locale = "en") =>
     renderToStaticMarkup(
       // The toolbar's buttons carry tooltips, which are Radix-backed and need the

@@ -1,0 +1,17 @@
+{
+  "agent": "executor",
+  "status": "complete",
+  "task": "P2-T11 — invite redemption TOCTOU (conditional updateMany claim)",
+  "timestamp": "2026-10-27T22:00:00Z",
+  "files_changed": [
+    "src/server/actions/email.ts",
+    "src/server/actions/teamspace-invites.ts",
+    "src/server/actions/invite-accept.test.ts",
+    "src/server/actions/invite-accept-grant.test.ts",
+    "src/server/actions/email-invite-token.test.ts",
+    "src/app/invite/invite-pages.render.test.ts"
+  ],
+  "files_created": ["src/server/actions/invite-consumption.test.ts"],
+  "packages_installed": [],
+  "next_steps": ["historian review", "git-wrangler commit (deferred — per task, no git mutations)"]
+}

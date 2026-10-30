@@ -270,7 +270,10 @@ function assertRepositoryIsClean() {
 
 if (process.env.VITEST) {
   const { describe, it } = await import("vitest");
-  describe("the target-blank gate (B72)", () => {
+  // Every case spawns the gate as a subprocess, and the repository check
+  // walks the whole tree — seconds each, stretched further while the rest
+  // of the suite loads the machine (P3-T09).
+  describe("the target-blank gate (B72)", { timeout: 60_000 }, () => {
     for (const testCase of CASES) {
       it(testCase.name, () => run(testCase));
     }

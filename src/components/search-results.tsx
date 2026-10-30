@@ -103,6 +103,23 @@ export type SearchRow = {
 };
 
 /**
+ * Append one "Load more" window to the loaded rows, dropping rows whose id is
+ * already present. The Load more button is disabled while the action is
+ * pending (`ui/button`), but before that re-render commits a fast double
+ * click can fire the action twice at the same offset — two successful pages
+ * would otherwise append the same ids twice. Mirrors the workspace view's
+ * id-deduped row append (`database-view`'s "Load more"): one `Set` of the
+ * ids already in the list, incoming filtered by `.id`. Pure and total.
+ */
+export function appendResultRows(
+  current: readonly SearchRow[],
+  incoming: readonly SearchRow[],
+): SearchRow[] {
+  const seen = new Set(current.map((row) => row.id));
+  return [...current, ...incoming.filter((row) => !seen.has(row.id))];
+}
+
+/**
  * Plain-text teaser for one result (MISSING_FEATURES §1). Prefers the page's
  * real content via `summarizeBlocks` (fed by the search query as `blocks`).
  * The match-centred `snippet` stays a fallback: when the page carries no usable
@@ -241,7 +258,9 @@ export function SearchResults({
       {
         onSuccess: (result) => {
           if (!("results" in result)) return;
-          setRows((current) => [...current, ...result.results]);
+          // Id-deduped append: see `appendResultRows` for the double-click
+          // window this closes (disable commits are one render too slow).
+          setRows((current) => appendResultRows(current, result.results));
           setOffset(result.nextOffset);
         },
       },

@@ -161,7 +161,7 @@ describe("form share links", () => {
   });
 
   it("removing the page link leaves every form link published", async () => {
-    expect(await revokeShareLinkAction("db-1")).toEqual({ ok: true });
+    expect(await revokeShareLinkAction("db-1")).toEqual({ ok: true, removed: 1 });
     expect(db.linkDeleteMany).toHaveBeenCalledWith({
       where: { pageId: "db-1", viewId: null },
     });

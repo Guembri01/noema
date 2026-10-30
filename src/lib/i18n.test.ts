@@ -6,8 +6,12 @@ import { LOCALES, directionOf, isLocale, t, translationKeys, translationKeysFor 
  * Locale key parity: every locale must expose exactly the same key set as the
  * English catalogue, with no empty values. Written red-first in B07 —
  * adding keys to `en` alone must fail here until the other four locales land.
+ *
+ * The parity sweep walks every locale × every key (pure CPU over the
+ * catalogues) and stretched past vitest's 5 s default under full-suite
+ * contention (8.5 s, P3-T09).
  */
-describe("i18n locale parity", () => {
+describe("i18n locale parity", { timeout: 60_000 }, () => {
   it("every locale has exactly the same key set as English", () => {
     const reference = translationKeys();
     for (const { code } of LOCALES) {

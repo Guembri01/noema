@@ -118,6 +118,33 @@ export function invokeShell(
 }
 
 /**
+ * What a `check_update` answer means — the three outcomes the shell menu's
+ * "Check for updates…" item routes on.
+ *
+ * The distinction matters because every answer used to collapse into the same
+ * toast: the updater is not shipped yet, so `check_update` answers
+ * `Ok(None)`, Tauri serialises that as JSON `null` — and a *failed* call
+ * (server `Err`, dead shell) arrives here as `undefined`, because
+ * {@link invokeShell} swallows rejections. Reading both as "up to date" turned
+ * every click into good news, including the broken ones.
+ *
+ *  - `"available"`   — a non-empty version string: announce the update.
+ *  - `"unavailable"` — `null` (`Ok(None)`): this build cannot check at all,
+ *    which is what the honest message says — not "you are up to date".
+ *  - `"cannot-check"` — `undefined` or anything unexpected: the check itself
+ *    failed, so say so instead of reporting good news.
+ */
+export type UpdateCheckOutcome = "available" | "unavailable" | "cannot-check";
+
+export function updateCheckOutcome(version: unknown): UpdateCheckOutcome {
+  if (typeof version === "string" && version.trim() !== "") return "available";
+  // Tauri's JSON `null` is the shell's "no updater in this build"; `undefined`
+  // is this module's own "the call never completed". They must not merge.
+  if (version === null) return "unavailable";
+  return "cannot-check";
+}
+
+/**
  * Subscribe to an event the shell emits (see `src-tauri/src/shell.rs`), or
  * `null` when there is no shell to listen to — the site, a plain browser, SSR.
  *

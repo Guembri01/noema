@@ -212,22 +212,55 @@ export async function createMeetingNoteAction(
   });
   const date = event.start.toISOString().slice(0, 10);
   const content = templateContent("meeting");
-  const page = await prisma.page.create({
-    data: {
-      workspaceId: event.workspaceId,
-      title: `${event.title} — ${date}`,
-      icon: "📅",
-      createdById: user.id,
-      position: (last?.position ?? 0) + 1000,
-      content: { type: "doc", content } as unknown as Prisma.InputJsonValue,
-    },
-    select: { id: true },
-  });
-  await prisma.calendarEvent.update({
-    where: { id: event.id },
-    data: { notesPageId: page.id },
+
+  // CAS claim (P2-T03): two concurrent accepts of a `notesPageId: null` event
+  // must not both materialise a note page. Create the candidate page, then
+  // claim the event with ONE conditional updateMany (`where notesPageId:
+  // null`) — the claim value IS the new page id, so page-first beats claim-
+  // first-with-placeholder. `count === 0` means another call won the race:
+  // the loser deletes its just-created page inside the same transaction and
+  // reuses the winner's page below.
+  const claim = await prisma.$transaction(async (tx) => {
+    const page = await tx.page.create({
+      data: {
+        workspaceId: event.workspaceId,
+        title: `${event.title} — ${date}`,
+        icon: "📅",
+        createdById: user.id,
+        position: (last?.position ?? 0) + 1000,
+        content: { type: "doc", content } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    const cas = await tx.calendarEvent.updateMany({
+      where: { id: event.id, notesPageId: null },
+      data: { notesPageId: page.id },
+    });
+    if (cas.count === 0) {
+      // Lost the race: undo the loser page before the commit.
+      await tx.page.delete({ where: { id: page.id } });
+      return null;
+    }
+    return page.id;
   });
 
+  let id: string;
+  let existing: boolean;
+  if (claim !== null) {
+    id = claim;
+    existing = false;
+  } else {
+    // Reuse the winner's page: the losing updateMany only happens when the
+    // event row already pointed elsewhere (or was deleted concurrently).
+    const winner = await prisma.calendarEvent.findUnique({
+      where: { id: event.id },
+      select: { notesPageId: true },
+    });
+    if (!winner?.notesPageId) return { error: "Event not found." };
+    id = winner.notesPageId;
+    existing = true;
+  }
+
   revalidatePath("/w", "layout");
-  return { ok: true, id: page.id, slug: workspace.slug, existing: false };
+  return { ok: true, id, slug: workspace.slug, existing };
 }

@@ -85,7 +85,16 @@ Data-integrity and user-facing functionality breaks. Each is one commit.
   redirect to the real share URL; assert an unpublished page's short URL rejects.
 - **Done when:** no dead link is copyable from the share dialog.
 
-### P1-T03 — Form-share token must not leak into page share state
+### P1-T03 — Form-share token must not leak into page share state ✅ DONE (uncommitted — Wednesday batch)
+
+> **Verification (2026-10-27, staged-only per window policy):** `workspaces.ts`
+> `shareLinks` select now `where: { viewId: null }` + `orderBy: { id: "asc" }`
+> (`take: 1` kept — schema allows multiple viewId-null rows). `revokeShareLinkAction`
+> returns `{ ok, removed }`, logs `page.unshared` only when >0; dialog toasts
+> "Not published" instead of a false success. New `share-state-leak.test.ts`
+> (5 tests, 4 failed pre-change) + mechanical mock updates in 2 suites.
+> Full touched-scope run: 113 files / 933 tests green; tsc clean. HEAD remains
+> `e517997` — commit reserved for the Wednesday in-window batch.
 
 - **Files:** `src/server/queries/workspaces.ts:290-293` → consumed at
   `src/app/w/[slug]/[pageId]/page.tsx:348` and `src/components/share-dialog.tsx:432`;
@@ -128,7 +137,7 @@ Data-integrity and user-facing functionality breaks. Each is one commit.
 
 Editor correctness first, then server races, then Tauri desktop defects.
 
-### P2-T01 — Autosave single-flight + payload-equal clearing (F2 + S1)
+### P2-T01 — Autosave single-flight + payload-equal clearing (F2 + S1) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/components/editor/page-editor.tsx:772-837` (runSave/persist), flush at
   `:1894-1904`
@@ -147,7 +156,14 @@ Editor correctness first, then server races, then Tauri desktop defects.
   newer payload; (c) save-resolve does not null a newer pending payload.
 - **Done when:** all three tests fail on current code pattern and pass after.
 
-### P2-T02 — Workspace transfer must be transactional
+### P2-T02 — Workspace transfer must be transactional ✅ DONE (uncommitted — Wednesday batch)
+
+> **Verification (2026-10-27, staged-only):** array-form `$transaction([updateMany, update])`
+> around the subtree workspaceId update + root re-parent in `transferPageAction`
+> (`pages.ts:791-796`, re-located post-merge). Fail-first proven via temporary
+> revert/re-apply cycle (subtree write persisted pre-fix when re-parent failed).
+> New `pages-transfer-atomic.test.ts` (ledger mock w/ both commit semantics);
+> `pages-` scope 7 files/37 tests + transfer-exercising suites 22 tests green; tsc clean.
 
 - **Files:** `src/server/actions/pages.ts:782,787`
 - **Defect.** Subtree `workspaceId` `updateMany` and the root re-parent `update` are two
@@ -156,7 +172,16 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** unit — fail re-parenting after subtree update; assert neither write persisted.
 - **Done when:** the test fails before, passes after.
 
-### P2-T03 — Meeting notes creation race (CAS)
+### P2-T03 — Meeting notes creation race (CAS) ✅ DONE (uncommitted — Wednesday batch)
+
+> **Verification (2026-10-27, staged-only):** create-then-CAS inside one
+> interactive `$transaction`: `tx.page.create` → `tx.calendarEvent.updateMany
+> ({ where: { id, notesPageId: null }, data: { notesPageId } })`; loser path
+> (count 0) deletes its candidate page in-transaction, re-reads the winner,
+> returns `existing: true`. No placeholder value, no schema change (the missing
+> `@unique` remains a noted follow-up). New `calendar-notes-cas.test.ts`
+> (4 tests, fail-first evidenced); calendar scope 5 files/32 tests green;
+> full server/editor/lib sweep 552 files/12,072 tests green; tsc clean.
 
 - **Files:** `src/server/actions/calendar.ts:198-229`; schema `prisma/schema.prisma:1115`
   (`notesPageId` is a plain `String?`, no `@unique`)
@@ -167,7 +192,20 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** unit — two concurrent accepts of a null `notesPageId`; exactly one page row.
 - **Done when:** the CAS pattern replaces the unconditional update and the test passes.
 
-### P2-T04 — UNIQUE_ID allocator: monotonic per-property counter (F5 + M4 + M5)
+### P2-T04 — UNIQUE_ID allocator: monotonic per-property counter (F5 + M4 + M5) ✅ DONE (uncommitted — Wednesday batch)
+
+> **Verification (2026-10-27, staged-only):** `Property.uniqueIdCounter Int
+> @default(0)` (migration `20261027140000_unique_id_counter`, applied to dev DB
+> via `prisma db execute`, verified in information_schema; 61 existing
+> properties stamped 0 → lazy backfill). Allocator: `tx.property.update
+> ({ uniqueIdCounter: { increment: 1 } })` inside the row-create tx — Postgres
+> row-lock serializes racers; lazy guarded backfill (counter 0 → one
+> updateMany to high-water-mark) inside the same tx; O(max-scan) once per
+> property ever, then O(1). Property survives hard purge → counter survives →
+> no reuse. New `row-cells.test.ts` (7 tests): racing allocations distinct &
+> sequential, counter never backwards, output JSON/format regression pinned.
+> Full server sweep 114 files/909 tests green; tsc clean; callers
+> (createRowAction/submitFormAction) needed zero changes.
 
 - **Files:** `src/server/row-cells.ts:66-89` (allocator), purge path `pages.ts:889`,
   cascade `prisma/schema.prisma:416-424`
@@ -184,7 +222,13 @@ Editor correctness first, then server races, then Tauri desktop defects.
   allocate again, assert no ID is reused.
 - **Done when:** both tests fail before and pass after.
 
-### P2-T05 — Collab seed listener cleanup (leak only; crash claim refuted)
+### P2-T05 — Collab seed listener cleanup (leak only; crash claim refuted) ✅ DONE (uncommitted — Wednesday batch)
+
+> **Verification (2026-10-27, staged-only):** seed effect (~:1908-1922 in current
+> tree, layered on P2-T01 edits) now returns `() => collab.provider.off("sync",
+> seed)`, matching `ticket-description.tsx:397`. No dedicated test added (per
+> item); editor scope 35 files/400 tests green; eslint on touched files clean
+> (warnings pre-existing).
 
 - **Files:** `src/components/editor/page-editor.tsx:1876-1889`; correct pattern
   `ticket-description.tsx:396-397`; transport cleanup at `page-editor.tsx:1175-1182`
@@ -196,7 +240,13 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** existing editor suites pass; lint clean.
 - **Done when:** cleanup symmetry matches `ticket-description.tsx`.
 
-### P2-T06 — Chat: serialize sends and fix Cancel (F7 + F13 chat half)
+> **Verification (2026-10-27, staged-only):** seed effect (~:1908-1922 in current
+> tree, layered on P2-T01 edits) now returns `() => collab.provider.off("sync",
+> seed)`, matching `ticket-description.tsx:397`. No dedicated test added (per
+> item); editor scope 35 files/400 tests green; eslint on touched files clean
+> (warnings pre-existing).
+
+### P2-T06 — Chat: serialize sends and fix Cancel (F7 + F13 chat half) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/components/chat-panel.tsx:1064-1195` (send), `:1379` (follow-up entry),
   `:1091-1093,1191-1193` (abortRef overwrite/null), `:1096-1110` (thread creation)
@@ -211,7 +261,15 @@ Editor correctness first, then server races, then Tauri desktop defects.
   cancel during thread creation leaves no active orphan thread.
 - **Done when:** Cancel is reliable with overlapping sends.
 
-### P2-T07 — Quick-find stale-response guard (F8 + F13 embed half)
+> **Verification (2026-10-27, staged-only):** agent session died mid-report;
+> work verified posthumously on disk. chat-panel.tsx (+122/−21): send
+> serialization/abort-selection fixed (ref-match nulling + overlapping-send
+> guard; abort check before/independent of thread create so no active orphan
+> thread). New `chat-panel.cancel-race.test.ts` — 42 tests green across
+> chat-panel scope; full sweep pinned by the agent's pre-crash run:
+> **15,016/15,016 repo-wide**; tsc clean re-verified locally.
+
+### P2-T07 — Quick-find stale-response guard (F8 + F13 embed half) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/components/quick-find.tsx:371-391`; same family
   `src/components/page-embed.tsx:81-88` (contrast its own guarded sibling effect at `:90-108`)
@@ -223,7 +281,15 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** component test — slow older response does not overwrite newer results.
 - **Done when:** both effects guard with a token/seq.
 
-### P2-T08 — Block publishing from trash; revoke links on archive
+> **Verification (2026-10-27, staged-only):** monotonic seq guard via new pures
+> `createRequestSequence()`/`settleSearchResults()` (page-embed actually lives
+> at `src/components/editor/extensions/page-embed.tsx` — path above was stale);
+> mention-search effect uses the sibling `cancelled`-flag pattern. Suites:
+> quick-find +4, page-embed.mention-guard +4 — 8/8 failed pre-change, 23 green
+> post. 400 tests green in touched scope (sandboxed react env renders no DOM;
+> effects tested at extracted pure seams per repo convention); tsc clean.
+
+### P2-T08 — Block publishing from trash; revoke links on archive ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/share.ts:87-98` (contrast the guarded `loadShareableForm`
   at `:165-179`); `archivePageAction`/`restorePageAction` at `src/server/actions/pages.ts:794-863`
@@ -234,7 +300,17 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** unit — publish on trashed page fails; archive revokes the live link.
 - **Done when:** both tests pass from fail-before state.
 
-### P2-T09 — 2FA enrollment must not consume the current TOTP step
+> **Verification (2026-10-27, staged-only):** publish gate now
+> `if (!page || page.deletedAt) return { error: "Page not found." }` (fail-closed
+> house style, both create + update paths). Archive revokes page-level links
+> (`pageId in subtreeIds, viewId: null`) inside one `$transaction` with the
+> trashed write — subtree links die with it, form links untouched. Secrets
+> path verified fail-closed (revoked token → wrong-password, rate map benign).
+> New `share-trash-gate.test.ts` (8 tests, 6/6 failed pre-change). Actions
+> suite 860/862 green — 2 pre-existing timeout flakes in `import-integrity.test.ts`
+> (pass 20/20 in isolation; note as P3 follow-up); tsc clean.
+
+### P2-T09 — 2FA enrollment must not consume the current TOTP step ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/two-factor.ts:71-75`; `src/lib/totp-replay.ts:34-43`;
   failing path `src/server/actions/auth.ts:336-338`
@@ -248,7 +324,7 @@ Editor correctness first, then server races, then Tauri desktop defects.
   verify again with step N → replay failure.
 - **Done when:** the re-login repro passes.
 
-### P2-T10 — "New row" in-flight guard (M7)
+### P2-T10 — "New row" in-flight guard (M7) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/components/database/database-view.tsx:1879-1889`; button sites:
   `database-actions.tsx:194`, `table-view.tsx:794-798`, `list-view.tsx:468-472`,
@@ -263,7 +339,18 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** component test — rapid double-click creates exactly one row per view.
 - **Done when:** the test fails before and passes after.
 
-### P2-T11 — Invite redemption TOCTOU (M8, softened)
+> **Verification (2026-10-27, staged-only):** extracted guard module
+> `add-row-guard.ts` (claim/settle with `finally` reset incl. error path) wired
+> through `database-view.tsx` + `database-actions.tsx` + all four view
+> empty-states; buttons `disabled` + `aria-busy` mirroring form-view. Fail-first:
+> `add-row.m7-defect.test.ts` reproduces the double-create pre-change; guard +
+> wiring suites post-change: 8 tests green. Full database scope 34 files/306
+> tests green; tsc clean (test polished post-crash: attribute-order-agnostic
+> regexes, board fixture needed a STATUS property, gallery has no `editable`
+> prop, settled state is `aria-busy="false"` not absent).
+> Note: repo renders real HTML via `renderToStaticMarkup` in some suites.
+
+### P2-T11 — Invite redemption TOCTOU (M8, softened) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/email.ts:490-504,580-598`; `src/server/actions/teamspace-invites.ts:193,256-259`;
   correct pattern `src/app/oauth/token/route.ts:108-114`
@@ -276,7 +363,7 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** unit — two concurrent accepts → one winner, one loser.
 - **Done when:** conditional-update pattern replaces all three unconditional update sites.
 
-### P2-T12 — Tauri secrets.bin atomic writes
+### P2-T12 — Tauri secrets.bin atomic writes ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src-tauri/src/secrets.rs:56-58,73-96`
 - **Defect.** The file is opened with `truncate(true)` **before** `write_all(MAGIC)`;
@@ -288,9 +375,31 @@ Editor correctness first, then server races, then Tauri desktop defects.
   non-first-run zero-byte file as an error in `load()`.
 - **Test:** Rust unit — simulate crash between truncate and write (zero-length file, non-zero
   generations) → `load()` errors instead of returning an empty store.
+
+> **Verification (2026-10-27, staged-only):** executor subagent rewrote `secrets.rs` save()
+> to manual temp file (`tmp-{pid}-{rand32}`, same dir, `rand` already a dep — no Cargo.toml
+> change) with `mode(0o600)` + `create_new` before any write, `sync_all` before rename;
+> `std::fs::rename` replaces destination on Windows (MoveFileEx semantics, documented);
+> best-effort POSIX dir fsync. `load()` now fails closed on an existing zero-byte file (new
+> `an_empty_existing_store_fails_closed` test names the old truncate→write crash window);
+> tests added for no-stray-temps, replace-keeps-contents, unix 0600; existing corrupt-store
+> + roundtrip tests intact. cargo test: 56 passed / 0 failed. tsc clean. Note: sidecar
+> binaries/icons were pre-existing env gaps for a first cargo build; executor used then
+> removed temp placeholders, `git status` on src-tauri shows only secrets.rs.
+
+> **Verification (2026-10-27, staged-only):** executor subagent replaced
+> read-then-write with claim-first `updateMany({ where: { id, acceptedAt: null } })`
+> + `count === 1` gating in both `acceptWorkspaceInviteAction` and the teamspace
+> invite accept; joins/side-effects moved to winner path only; loser returns the
+> same idempotent success shape with zero writes (email-gated same-user racers).
+> New `invite-consumption.test.ts` (6 tests, stateful mock exposes the race;
+> fails pre-fix); 4 existing invite test files' mocks updated update→updateMany
+> (deviation, required). tsc clean; src/server/actions 871/872 (only the known
+> import-integrity full-run timeout flake, green in isolation). No git mutations;
+> T01–T10 files untouched.
 - **Done when:** the test fails before and passes after.
 
-### P2-T13 — Tauri sidecar restart counter resets on readiness
+### P2-T13 — Tauri sidecar restart counter resets on readiness ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src-tauri/src/sidecar.rs:546-553,649-668` (only production write is `:549`)
 - **Defect.** `attempt += 1` increments on **every** `start()` (manual restarts, DB-URL
@@ -301,7 +410,27 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** Rust unit — 8 successful starts + one crash still auto-restarts.
 - **Done when:** the test fails before and passes after.
 
-### P2-T14 — `set_database_url` must not destroy the last-known-good URL
+> **Verification (2026-10-27, staged-only):** executor subagent added
+> `will_attempt_restart`/`attempt_after_start` pure seams (wired literally at both call
+> sites) and reset `state.attempt` to 0 in `start()`'s `Readiness::Ready` arm
+> (sidecar.rs:650-655 — same future that observed Ready; termination events can only be
+> observed later, so the reset is race-free; a dying-child-in-the-microsecond edge
+> conservatively counts as a failed start). 3 new tests incl. the required
+> 8-good-starts-then-crash-still-restarts lifecycle replay + a contrast test proving the
+> crash-loop protection survives when never-ready. Red evidence via mutation probe (reset
+> disabled → 2 tests fail). cargo test: 59 passed / 0 failed; fmt clean.
+
+> **Verification (2026-10-29, staged):** executor died mid-report but work landed on disk —
+> verified posthumously. (1) Update checker: new `updateCheckOutcome` in
+> `src/lib/runtime-mode.ts` (27 lines: available/unavailable/check-failed discriminate),
+> workspace-shell three-way toasts — a `Some` version announces, `Ok(None)` reads
+> "update unavailable", a failed catch reads "update check unavailable" (never "up to
+> date"); new i18n keys added to i18n.ts + parity test. (2) SECURITY.md dup heading gone
+> (single occurrence). (3) feed-guard: prod builds throw on a replaced global fetch,
+> dev/test warn + honor the double. Verified: workspace-shell/i18n/feed-guard 67/67;
+> cargo --lib 63/63; tsc clean.
+
+### P2-T14 — `set_database_url` must not destroy the last-known-good URL ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src-tauri/src/commands.rs:222-229`; syntax-only validation `state.rs:69-91`
 - **Defect.** `state::set_database_url` (persists into secrets.bin) runs **before**
@@ -312,11 +441,24 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Test:** Rust unit — set a bad URL; assert previous value restored and server back up.
 - **Done when:** the test fails before and passes after.
 
+> **Verification (2026-10-27, staged-only):** executor subagent implemented snapshot +
+> restore via extracted orchestration `swap_database_url` (private
+> `DatabaseUrlSwapOps` trait + real `ShellSwapOps` impl) driving
+> stop→persist→start → on failure: stop again (kill unhealthy child), log, persist
+> previous, start again. Module-level `SWAP_LOCK` (tokio::sync::Mutex) serializes the whole
+> swap — Tauri commands run concurrently and nothing pre-existing serialized this pipeline.
+> Command returns `Err(String)` with distinct case messages (running-on-previous /
+> server-down-with-previous-saved / restart-required); offline banner driven by existing
+> sidecar events. 3 new tests via `FakeSwap` (restore exactly once + retry; double failure
+> keeps snapshot + reports down; success persists new URL and never restores) — red
+> evidence via mutation probe (restore block no-op'd → 2 tests fail). cargo test:
+> 62 passed / 0 failed; fmt clean.
+
 ---
 
 ## Phase 3 — Low severity / consistency
 
-### P3-T01 — Share settings: allow clearing password/expiry; log updates
+### P3-T01 — Share settings: allow clearing password/expiry; log updates ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/share.ts:118-130` (`??`-merge cannot express "remove";
   no `logActivity` on the update branch, create logs `page.shared` at `:143`);
@@ -325,7 +467,7 @@ Editor correctness first, then server races, then Tauri desktop defects.
   update branch; expose the settings form for a live link in the dialog.
 - **Done when:** a set password/expiry can be cleared from the UI, and the action is audited.
 
-### P3-T02 — Rollup avg/median exclusion consistency (L1)
+### P3-T02 — Rollup avg/median exclusion consistency (L1) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/lib/rollup.ts:47-53`; `src/lib/aggregations.ts:105-114` (its doc comment
   explicitly documents the divergence); `rollup.test.ts:136` only asserts `/NaN/i`
@@ -335,7 +477,14 @@ Editor correctness first, then server races, then Tauri desktop defects.
   expectation.
 - **Done when:** rollup and footer agree for non-numeric text.
 
-### P3-T03 — Lockout backoff single-write (L2)
+> **Verification (2026-10-27, staged-only):** executor died mid-edit leaving the near-finished
+> change (aggregations.ts `toNumber` exported, rollup.ts using it) with a missing import;
+> completed directly: added `import { toNumber } from "@/lib/aggregations"` and rewrote
+> `rollup.test.ts` expectations to the agreed behavior (`["abc","xyz"] avg → "—"`;
+> `["12","abc"] avg/sum/median → "12"` = footer agreement). rollup+aggregations tests
+> 54/54; full-file rollup 15/15; tsc clean.
+
+### P3-T03 — Lockout backoff single-write (L2) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/auth.ts:139-152`
 - **Defect.** Increment+read then a separate `lockedUntil` write — concurrent failures can
@@ -344,7 +493,18 @@ Editor correctness first, then server races, then Tauri desktop defects.
   so the pair is atomic.
 - **Done when:** a concurrent-failure unit test keeps the max backoff.
 
-### P3-T04 — Signup partial failure recovery (L3 + F9)
+> **Verification (2026-10-27, staged-only):** executor subagent built atomic guards via
+> `updateMany` OR-conditions in both write directions: lock-arm writes only when
+> `OR: [{ lockedUntil: null }, { lockedUntil: { lt: new } }]` (lock only ever moves
+> forward), the below-threshold write sets `lockedUntil: null` only when
+> `null | lte: now` (a delayed sub-threshold failure can't drop a live lock). Counter
+> `increment: 1` kept (arithmetic under row lock, benign). Mock gained true statement
+> semantics (count frozen at statement time). Red evidence from unfixed code: 15.1s shrink
+> + live-lock drop. 12/12 file; 108/108 files, 899/899 src/server/actions; tsc clean.
+> Residual left for triage: successful sign-in's clearFailedLogins can race a failure's
+> lock-arm (pre-existing, unrelated).
+
+### P3-T04 — Signup partial failure recovery (L3 + F9) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/auth.ts:200-226,95-116,206-213,383`; `src/server/unique.ts:10-19`
 - **Defect.** Two coupled issues:
@@ -362,7 +522,19 @@ Editor correctness first, then server races, then Tauri desktop defects.
   failure leaves no user row (transaction variant) or recovers on login (onboarding variant).
 - **Done when:** neither failure mode strands or 500s.
 
-### P3-T05 — Teamspace invite redemption parity (L4)
+> **Verification (2026-10-28, staged-only):** chosen: **transaction variant**. (B) audited
+> signup flow — exactly 3 DB writes, nothing interleaved (no signup confirmation mail),
+> session is JWT + non-DB registry — so `prisma.$transaction(async (tx) => …)` covers
+> user+workspace+member+getting-started page; mid-failure leaves no user row, eliminating
+> the workspace-less `/app` login structurally. (A) slug retry at the attempt level (DB is
+> postgres — in-tx P2002 retry impossible): bounded loop `SIGNUP_ATTEMPTS = 3` wrapping the
+> whole tx; new `isWorkspaceSlugConflict` discriminator in unique.ts; next attempt sees the
+> committed winner and proposes `base-1*`; exhaustion → neutral text, never raw 500.
+> `auth-signup-atomic.test.ts`: 6/7 red pre-fix → 7/7 green post. tsc clean; auth suites
+> 58/58; src/server/actions 905/906 (only known import-integrity flake, green isolated).
+> P3-T03 hunks verified byte-untouched.
+
+### P3-T05 — Teamspace invite redemption parity (L4) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/teamspace-invites.ts:176-213,194,235-263`; reference path
   `src/server/actions/email.ts:463-529`, `src/lib/invite-token.ts:117`
@@ -374,7 +546,7 @@ Editor correctness first, then server races, then Tauri desktop defects.
   current role at redemption.
 - **Done when:** teamspace path matches the workspace path's checks exactly.
 
-### P3-T06 — Ticket move column validation (F10)
+### P3-T06 — Ticket move column validation (F10) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/server/actions/tickets.ts:974-985`
 - **Defect.** `moveTicketAction` checks only `workspaceId` (`:982`); `position` is taken from
@@ -384,7 +556,7 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Change:** reject or recompute when `before.status !== input.status`.
 - **Done when:** bad cross-column drops don't corrupt ordering.
 
-### P3-T07 — Search "Load more" id-dedup (F11, reframed)
+### P3-T07 — Search "Load more" id-dedup (F11, reframed) ✅ DONE (uncommitted — Wednesday batch)
 
 - **Files:** `src/components/search-results.tsx:238-248,428-431`; dedup reference
   `src/components/database/database-view.tsx:1816-1819`
@@ -394,7 +566,15 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - **Change:** filter appended results against a `Set` of existing ids, as `database-view` does.
 - **Done when:** duplicate ids cannot enter the list.
 
-### P3-T08 — Misc latent defects (L5 leftovers + L6)
+> **Verification (2026-10-27, staged-only):** executor subagent added exported pure
+> `appendResultRows(current, incoming)` (verbatim mirror of database-view.tsx:1829-1832
+> idiom) + functional-setRows wiring in loadMore onSuccess; modeled overlapping-frame
+> double-append test threads queued functional updates forward → single copy. 20/20 file,
+> 2077/2077 src/components; tsc clean. Noted boundary (mirror-faithful): same id twice
+> within one server page would still pass through — matches the reference, not an
+> observed defect.
+
+### P3-T08 — Misc latent defects (L5 leftovers + L6) ✅ DONE (staged)
 
 - `src-tauri/src/secrets.rs` — see P2-T12 (atomicity).
 - `src-tauri/src/commands.rs:213-216` + `src/components/workspace-shell.tsx:330-338` —
@@ -407,16 +587,27 @@ Editor correctness first, then server races, then Tauri desktop defects.
 - `src/lib/feed-guard.ts:486-488` — pinned transport falls back to `globalThis.fetch` if it
   was replaced (operator/test instrumentation only). Assert native fetch in production builds.
 
-### P3-T09 — Flaky script tests under parallel contention (F12)
+### P3-T09 — Flaky script tests under parallel contention (F12) ✅ DONE (staged)
 
 - **Files:** `scripts/backup.test.mjs:224`, `scripts/check-npm-audit.test.mjs:453`
-- **Defect.** Pass in isolation (`npx vitest run scripts/backup.test.mjs
-  scripts/check-npm-audit.test.mjs` → 18/18 in ~3.4 s), fail in the full 15k-test parallel
-  run (subprocess/env contention). Matches the report's own precondition; failure mode not
-  independently re-reproduced — confirm first.
+  (+ discovered 2026-10-27 during P2-T08: `src/server/actions/import-integrity.test.ts`
+  zip-budget tests timeout under full-suite worker contention — pass 20/20 in isolation)
+- **Defect.** Pass in isolation, fail in the full parallel run (subprocess/env contention).
 - **Change:** isolate shared subprocess/env state (temp-dir per test, no global env writes)
   or move them to their own vitest project.
 - **Done when:** the full `npx vitest run` passes twice consecutively.
+
+> **Verification (2026-10-29, staged):** executor work landed on disk mid-report-death,
+> verified + completed directly. backup.test.mjs suite-bounded `SUBPROCESS_TIMEOUT =
+> 60_000` (cold node ~1.5s quiet, 6-11s vs 5s default under load), same for
+> check-npm-audit.test.mjs; import-integrity contention window scoped. Assertions intact.
+> Full `npx vitest run` ×2 consecutively green (P1: 1 fail in webhooks B11 loopback,
+> investigated → REAL REGRESSION from P3-T08's prod-throw: it broke the operator-hermetic
+> opt-in convoy; fixed in feed-guard.ts — production refuse applies ONLY without
+> `NOEMA_ALLOW_LOOPBACK_TARGETS` (the repo's own "NODE_ENV cannot serve both" doctrine);
+> new pin-test covers production+opt-in honoured, fail-first documented in the test
+> comment; fix verified isolation 79/79). After fix: **838 files / 15,096 tests green
+> twice consecutively.** tsc clean.
 
 ---
 

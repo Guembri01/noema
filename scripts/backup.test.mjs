@@ -33,6 +33,15 @@ const REPO = fileURLToPath(new URL("..", import.meta.url));
 const BACKUP = join(REPO, "scripts", "backup.mjs");
 const RESTORE = join(REPO, "scripts", "backup-restore.mjs");
 
+/**
+ * Every test here runs the real scripts as subprocesses. A cold `node` start
+ * costs ~1.5 s on a quiet box — and several times that while the rest of the
+ * suite loads the machine (P3-T09: the 5 s default flaked at 6-11 s in the
+ * full run). Suite-bounded, so a genuinely hung script still fails the test,
+ * just later.
+ */
+const SUBPROCESS_TIMEOUT = 60_000;
+
 /** A passphrase for the tests only — never a real key, never a credential. */
 const SEAL_KEY = "noema-b62-e2e-seal-key-001";
 const DATABASE_URL = "postgresql://noema@127.0.0.1:5432/noema";
@@ -200,7 +209,10 @@ afterEach(() => {
   for (const dir of workspaces.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describeBackup("backup without a passphrase (fail closed)", () => {
+describeBackup(
+  "backup without a passphrase (fail closed)",
+  { timeout: SUBPROCESS_TIMEOUT },
+  () => {
   it("writes nothing and says why", () => {
     const dir = workspace();
     const result = runBackup(dir);
@@ -220,7 +232,7 @@ describeBackup("backup without a passphrase (fail closed)", () => {
   });
 });
 
-describeBackup("backup with a passphrase", () => {
+describeBackup("backup with a passphrase", { timeout: SUBPROCESS_TIMEOUT }, () => {
   it("writes a sealed dump with mode 0600 into a 0700 directory", () => {
     const dir = workspace();
     const result = runBackup(dir, { BACKUP_ENCRYPTION_KEY: SEAL_KEY });
@@ -259,7 +271,7 @@ describeBackup("backup with a passphrase", () => {
   });
 });
 
-describeBackup("restore", () => {
+describeBackup("restore", { timeout: SUBPROCESS_TIMEOUT }, () => {
   it("opens the dump back to the rows it was taken from", () => {
     const dir = workspace();
     runBackup(dir, { BACKUP_ENCRYPTION_KEY: SEAL_KEY });

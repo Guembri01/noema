@@ -1,0 +1,23 @@
+{
+  "agent": "executor",
+  "task": "P1-T04 Option A — document the single-instance session/rate-limit store loudly",
+  "status": "complete",
+  "timestamp": "2026-10-27T10:55:00Z",
+  "mode": "implement-and-verify-only (no git ops, per instruction)",
+  "files_changed": [
+    "src/lib/multi-instance.ts (new)",
+    "src/lib/multi-instance.test.ts (new)",
+    "src/lib/session-store.ts",
+    "src/lib/rate-limit.ts",
+    "SECURITY.md",
+    "README.md",
+    "docs/OPERATIONS.md",
+    ".env.example",
+    "docs/DOCKER.md"
+  ],
+  "packages_installed": [],
+  "next_steps": [
+    "git-wrangler: stage + commit when orchestrator authorizes (working tree intentionally left uncommitted)",
+    "optional: cleanup-agent stub sweep"
+  ]
+}
