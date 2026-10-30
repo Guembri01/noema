@@ -2328,12 +2328,6 @@ test.describe("actions menu (topbar ⋯)", () => {
   });
 });
 
-      });
-      await prisma.page.deleteMany({ where: { id: probe.id } });
-    }
-  });
-});
-
 /**
  * R80.12 / D6 — linked references are guest-scoped: a guest reading a shared
  * page sees mentioners they can open, and never the title/icon of one they
