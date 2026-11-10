@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { normalizeEmail } from "@/lib/email-validation";
 import { hashToken, randomToken } from "@/lib/secrets";
+import { canRedeem } from "@/lib/invite-token";
 import { emailTemplate, escapeHtml, sendMail } from "@/lib/mailer";
 import { appOrigin } from "@/server/actions/email";
 
@@ -184,20 +185,59 @@ async function resolveTeamspaceInvite(
       teamspaceId: true,
       email: true,
       role: true,
+      invitedById: true,
       expiresAt: true,
       acceptedAt: true,
       teamspace: { select: { name: true, workspace: { select: { slug: true, id: true } } } },
     },
   });
   if (!invite) return { ok: false, error: "That invitation link is not valid." };
-  if (invite.acceptedAt) return { ok: false, error: "That invitation has already been used." };
-  if (invite.expiresAt.getTime() < Date.now()) {
-    return { ok: false, error: "That invitation has expired." };
+  // Expiry + already-used are decided by the invite-token module (`canRedeem`),
+  // so the precedence and boundary semantics stay in one place — the same
+  // decision the workspace invitation path makes. The expiry instant itself
+  // counts as expired (fails closed), unlike the hand-rolled `<` comparison
+  // this replaces, which stayed alive at exactly `now === expiresAt`.
+  const decision = canRedeem({
+    expiresAt: invite.expiresAt,
+    usedAt: invite.acceptedAt,
+    maxUses: 1,
+    usedCount: 0,
+  });
+  if (!decision.ok) {
+    return {
+      ok: false,
+      error:
+        decision.reason === "expired"
+          ? "That invitation has expired."
+          : "That invitation has already been used.",
+    };
   }
   if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
     return {
       ok: false,
       error: `This invitation is for ${invite.email}. Sign in with that address.`,
+    };
+  }
+
+  // The invitation is a grant, so the grant is checked again when it is
+  // redeemed: minting a teamspace invitation required the sender to hold a
+  // member-management role (`canManageMembers` — the same gate
+  // `authorizeTeamspace` asks of the actor), so redemption asks it of the
+  // sender *now*. An invitation whose sender has since been demoted or
+  // removed is refused here, before any write, with the workspace path's
+  // refusal copy. The read (the preview) and the write (the acceptance)
+  // share this resolver, so both halves answer alike. `invitedById` is
+  // non-nullable for teamspace invites, so there is always a sender to ask
+  // about.
+  const inviterAccess = await getWorkspaceAccess(
+    invite.invitedById,
+    invite.teamspace.workspace.id,
+  );
+  if (!inviterAccess || !canManageMembers(inviterAccess.role)) {
+    return {
+      ok: false,
+      error:
+        "This invitation can no longer be redeemed. Please ask the workspace owner for a new invitation.",
     };
   }
 
@@ -240,6 +280,20 @@ export async function acceptTeamspaceInviteAction(
   if (!resolved.ok) return { error: resolved.error };
   const { invite } = resolved;
 
+  // Single-use consumption is decided by the write, not the read: the resolver
+  // above and a concurrent accept can both see `acceptedAt: null`, so the
+  // invitation is spent with a conditional update — only the request whose
+  // `UPDATE ... WHERE acceptedAt IS NULL` matches a row is the winner.
+  const claimed = await prisma.teamspaceInvite.updateMany({
+    where: { id: invite.id, acceptedAt: null },
+    data: { acceptedAt: new Date(), acceptedById: user.id },
+  });
+  if (claimed.count !== 1) {
+    // Lost the race: the winner already joined this user, so redemption
+    // settles to the same idempotent outcome without re-joining.
+    return { ok: true, slug: invite.teamspace.workspace.slug, teamspaceName: invite.teamspace.name };
+  }
+
   // Joining a teamspace implies workspace membership for the invitee.
   await prisma.workspaceMember.upsert({
     where: {
@@ -252,10 +306,6 @@ export async function acceptTeamspaceInviteAction(
     where: { teamspaceId_userId: { teamspaceId: invite.teamspaceId, userId: user.id } },
     create: { teamspaceId: invite.teamspaceId, userId: user.id, role: invite.role },
     update: {},
-  });
-  await prisma.teamspaceInvite.update({
-    where: { id: invite.id },
-    data: { acceptedAt: new Date(), acceptedById: user.id },
   });
 
   revalidatePath("/w", "layout");

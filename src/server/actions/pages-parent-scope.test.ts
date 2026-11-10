@@ -68,8 +68,8 @@ const db = vi.hoisted(() => ({
   workspaceFindUnique: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: Record<string, unknown> = {
     page: {
       findFirst: db.pageFindFirst,
       findUnique: db.pageFindUnique,
@@ -77,8 +77,11 @@ vi.mock("@/lib/db", () => ({
       update: db.pageUpdate,
     },
     workspace: { findUnique: db.workspaceFindUnique },
-  },
-}));
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(prisma),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/auth", () => ({
   requireUser: vi.fn(async () => ({ id: "user-1" })),

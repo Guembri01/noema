@@ -23,12 +23,12 @@ import { generateInviteToken } from "@/lib/invite-token";
 
 const db = vi.hoisted(() => ({
   inviteFindUnique: vi.fn(),
-  inviteUpdate: vi.fn(),
+  inviteUpdateMany: vi.fn(),
   workspaceMemberFindUnique: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
   projectMemberUpsert: vi.fn(),
   teamspaceInviteFindUnique: vi.fn(),
-  teamspaceInviteUpdate: vi.fn(),
+  teamspaceInviteUpdateMany: vi.fn(),
   teamspaceMemberUpsert: vi.fn(),
 }));
 
@@ -37,7 +37,7 @@ const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    invite: { findUnique: db.inviteFindUnique, update: db.inviteUpdate },
+    invite: { findUnique: db.inviteFindUnique, updateMany: db.inviteUpdateMany },
     workspaceMember: {
       findUnique: db.workspaceMemberFindUnique,
       upsert: db.workspaceMemberUpsert,
@@ -45,7 +45,7 @@ vi.mock("@/lib/db", () => ({
     projectMember: { upsert: db.projectMemberUpsert },
     teamspaceInvite: {
       findUnique: db.teamspaceInviteFindUnique,
-      update: db.teamspaceInviteUpdate,
+      updateMany: db.teamspaceInviteUpdateMany,
     },
     teamspaceMember: { upsert: db.teamspaceMemberUpsert },
   },
@@ -79,10 +79,10 @@ import TeamspaceInvitePage from "./teamspace/[token]/page";
 const USER = { id: "new-user", name: "New Member", email: "new.member@example.test", locale: "en" };
 
 const writes = () => [
-  db.inviteUpdate,
+  db.inviteUpdateMany,
   db.workspaceMemberUpsert,
   db.projectMemberUpsert,
-  db.teamspaceInviteUpdate,
+  db.teamspaceInviteUpdateMany,
   db.teamspaceMemberUpsert,
 ];
 
@@ -119,6 +119,10 @@ beforeEach(() => {
     teamspaceId: "ts-1",
     email: USER.email,
     role: "ADMIN",
+    // The invitation carries its sender: redemption re-checks the role the
+    // sender holds *now* (resolved through the mocked member row), so a
+    // fixture without a sender would be refused instead of rendered.
+    invitedById: "owner-1",
     acceptedAt: null,
     expiresAt: new Date("2026-03-24T09:00:00.000Z"),
     teamspace: { name: "Design", workspace: { id: "ws-1", slug: "acme" } },

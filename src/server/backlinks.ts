@@ -41,6 +41,11 @@ export type PageReferences = {
   linked: LinkedReference[];
   /** Pages that spell out the target's title as plain text without linking it. */
   unlinked: LinkedReference[];
+  /**
+   * The scan hit its 1000-page bound and the panel should say so (R80.13, D7)
+   * — references beyond the most recently edited 1000 pages are not shown.
+   */
+  truncated: boolean;
 };
 
 /** Inline node types — the only nodes that can carry a mention or a link mark. */
@@ -168,24 +173,51 @@ export function docToBlocks(doc: unknown): Block[] {
  * `visiblePageIds` applies the guest scope (R80.12): when the viewer is a
  * guest, only source pages they may open are considered, so hidden mentioners
  * never leak their titles. The scan is bounded to the most recently updated
- * 1000 pages, mirroring the previous mention-based query; the cap is silent (D7).
+ * 1000 pages; truncation is surfaced to the viewer (R80.13, D7) instead of
+ * being silent.
  */
+export const BACKLINK_SOURCE_CAP = 1000;
+
+const backlinkSourceWhere = (
+  workspaceId: string,
+  pageId: string,
+  visiblePageIds: ReadonlySet<string> | null,
+) => ({
+  workspaceId,
+  deletedAt: null,
+  NOT: { id: pageId },
+  ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+});
+
 async function loadBacklinkSources(
   workspaceId: string,
   pageId: string,
   visiblePageIds: ReadonlySet<string> | null,
 ) {
   return prisma.page.findMany({
-    where: {
-      workspaceId,
-      deletedAt: null,
-      NOT: { id: pageId },
-      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
-    },
+    where: backlinkSourceWhere(workspaceId, pageId, visiblePageIds),
     orderBy: { updatedAt: "desc" },
-    take: 1000,
+    take: BACKLINK_SOURCE_CAP,
     select: { id: true, title: true, icon: true, content: true },
   });
+}
+
+/**
+ * Whether the scan's 1000-row bound actually cut sources off: only checked at
+ * the boundary (a full page of rows), and resolved with a cheap count against
+ * the same `where` — nothing else changes when the workspace is under the cap.
+ */
+async function isScanTruncated(
+  loaded: number,
+  workspaceId: string,
+  pageId: string,
+  visiblePageIds: ReadonlySet<string> | null,
+) {
+  if (loaded < BACKLINK_SOURCE_CAP) return false;
+  const total = await prisma.page.count({
+    where: backlinkSourceWhere(workspaceId, pageId, visiblePageIds),
+  });
+  return total > BACKLINK_SOURCE_CAP;
 }
 
 /** One row of `loadBacklinkSources` — the fields resolved into panel items. */
@@ -265,5 +297,11 @@ export async function getPageReferences(
     }),
     byId,
   );
-  return { linked, unlinked };
+  const truncated = await isScanTruncated(
+    sources.length,
+    workspaceId,
+    pageId,
+    visiblePageIds,
+  );
+  return { linked, unlinked, truncated };
 }

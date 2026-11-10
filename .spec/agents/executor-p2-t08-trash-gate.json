@@ -1,0 +1,39 @@
+{
+  "agent": "executor",
+  "status": "complete",
+  "timestamp": "2026-10-27T19:10:00Z",
+  "task": "P2-T08 — Block publishing from trash; revoke links on archive (implement + verify only, NO git)",
+  "files_changed": [
+    "src/server/actions/share.ts",
+    "src/server/actions/pages.ts"
+  ],
+  "files_created": [
+    "src/server/actions/share-trash-gate.test.ts"
+  ],
+  "packages_installed": [],
+  "summary": {
+    "share_gate": "createShareLinkAction page select now includes deletedAt; `!page || page.deletedAt` returns { error: \"Page not found.\" } — same fail-closed wording/style as loadShareableForm (\"Form not found.\", folds trashed into not-found). Gate sits before permission checks' revalidation needs, before ensurePageShortCode, and covers both create and existing-link-update paths.",
+    "revoke_approach": "DELETE (ShareLink has no revocation fields in schema.prisma — matches existing revokeShareLinkAction which uses deleteMany). archivePageAction now wraps the subtree deletedAt/isArchived updateMany + prisma.shareLink.deleteMany({ where: { pageId: { in: ids }, viewId: null } }) in prisma.$transaction([...]). Deliberate small extension over the item's literal `where: { pageId, viewId: null }`: revoke uses pageId: { in: ids } so page-level links on the WHOLE trashed subtree die (children are also trashed and their /s URLs would otherwise stay live). Form links (viewId set) untouched.",
+    "secrets_cache": "No cache to invalidate: src/lib/secrets.ts share-unlock cookie is stateless HMAC verification (fail-closed on missing AUTH_SECRET) and the decode is gated by the DB link lookup; compareSharePassword looks up the token in DB (row gone → false). unlockAttempts rate-limit map keys on token; stale entries fail closed (no row → wrong-password). Existing revokeShareLinkAction invalidates nothing beyond the row either — archived path mirrors it. Pinned by test: attemptShareUnlock on a revoked token → { status: \"wrong-password\" }.",
+    "restore": "restorePageAction untouched — link already deleted at archive time, so nothing silently revives; no auto-reshare added, per instructions."
+  },
+  "fail_first": {
+    "method": "Both source edits temporarily reverted to pre-fix state; new test suite run against that state; fixes re-applied after.",
+    "result": "6/6 P2-T08 targeted tests FAILED fail-first (trashed publish returned {url} instead of error; archive called neither $transaction nor shareLink.deleteMany). 2/8 passed pre-fix (restore no-op + fail-closed unlock) — those pin pre-existing correct behavior."
+  },
+  "verification": {
+    "tsc": "npx tsc --noEmit → 0 errors (exit 0)",
+    "vitest": "npx vitest run src/server/actions → 102/103 files green, 860/862 tests; share-trash-gate.test.ts 8/8, share-state-leak, share-form-link, calendar suites all pass. 2 pre-existing timeout flakes in import-integrity.test.ts (zip 5MiB budget vs 5s per-test timeout under full-suite worker contention) — file passes 20/20 in isolation; unrelated surface, documented as known flake.",
+    "scope": "git diff --stat over item files only; new test file untracked. Lines: pages.ts 34 (+19/-15 incl. prior uncommitted P2-T02+T08 edits tracked cumulatively), share.ts 18 (+13/-5 cumulative with prior P1-T02/T03 edits)."
+  },
+  "deviations": [
+    "Revoke where-clause uses pageId: { in: subtreeIds } instead of the item's literal { pageId } — whole subtree is trashed so its page-level links must go too; strictly stronger, same viewId: null filter preserves form links.",
+    "Trash-gate error message is \"Page not found.\" (not a bespoke 'trashed' message) to match loadShareableForm's fold-trashed-into-not-found wording.",
+    "Test file asserts linkCreate data lacks viewId (DB default null) since the action never passes viewId explicitly."
+  ],
+  "git_state": "No git add/commit/push performed (verified: git diff --cached empty). All working-tree changes left uncommitted; prior uncommitted set from T01-T07 fully preserved.",
+  "next_steps": [
+    "Dispatch git-wrangler for staging/commit of share.ts, pages.ts, share-trash-gate.test.ts",
+    "Optional: give import-integrity.test.ts zip-budget tests a per-test timeout override to stop contention flakes"
+  ]
+}

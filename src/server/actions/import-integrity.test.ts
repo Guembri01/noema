@@ -405,6 +405,17 @@ describe("CSV honesty (D23.1)", () => {
 
 /* ------------------------------------------------------------------ B22 --- */
 
+/**
+ * The B22 fixtures are CPU-bound in-test: a 5001-entry zip build (~1.7 s on
+ * a quiet box), 5 MiB entry builds, 10 MiB base64 payloads and a 12 MiB
+ * deflate bomb. Vitest's 5 s default flaked at 5-8.5 s while the rest of
+ * the suite loads the machine (P3-T09, seen even in partial isolation).
+ * A timeout bump, not a precomputed fixture: every archive here is used by
+ * exactly one test, so hoisting to module level would tax all 20 tests'
+ * import for one test's build.
+ */
+const CPU_BOUND_TIMEOUT = 60_000;
+
 /** The decoded size the PDF importer accepts (10 MiB). */
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
 /**
@@ -466,7 +477,7 @@ function patchEocd(
   return out;
 }
 
-describe("B22 — the PDF payload is measured before it is decoded", () => {
+describe("B22 — the PDF payload is measured before it is decoded", { timeout: CPU_BOUND_TIMEOUT }, () => {
   it("accepts a payload that is exactly at the limit", async () => {
     const data = Buffer.alloc(MAX_PDF_BYTES).toString("base64");
     // 10 MiB encode to 4 * ceil(10 MiB / 3) characters — the limit is exactly
@@ -523,7 +534,7 @@ describe("B22 — the PDF payload is measured before it is decoded", () => {
   });
 });
 
-describe("B22 — the archive import has a budget", () => {
+describe("B22 — the archive import has a budget", { timeout: CPU_BOUND_TIMEOUT }, () => {
   it("refuses an archive with too many entries", async () => {
     const files: Record<string, string> = {};
     for (let index = 0; index < 5001; index += 1) files[`page-${index}.md`] = "# x";

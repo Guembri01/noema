@@ -459,8 +459,12 @@ docker compose --profile app up -d
 
 It is a standalone, non-root image that runs migrations on start-up, ships a
 healthcheck, and is signed with cosign (keyless) with SBOM and provenance
-attestations. Full configuration, reverse-proxy notes, signature verification
-and the image tags are in **[`docs/DOCKER.md`](./docs/DOCKER.md)**.
+attestations. **Deploy it as a single instance**: the session registry, the
+rate-limit buckets and the share-unlock lockouts are file/in-process state
+that a horizontal scale-out does not share — see
+[`SECURITY.md`](./SECURITY.md#single-instance-state-noema_instances). Full
+configuration, reverse-proxy notes, signature verification and the image tags
+are in **[`docs/DOCKER.md`](./docs/DOCKER.md)**.
 
 ### Servers & ports
 

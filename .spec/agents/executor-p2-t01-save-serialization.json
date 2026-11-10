@@ -1,0 +1,27 @@
+{
+  "agent": "executor",
+  "task": "P2-T01 autosave single-flight + payload-equal clearing (F2 + S1)",
+  "status": "complete",
+  "timestamp": "2026-10-27T11:20:00Z",
+  "files_changed": [
+    "src/components/editor/page-editor.tsx"
+  ],
+  "files_created": [
+    "src/lib/save-queue.ts",
+    "src/lib/save-queue.test.ts"
+  ],
+  "packages_installed": [],
+  "next_steps": [
+    "git add/commit via git-wrangler (currently left uncommitted as instructed)",
+    "proceed to next build-plan item"
+  ],
+  "architecture_choice": "Extracted helper src/lib/save-queue.ts (runSaveQueue + clearIfPayload) wired into page-editor.tsx runSave via injected refs/callbacks — matches repo convention of pure src/lib helper modules (mounting page-editor was impractical: no existing mount test, component pulls TipTap/yjs/katex/server actions). Fail-first was done by first writing save-queue.ts in the old unguarded pattern and running the new test file (5/8 failed incl. all three required assertions), then swapping the implementation with types/tests unchanged.",
+  "verification": {
+    "tsc": "npx tsc --noEmit → 0 errors (exit 0)",
+    "editor_and_new": "npx vitest run src/components/editor src/lib/save-queue.test.ts → 34 files / 386 tests passed",
+    "required_command": "npx vitest run src/components/editor src/lib → 439 files / 11170 tests passed",
+    "fail_first": "documented in .spec/agents/executor-p2-t01-save-serialization.json + report"
+  },
+  "p1_files_untouched": true,
+  "committed": false
+}

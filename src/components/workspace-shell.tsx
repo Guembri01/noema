@@ -23,7 +23,7 @@ import { DiagnosticsDialog } from "@/components/diagnostics-dialog";
 import { ShortcutsDialog } from "@/components/shortcuts-dialog";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { safeAction } from "@/lib/actions-client";
-import { invokeShell } from "@/lib/runtime-mode";
+import { invokeShell, updateCheckOutcome } from "@/lib/runtime-mode";
 import { formatShortcut } from "@/lib/keyboard-shortcuts";
 import { useIsMac } from "@/lib/use-is-mac";
 import { shellWindowEvent, type ShellMenuEvent } from "@/lib/shell-events";
@@ -328,14 +328,27 @@ export function WorkspaceShell({
           const call = invokeShell("check_update");
           if (!call) return;
           void call
-            .then((version) =>
-              typeof version === "string" && version.trim() !== ""
-                ? // `toast.message`, not `toast.info`: the info variant is banned
-                  // by the coherence gate (docs/specs/notifications.md R82.30).
-                  toast.message(`${t(locale, "updateAvailable")} ${version}`)
-                : toast.success(t(locale, "upToDate")),
-            )
-            .catch(() => toast.error(t(locale, "upToDate")));
+            .then((version) => {
+              // Three outcomes, never two (`updateCheckOutcome`): an update to
+              // announce, a build without an updater, and a check that could
+              // not run. The old code answered both non-available shapes with
+              // "up to date" — including the failed check, which is exactly
+              // when a false "up to date" is most misleading.
+              const outcome = updateCheckOutcome(version);
+              if (outcome === "available") {
+                // `toast.message`, not `toast.info`: the info variant is banned
+                // by the coherence gate (docs/specs/notifications.md R82.30).
+                toast.message(`${t(locale, "updateAvailable")} ${version}`);
+              } else if (outcome === "unavailable") {
+                toast.message(t(locale, "updateUnavailable"));
+              } else {
+                toast.error(t(locale, "updateCheckUnavailable"));
+              }
+            })
+            // `invokeShell` resolves a failed call to `undefined`, so this
+            // catch is a belt-and-braces net; wherever it fires it must still
+            // not read "up to date".
+            .catch(() => toast.error(t(locale, "updateCheckUnavailable")));
         },
       ],
     ];

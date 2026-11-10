@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { Link2, Lock } from "lucide-react";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
+import { generateShortCode, isValidShortCode } from "@/lib/short-link";
 import { DocRenderer } from "@/components/doc-renderer";
 import { PublicForm } from "@/components/database/public-form";
 import { CopyLinkButton } from "@/components/share-dialog";
@@ -92,6 +94,37 @@ function UnavailableState() {
   );
 }
 
+/**
+ * Resolve the deterministic short code the share dialog advertises
+ * (`generateShortCode({ seed: pageId })`) — the alias is stored, indexed and
+ * unique on `Page.shortCode`, then re-derived here so a stale or hostile row
+ * can never promote itself (P1-T02). A hash cannot be inverted and a scan is
+ * off the table, so only a page that was stamped with its own code resolves.
+ *
+ * Returns the LIVE published page-level ShareLink's token — never the page —
+ * or `null` to fail closed (unpublished, expired, deleted, or unclaimed code).
+ */
+async function shortCodeToken(code: string): Promise<string | null> {
+  if (!isValidShortCode(code)) return null;
+  const page = await prisma.page.findUnique({
+    where: { shortCode: code },
+    select: { id: true },
+  });
+  if (!page || generateShortCode({ seed: page.id }) !== code) return null;
+  // Redirect to the real token rather than rendering here: password gating,
+  // expiry and the form branches come from the canonical path unchanged.
+  const live = await prisma.shareLink.findFirst({
+    where: {
+      pageId: page.id,
+      viewId: null,
+      page: { deletedAt: null },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: { token: true },
+  });
+  return live?.token ?? null;
+}
+
 export default async function PublicSharedPage({
   params,
   searchParams,
@@ -129,6 +162,13 @@ export default async function PublicSharedPage({
       },
     },
   });
+
+  if (!link && isValidShortCode(token)) {
+    // The URL is a short-code form; tokens are matched first, so a full
+    // random token keeps its direct path even when its charset is base62.
+    const liveToken = await shortCodeToken(token);
+    if (liveToken) redirect(`/s/${liveToken}`);
+  }
 
   if (!link || isSharedPageUnavailable(link, link.page)) {
     return <UnavailableState />;

@@ -64,11 +64,13 @@ vi.mock("@radix-ui/react-dialog", async () => {
 const {
   DEFAULT_QUICK_FIND_MAX_RESULTS,
   MAX_QUICK_FIND_RECENTS,
+  createRequestSequence,
   orderRowsByRecents,
   recentOrder,
   recentToRow,
   rememberVisit,
   resultBreadcrumb,
+  settleSearchResults,
   showingFooter,
   loadRecents,
   QuickFind,
@@ -259,5 +261,109 @@ describe("QuickFind SSR", () => {
     // The always-present "create" row is the first option.
     expect(html).toContain('role="option"');
     expect(DEFAULT_QUICK_FIND_MAX_RESULTS).toBeGreaterThan(0);
+  });
+});
+
+describe("stale-response guard (F8)", () => {
+  /** Rows shaped exactly like the action's success/error union. */
+  type Results = Array<{ id: string; title: string; icon: string | null; type: string; snippet: string }> | {
+    error: string;
+  };
+  const row = (id: string) => ({ id, title: id, icon: null, type: "PAGE", snippet: "" });
+
+  /**
+   * The debounced-search effect body, verbatim, with the external seams
+   * (`startTransition` + `setItems` + `toast.error`) replaced by captures so
+   * the action mock's promise resolutions can be controlled from the node
+   * sandbox (React effects do not run there — see the component effect for the
+   * exact parity of this harness and the production body).
+   */
+  const harness = () => {
+    const sequence = createRequestSequence();
+    const applied: string[][] = [];
+    const toasts: string[] = [];
+
+    const run = (seq: number, pending: Promise<Results>) =>
+      pending.then((results) =>
+        settleSearchResults(sequence, seq, results, {
+          onRows: (rows) => applied.push(rows.map((r) => r.id)),
+          onError: (error) => toasts.push(error),
+        }),
+      );
+
+    return { sequence, applied, toasts, run };
+  };
+
+  it("an older response resolving after a newer one never overwrites the newer results", async () => {
+    // Two searches issued in start order ("proj", then "project"); the action
+    // mock resolves the newer first, then — later — the slower older one.
+    const { sequence, applied, run } = harness();
+
+    let settleOlder: (results: Results) => void;
+    let settleNewer: (results: Results) => void;
+    const older = new Promise<Results>((resolve) => (settleOlder = resolve));
+    const newer = new Promise<Results>((resolve) => (settleNewer = resolve));
+
+    const seqOlder = sequence.issue();
+    const seqNewer = sequence.issue();
+
+    const olderRun = run(seqOlder, older);
+    const newerRun = run(seqNewer, newer);
+
+    // The newer ("project") response lands first; its results are the state.
+    settleNewer!([row("project-truth")]);
+    await newerRun;
+    // The older ("proj") response now resolves, strictly afterwards.
+    settleOlder!([row("older-points")]);
+    await olderRun;
+
+    expect(applied).toEqual([["project-truth"]]);
+  });
+
+  it("the newer response is applied whenever it resolves", async () => {
+    const { sequence, applied, run } = harness();
+
+    let resolveOnly: (results: Results) => void;
+    const only = new Promise<Results>((resolve) => (resolveOnly = resolve));
+    const seqNewer = sequence.issue();
+    resolveOnly!([row("fresh")]);
+    await run(seqNewer, only);
+
+    expect(applied).toEqual([["fresh"]]);
+  });
+
+  it("a stale response is dropped whole — including its error toast", async () => {
+    const { sequence, applied, toasts, run } = harness();
+
+    let settleOlder: (results: Results) => void;
+    let settleNewer: (results: Results) => void;
+    const older = new Promise<Results>((resolve) => (settleOlder = resolve));
+    const newer = new Promise<Results>((resolve) => (settleNewer = resolve));
+
+    const seqOlder = sequence.issue();
+    const seqNewer = sequence.issue();
+
+    const olderRun = run(seqOlder, older);
+    const newerRun = run(seqNewer, newer);
+
+    settleNewer!([row("newer")]);
+    await newerRun;
+    settleOlder!({ error: "session expired" });
+    await olderRun;
+
+    expect(applied).toEqual([["newer"]]);
+    expect(toasts).toEqual([]); // The older query's toast must not resurface.
+  });
+
+  it("issued tokens are monotonic: the newest one issued wins", () => {
+    const sequence = createRequestSequence();
+    const first = sequence.issue();
+    const second = sequence.issue();
+    expect(first).toBe(1);
+    expect(second).toBe(2);
+    // The newest token still loses/supersedes correctly: a superseded token has
+    // lost the race the moment a newer one was issued.
+    expect(sequence.isLatest(first)).toBe(false);
+    expect(sequence.isLatest(second)).toBe(true);
   });
 });

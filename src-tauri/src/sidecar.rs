@@ -163,6 +163,34 @@ pub fn should_restart(stopping: bool, epoch: u64, current: u64) -> bool {
     !stopping && epoch == current
 }
 
+/// How many *consecutive* failed starts the supervisor tolerates.
+pub const MAX_RESTART_ATTEMPTS: u32 = 8;
+
+/// Will the supervisor try again after `attempt` consecutive failed starts?
+///
+/// `attempt` counts failures since the last successful start, *not* lifetime
+/// starts — see `attempt_after_start`. Free function so the budget arithmetic
+/// is unit-testable without a running app, like `should_restart`.
+pub fn will_attempt_restart(attempt: u32) -> bool {
+    attempt < MAX_RESTART_ATTEMPTS
+}
+
+/// The counter value a start leaves behind, given how it ended.
+///
+/// A start that reached [`Readiness::Ready`] erases the count: the budget
+/// governs crashes *in a row*, and a server that came up proves every failure
+/// before it obsolete. Without this reset, eight ordinary starts over the
+/// install's lifetime — manual restarts, database-URL fixes — would read as a
+/// crash loop and silently disable auto-restart forever. A start that never
+/// became ready keeps the count standing, so back-to-back failures accumulate.
+pub fn attempt_after_start(attempt: u32, ready: bool) -> u32 {
+    if ready {
+        0
+    } else {
+        attempt
+    }
+}
+
 /// Layout of the per-user data directory, created on first run.
 pub fn db_path(data_dir: &Path) -> PathBuf {
     data_dir.join("noema.db")
@@ -622,6 +650,13 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
             {
                 let state = app.state::<SidecarState>();
                 *state.info.lock().await = Some(info.clone());
+                // A start that came up erases the failure count so the restart
+                // budget counts crashes in a row, not lifetime starts. This
+                // runs on the same task that observed `Readiness::Ready`, and
+                // the write is complete before `Ok` is returned: any later
+                // `Terminated` event is judged against the re-set counter, so
+                // a background task cannot race a stale count.
+                *state.attempt.lock().await = attempt_after_start(attempt, true);
             }
             let _ = app.emit(
                 "sidecar://event",
@@ -653,7 +688,7 @@ pub async fn restart(app: &AppHandle, code: Option<i32>) {
         let attempt = *state.attempt.lock().await;
         attempt
     };
-    let will_restart = attempt < 8;
+    let will_restart = will_attempt_restart(attempt);
     let _ = app.emit(
         "sidecar://event",
         SidecarEvent::Crashed {
@@ -901,6 +936,61 @@ mod tests {
         // restart would end up with two servers.
         assert!(!should_restart(false, 2, 3));
         assert!(!should_restart(true, 2, 3));
+    }
+
+    /// A successful start erases the failure count so auto-restart never
+    /// depends on how many times the server has ever been started.
+    #[test]
+    fn attempt_after_ready_mean_reverts_the_budget() {
+        assert_eq!(attempt_after_start(0, false), 0);
+        assert_eq!(
+            attempt_after_start(7, true),
+            0,
+            "a ready start erases every failure before it"
+        );
+        assert_eq!(
+            attempt_after_start(7, false),
+            7,
+            "a failed start keeps the count standing, so crashes accumulate"
+        );
+    }
+
+    /// The budget counts crashes *in a row*: eight healthy runs, then a crash,
+    /// must read as the first failure — not the ninth, which is what the
+    /// lifetime count produced before the reset existed (auto-restart died
+    /// after eight ordinary starts over the install's life).
+    #[test]
+    fn eight_healthy_starts_and_a_crash_still_auto_restart() {
+        // Replays the exact transitions `start` and `restart` make: entry
+        // increments, the `Ready` branch mean-reverts via
+        // `attempt_after_start(…, true)`, a crash is left for `restart` to
+        // judge through `will_attempt_restart`.
+        let mut attempt = 0;
+        for _ in 0..8 {
+            attempt += 1; // `start` entry
+            attempt = attempt_after_start(attempt, true); // server came up
+        }
+        assert_eq!(attempt, 0, "eight ready starts leave no failure behind");
+        attempt += 1; // one crash
+        assert!(
+            will_attempt_restart(attempt),
+            "a crash after eight healthy runs is the first failure, not the ninth"
+        );
+    }
+
+    #[test]
+    fn eight_consecutive_failures_still_give_up() {
+        // The crash-loop protection has to survive the reset: eight starts
+        // that never became ready must exhaust the budget.
+        let mut attempt = 0;
+        for _ in 0..8 {
+            attempt += 1; // `start` entry, never reaches Ready
+            attempt = attempt_after_start(attempt, false);
+        }
+        assert!(
+            !will_attempt_restart(attempt),
+            "sustained failure must still stop the restarts"
+        );
     }
 
     #[test]

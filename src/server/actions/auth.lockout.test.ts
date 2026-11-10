@@ -14,6 +14,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Only the database edge is mocked — the limiter, the backoff rule and the
  * actions themselves are the real ones.
+ *
+ * P3-T03 — the lock write must not lose a race: a failing sign-in parked
+ * *between* its counter increment and its lock write cannot overwrite a
+ * bigger lock a concurrent failure armed. The mock reproduces that
+ * interleaving by parking a writer in the middle of `registerFailedLogin`
+ * (see `parkNextWriter`) and by giving `user.updateMany` the statement
+ * semantics the fix relies on: the where-condition and the write run as
+ * one indivisible step against the row as it stands.
  */
 
 type UserRow = {
@@ -35,9 +43,17 @@ type UpdateArgs = {
   };
 };
 
+/** One where-clause of a conditional lock write (`lockedUntil` only). */
+type LockClause = { lockedUntil: null } | { lockedUntil: { lt?: Date; lte?: Date } };
+type UpdateManyArgs = {
+  where: { id: string; OR?: LockClause[] };
+  data: { lockedUntil?: Date | null };
+};
+
 const h = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
+  userUpdateMany: vi.fn(),
   userCreate: vi.fn(),
   createSession: vi.fn(),
   verifyPassword: vi.fn(),
@@ -50,6 +66,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: h.userFindUnique,
       update: h.userUpdate,
+      updateMany: h.userUpdateMany,
       create: h.userCreate,
     },
     workspace: { create: vi.fn(), findFirst: h.workspaceFindFirst },
@@ -92,6 +109,23 @@ import {
 /** The single user row the mocked database holds. */
 let user: UserRow;
 
+/**
+ * When armed by `parkNextWriter`, the *next* failing sign-in is parked right
+ * after it has applied its counter increment — it has consumed the increment
+ * statement and holds the fresh count, but it has not written its lock yet.
+ * Releasing it then reproduces a slow client racing a concurrent failure.
+ */
+let holdNextWriter: Promise<void> | null = null;
+
+/** Park the next failing sign-in between its two statements. */
+function parkNextWriter(): { release: () => void } {
+  let release!: () => void;
+  holdNextWriter = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { release };
+}
+
 /** Build a `FormData` the way the sign-in form submits it. */
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
@@ -126,11 +160,50 @@ beforeEach(() => {
   });
   h.userUpdate.mockImplementation(async (args: UpdateArgs) => {
     const count = args.data.failedLoginCount;
+    if (count && typeof count === "object") {
+      user.failedLoginCount += count.increment;
+      // A real statement returns the count *as of its own execution* — the
+      // cursor is fixed here, before the client is parked between its two
+      // statements. A later concurrent increment is not this writer's news.
+      const own = user.failedLoginCount;
+      // P3-T03: a parked writer sits HERE — increment landed, lock write not
+      // issued yet. Everything a concurrent failure commits before the test
+      // releases it happens "between" this writer's two statements.
+      if (holdNextWriter) {
+        const hold = holdNextWriter;
+        holdNextWriter = null;
+        await hold;
+      }
+      return { ...user, failedLoginCount: own };
+    }
     if (typeof count === "number") user.failedLoginCount = count;
-    else if (count && typeof count === "object") user.failedLoginCount += count.increment;
     if ("lockedUntil" in args.data) user.lockedUntil = args.data.lockedUntil ?? null;
     return { ...user };
   });
+  /**
+   * A conditional `updateMany`, with the statement semantics the fix relies
+   * on: the where-condition is read and the value written in one indivisible
+   * step against the row as it stands. A NULL lock satisfies only the
+   * `lockedUntil: null` clause; a comparison (`lt` / `lte`) never matches
+   * NULL — exactly what SQL does. An unmatched row is left untouched.
+   */
+  h.userUpdateMany.mockImplementation(async (args: UpdateManyArgs) => {
+    if (args.where.id !== user.id) return { count: 0 };
+    const match = (args.where.OR ?? []).some((clause) => {
+      const until = user.lockedUntil;
+      if (clause.lockedUntil === null) return until === null;
+      if (until === null) return false;
+      if (clause.lockedUntil?.lt)
+        return until.getTime() < clause.lockedUntil.lt.getTime();
+      if (clause.lockedUntil?.lte)
+        return until.getTime() <= clause.lockedUntil.lte.getTime();
+      return false;
+    });
+    if (!match) return { count: 0 };
+    if ("lockedUntil" in args.data) user.lockedUntil = args.data.lockedUntil ?? null;
+    return { count: 1 };
+  });
+  holdNextWriter = null;
   h.workspaceFindFirst.mockResolvedValue(null);
   h.memberFindFirst.mockResolvedValue(null);
 });
@@ -169,6 +242,87 @@ describe("sign-in lockout and failure counter", () => {
     await expect(loginAction({}, form(SIGN_IN))).rejects.toThrow("NEXT_REDIRECT");
     expect(h.createSession).toHaveBeenCalledTimes(1);
     expect(user.failedLoginCount).toBe(0);
+    expect(user.lockedUntil).toBeNull();
+  });
+});
+
+describe("concurrent failures — the larger backoff survives (P3-T03)", () => {
+  /**
+   * Two sign-in failures for the same account race each other. One writer is
+   * parked between its counter increment and its lock write; the other one
+   * completes its whole failure flow first. Whatever the parked writer
+   * proposes must not be able to shrink the lock the other one left on the
+   * row — the backoff only ever moves forward in time.
+   */
+  it("a delayed smaller failure cannot overwrite a bigger lock with a smaller one", async () => {
+    h.verifyPassword.mockResolvedValue(false);
+    user.failedLoginCount = 4; // the slow writer crosses the threshold: a 15 s lock
+    const { release } = parkNextWriter();
+
+    const slow = loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+    // The slow writer has landed its increment (4 → 5) and is parked holding
+    // its stale count.
+    await vi.waitFor(() => expect(user.failedLoginCount).toBe(5));
+
+    // The fast writer runs the whole flow: it increments to 6, so its own
+    // backoff is the larger one (30 s), and it arms the row.
+    const fast = await loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+    expect(fast.error).toBe("Incorrect email or password.");
+    expect(user.failedLoginCount).toBe(6);
+    const armed = user.lockedUntil;
+    expect(armed).not.toBeNull();
+
+    // Only now does the slow writer's lock write reach the row.
+    release();
+    const slowResult = await slow;
+    expect(slowResult.error).toBe("Incorrect email or password.");
+
+    // The 30 s lock of the fast writer survived the slower, smaller proposal.
+    expect(user.lockedUntil).toBe(armed);
+  });
+
+  it("a delayed below-threshold failure cannot drop a lock a concurrent writer armed", async () => {
+    h.verifyPassword.mockResolvedValue(false);
+    user.failedLoginCount = 3; // the slow writer reads 4 — under the threshold
+    const { release } = parkNextWriter();
+
+    const slow = loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+    await vi.waitFor(() => expect(user.failedLoginCount).toBe(4));
+
+    const fast = await loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+    expect(fast.error).toBe("Incorrect email or password.");
+    const armed = user.lockedUntil; // the 5th failure is the threshold lock
+    expect(armed).not.toBeNull();
+
+    release();
+    const slowResult = await slow;
+    expect(slowResult.error).toBe("Incorrect email or password.");
+
+    expect(user.failedLoginCount).toBe(5);
+    // "No lock" is the smallest backoff there is — clearing it just because a
+    // slower writer's count is small would silently end the account lock.
+    expect(user.lockedUntil).toBe(armed);
+  });
+
+  it("keeps the plain increment path — failures below the threshold arm nothing", async () => {
+    h.verifyPassword.mockResolvedValue(false);
+    for (let i = 0; i < 3; i++) {
+      const res = await loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+      expect(res.error).toBe("Incorrect email or password.");
+    }
+    expect(user.failedLoginCount).toBe(3);
+    expect(user.lockedUntil).toBeNull();
+  });
+
+  it("treats an expired lock as unlocked and cleans it up on the next failure", async () => {
+    h.verifyPassword.mockResolvedValue(false);
+    user.failedLoginCount = 2;
+    user.lockedUntil = new Date(Date.now() - 1_000); // expired a second ago
+    const res = await loginAction({}, form({ ...SIGN_IN, password: "wrong" }));
+    expect(res.error).toBe("Incorrect email or password.");
+    // The failure was recorded (the gate did not refuse it)…
+    expect(user.failedLoginCount).toBe(3);
+    // … and the expired lock value was wiped while nothing new was armed.
     expect(user.lockedUntil).toBeNull();
   });
 });

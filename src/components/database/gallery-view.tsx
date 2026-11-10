@@ -308,6 +308,7 @@ export function GalleryView({
   previewConfig,
   loading = false,
   onAddRow,
+  addRowPending = false,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -337,6 +338,11 @@ export function GalleryView({
   loading?: boolean;
   /** Empty-state primary action; absent renders the hint without a button. */
   onAddRow?: () => void;
+  /**
+   * P2-T10 (M7) — true while one create is on the wire; the empty-state add
+   * row button renders `disabled` + `aria-busy` until the guard settles.
+   */
+  addRowPending?: boolean;
 }) {
   // The card size tracks the container: `cardSizeFor` maps a measured width to
   // a preset, and `CARD_SIZES` supplies the column count, aspect and whether
@@ -439,8 +445,10 @@ export function GalleryView({
             type="button"
             data-testid="gallery-add-row"
             onClick={onAddRow}
+            disabled={addRowPending}
+            aria-busy={addRowPending}
             aria-label={t(locale, "newRow")}
-            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
+            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Plus className="h-3.5 w-3.5" />
             {t(locale, "newRow")}

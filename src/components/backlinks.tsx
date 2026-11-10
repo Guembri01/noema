@@ -228,6 +228,7 @@ export function Backlinks({
   loading = false,
   error = null,
   showEmpty = false,
+  truncated = false,
   onRetry,
 }: {
   items: BacklinkItem[];
@@ -241,6 +242,8 @@ export function Backlinks({
   error?: string | null;
   /** Render the actionable empty state instead of nothing (additive). */
   showEmpty?: boolean;
+  /** The scan hit its 1000-page bound and says so (R80.13, D7). */
+  truncated?: boolean;
   /** Retry/refresh handler; defaults to a route refresh. */
   onRetry?: () => void;
 }) {
@@ -285,6 +288,7 @@ export function Backlinks({
     return (
       <section className="mt-12 border-t border-border pt-6">
         <div className="notion-empty">
+          {truncated ? <TruncationNote locale={locale} /> : null}
           <div className="notion-empty-icon" aria-hidden>
             <AtSign className="h-5 w-5" />
           </div>
@@ -319,6 +323,20 @@ export function Backlinks({
           />
         </div>
       ))}
+      {truncated ? <TruncationNote locale={locale} /> : null}
     </section>
+  );
+}
+
+/**
+ * R80.13 (D7): the scan reads at most the 1000 most recently edited pages,
+ * which used to be silent — a large workspace could hide references without
+ * any signal. Rendered whenever the scan reports truncation.
+ */
+function TruncationNote({ locale }: { locale: string }) {
+  return (
+    <p className="mt-3 text-xs text-muted" role="note">
+      {t(locale, "backlinksTruncated")}
+    </p>
   );
 }

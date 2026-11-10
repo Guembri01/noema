@@ -990,7 +990,7 @@ export async function moveTicketAction(input: {
   if (input.beforeId) {
     const before = await prisma.ticket.findUnique({
       where: { id: input.beforeId },
-      select: { position: true, workspaceId: true },
+      select: { position: true, workspaceId: true, status: true },
     });
     // The ticket the board places this one before must live in the same
     // workspace — otherwise the position of another workspace's ticket would
@@ -998,7 +998,23 @@ export async function moveTicketAction(input: {
     if (before && before.workspaceId !== auth.ticket.workspaceId) {
       return { error: "That ticket is not in this workspace." };
     }
-    if (before) position = before.position - 1;
+    if (before && before.status === input.status) {
+      position = before.position - 1;
+    } else if (before) {
+      // The board drops onto a column and names a row of that column, but a
+      // stale render — the named row was moved to another column after the
+      // page was drawn — leaves `before` in the wrong column. Its position
+      // would then steer this column's order against the board's
+      // `(position, id)` sort, so slot against the destination column's first
+      // row instead — the drop reads as "at the top of the column as it stands
+      // now" — or append when the column is empty.
+      const head = await prisma.ticket.findFirst({
+        where: { workspaceId: auth.ticket.workspaceId, status: input.status },
+        orderBy: [{ position: "asc" }, { id: "asc" }],
+        select: { position: true },
+      });
+      position = head ? head.position - 1 : 1000;
+    }
   } else {
     const last = await prisma.ticket.findFirst({
       where: { workspaceId: auth.ticket.workspaceId, status: input.status },

@@ -9,6 +9,7 @@ import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions
 import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { randomToken } from "@/lib/slug";
 import { hashPassword, verifyPassword } from "@/lib/auth";
+import { generateShortCode } from "@/lib/short-link";
 
 export type ShareOptions = {
   password?: string;
@@ -26,6 +27,16 @@ export type ShareOptions = {
    * leaves the current choice untouched.
    */
   indexing?: boolean;
+  /**
+   * P3-T01: explicit "remove the stored password / expiry" sentinels. The
+   * `??`-merge used on the update branch can only keep or replace a value, it
+   * cannot express removal — so a sent password could be set but never
+   * cleared. The flags are plain booleans (no magic strings), and a
+   * replacement value in the same call wins over its sentinel. Both are
+   * ignored on a fresh create, where there is nothing to clear.
+   */
+  clearPassword?: boolean;
+  clearExpiry?: boolean;
 };
 
 export type ShareLinkState = {
@@ -36,6 +47,27 @@ export type ShareLinkState = {
   expiresAt: string | null;
   indexing: boolean;
 };
+
+/**
+ * Stamp the deterministic `/s/<code>` alias the share dialog renders. The
+ * code space is a one-way hash of the page id, so the alias must live in the
+ * DB (`Page.shortCode`, unique + indexed) for the public resolver to find it —
+ * no scan, ever. Called lazily at publish and share-state read time so pages
+ * published before the column existed are stamped as soon as their share
+ * panel is opened. Never throws: a rare seeded-collision race leaves the
+ * alias unset, which makes the dialog's short link fail closed instead of
+ * pointing at someone else's page.
+ */
+async function ensurePageShortCode(pageId: string): Promise<void> {
+  try {
+    await prisma.page.updateMany({
+      where: { id: pageId, shortCode: null },
+      data: { shortCode: generateShortCode({ seed: pageId }) },
+    });
+  } catch {
+    // Another page already claimed this seed's code (P2002): no alias.
+  }
+}
 
 /** Current share state of a page for the share panel (fail-closed for guests). */
 export async function getShareLinkStateAction(pageId: string): Promise<ShareLinkState> {
@@ -64,6 +96,7 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) return empty;
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) return empty;
 
+  await ensurePageShortCode(pageId);
   // A published form is a separate public surface; the page share panel only
   // reflects the page-level link (`viewId: null`).
   const link = await prisma.shareLink.findFirst({ where: { pageId, viewId: null } });
@@ -88,6 +121,10 @@ export async function createShareLinkAction(
     where: { id: pageId },
     select: {
       workspaceId: true,
+      // P2-T08: a trashed page must not be publishable — the link would
+      // silently revive when the page is restored. Same gate as
+      // `loadShareableForm`, which returns "Form not found." for one.
+      deletedAt: true,
       permissions: {
         where: { userId: user.id },
         select: { level: true },
@@ -95,7 +132,7 @@ export async function createShareLinkAction(
       },
     },
   });
-  if (!page) return { error: "Page not found." };
+  if (!page || page.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) {
     return { error: "You do not have permission to share this page." };
@@ -103,6 +140,7 @@ export async function createShareLinkAction(
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to share this page." };
   }
+  await ensurePageShortCode(pageId);
 
   const passwordHash = options.password ? await hashPassword(options.password) : undefined;
   const expiresAt =
@@ -116,15 +154,36 @@ export async function createShareLinkAction(
     where: { pageId, viewId: null },
   });
   if (existing) {
+    // P3-T01: explicit set-or-clear where `??`-merge can only keep/replace. A
+    // replacement value wins over its sentinel; no sentinel keeps the stored one.
+    const next = {
+      passwordHash: passwordHash ?? (options.clearPassword ? null : existing.passwordHash),
+      expiresAt: expiresAt ?? (options.clearExpiry ? null : existing.expiresAt),
+      permission: requested ?? existing.permission,
+      indexing: options.indexing ?? existing.indexing,
+    };
     await prisma.shareLink.update({
       where: { id: existing.id },
-      data: {
-        passwordHash: passwordHash ?? existing.passwordHash,
-        expiresAt: expiresAt ?? existing.expiresAt,
-        permission: requested ?? existing.permission,
-        indexing: options.indexing ?? existing.indexing,
-      },
+      data: next,
     });
+    // An update that persists gets its audit line, mirroring the create
+    // branch's `page.shared`. A same-value call (the dialog re-sends a
+    // toggle it cannot read back, or an MCP drive-by) is a no-op, so the
+    // trail stays quiet — the link itself is unchanged.
+    const changed =
+      next.passwordHash !== existing.passwordHash ||
+      next.permission !== existing.permission ||
+      next.indexing !== existing.indexing ||
+      (next.expiresAt?.getTime() ?? null) !== (existing.expiresAt?.getTime() ?? null);
+    if (changed) {
+      await logActivity({
+        workspaceId: page.workspaceId,
+        actorId: user.id,
+        action: "page.share_updated",
+        targetType: "page",
+        targetId: pageId,
+      });
+    }
     revalidatePath("/w", "layout");
     return { url: `/s/${existing.token}` };
   }
@@ -405,7 +464,7 @@ export async function attemptShareUnlock(
 /** Remove the page-level public link (form links are revoked per view). */
 export async function revokeShareLinkAction(
   pageId: string,
-): Promise<{ ok: true } | { error: string }> {
+): Promise<{ ok: true; removed: number } | { error: string }> {
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
@@ -426,8 +485,12 @@ export async function revokeShareLinkAction(
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to change sharing." };
   }
-  await prisma.shareLink.deleteMany({ where: { pageId, viewId: null } });
-  await logActivity({ workspaceId: page.workspaceId, actorId: user.id, action: "page.unshared", targetType: "page", targetId: pageId });
+  const { count } = await prisma.shareLink.deleteMany({ where: { pageId, viewId: null } });
+  // A form-only published page deletes 0 rows — that is a no-op, not a share
+  // event, so the audit log stays quiet and the caller reports "not published".
+  if (count > 0) {
+    await logActivity({ workspaceId: page.workspaceId, actorId: user.id, action: "page.unshared", targetType: "page", targetId: pageId });
+  }
   revalidatePath("/w", "layout");
-  return { ok: true };
+  return { ok: true, removed: count };
 }

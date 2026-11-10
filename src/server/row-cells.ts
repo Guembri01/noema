@@ -62,16 +62,29 @@ function existingUniqueIds(
   return out;
 }
 
-/** Allocate the next Unique ID for one property inside a row-create transaction. */
+/**
+ * Allocate the next Unique ID for one property inside a row-create transaction.
+ *
+ * P2-T04: allocation draws from a persistent per-property counter
+ * (`Property.uniqueIdCounter`) with an atomic `increment: 1`, so concurrent
+ * row creates serialize on the row lock and can never mint the same id — the
+ * old read-then-max scan at read-committed isolation handed duplicates out
+ * under load. The counter also survives hard purges (values cascade away,
+ * the counter does not), so a purged row never re-issues an id that exports
+ * or backlinks already treat as identity.
+ *
+ * Legacy properties migrate lazily: while the counter still sits at its
+ * default 0, one high-water-mark scan of the ids already stored stamps the
+ * counter into the never-issued region before the first increment. Two
+ * concurrent allocations compute the same max (benign) and the
+ * `uniqueIdCounter: 0` guard means only a stamp onto a virgin counter can
+ * win; a loser simply increments from the stamped value.
+ */
 async function allocateUniqueIdValue(
   tx: Prisma.TransactionClient,
   propertyId: string,
   config: Partial<UniqueIdConfig>,
 ): Promise<Prisma.InputJsonValue> {
-  const rows = await tx.propertyValue.findMany({
-    where: { propertyId },
-    select: { value: true },
-  });
   // Resolve defaults exactly like the read-only cell so storage and display
   // never disagree; the engine sanitises any malformed optional field.
   const resolved: UniqueIdConfig = {
@@ -80,11 +93,46 @@ async function allocateUniqueIdValue(
     ...(typeof config.startAt === "number" ? { startAt: config.startAt } : {}),
     ...(typeof config.separator === "string" ? { separator: config.separator } : {}),
   };
-  const existing = existingUniqueIds(
-    rows.map((row) => row.value),
-    resolved,
-  );
-  const number = nextNumbers(resolved, existing, 1)[0];
+
+  const current = await tx.property.findUnique({
+    where: { id: propertyId },
+    select: { uniqueIdCounter: true },
+  });
+  if (current && current.uniqueIdCounter === 0) {
+    // Lazily backfill the counter from the stored values (max of the remaining
+    // ids, floored at `startAt - 1` — the exact semantics of `nextNumbers`).
+    // The guard means the stamp only lands on a virgin counter; after this
+    // once-per-property step every allocation is an O(1) increment.
+    const rows = await tx.propertyValue.findMany({
+      where: { propertyId },
+      select: { value: true },
+    });
+    const existing = existingUniqueIds(
+      rows.map((row) => row.value),
+      resolved,
+    );
+    const highWaterMark = (nextNumbers(resolved, existing, 1)[0] ?? 1) - 1;
+    await tx.property.updateMany({
+      where: { id: propertyId, uniqueIdCounter: 0 },
+      data: { uniqueIdCounter: highWaterMark },
+    });
+  }
+
+  const allocated = await tx.property.update({
+    where: { id: propertyId },
+    select: { uniqueIdCounter: true },
+    data: { uniqueIdCounter: { increment: 1 } },
+  });
+  let number = allocated.uniqueIdCounter;
+  if (number < (resolved.startAt ?? 1)) {
+    // A startAt raised after ids were already issued. Snap up to the new
+    // floor and keep the stored counter monotonic — it never moves backwards.
+    number = resolved.startAt ?? 1;
+    await tx.property.updateMany({
+      where: { id: propertyId, uniqueIdCounter: { lt: number } },
+      data: { uniqueIdCounter: number },
+    });
+  }
   return { number, text: formatUniqueId(resolved, number) };
 }
 

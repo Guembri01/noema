@@ -47,6 +47,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const {
   SEARCH_RESULT_TYPES,
   SearchResults,
+  appendResultRows,
   heightFromTeaser,
   pageTeaser,
   resultTypeHue,
@@ -130,6 +131,32 @@ describe("pageTeaser — real content preferred, snippet as fallback", () => {
   it("truncates at a word boundary and is total over junk", () => {
     expect(pageTeaser({ snippet: "one two three four five" }, 12, "")).toBe("one two…");
     expect(pageTeaser({}, 160, "x")).toBe("");
+  });
+});
+
+describe("appendResultRows — id-deduped “Load more” append", () => {
+  it("keeps order and adds only the fresh ids when a page overlaps the loaded set", () => {
+    const current = [row({ id: "p1" }), row({ id: "p2", title: "Beta" })];
+    const page = [
+      row({ id: "p2", title: "Beta (page copy)" }),
+      row({ id: "p3", title: "Gamma" }),
+    ];
+    expect(appendResultRows(current, page)).toEqual([
+      row({ id: "p1" }),
+      row({ id: "p2", title: "Beta" }),
+      row({ id: "p3", title: "Gamma" }),
+    ]);
+  });
+
+  it("keeps one copy of a new id across the double append of the disable-commit window", () => {
+    // The component's wiring, modelled: before `loading={pending}` re-renders
+    // the button disabled, a fast double click fires the same action at the
+    // same offset twice, and each success applies the functional `setRows`
+    // update through this seam — React runs the queued updates in order.
+    const page = [row({ id: "p1" }), row({ id: "p2", title: "Beta" })];
+    const first = appendResultRows([], page);
+    const second = appendResultRows(first, page);
+    expect(second).toEqual(page);
   });
 });
 

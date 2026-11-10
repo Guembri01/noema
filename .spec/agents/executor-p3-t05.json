@@ -1,0 +1,43 @@
+{
+  "agent": "executor",
+  "task": "P3-T05 — Teamspace invite redemption parity (L4)",
+  "status": "complete",
+  "timestamp": "2026-10-28T12:05:00Z",
+  "mode": "implement+verify only (no git mutations performed)",
+  "files_changed": [
+    "src/server/actions/teamspace-invites.ts",
+    "src/server/actions/teamspace-invite-parity.test.ts (new)",
+    "src/server/actions/invite-accept.test.ts",
+    "src/server/actions/invite-consumption.test.ts",
+    "src/app/invite/invite-pages.render.test.ts"
+  ],
+  "packages_installed": [],
+  "summary": {
+    "change": "resolveTeamspaceInvite now (1) decides expiry/already-used via the shared canRedeem (fail-closed now>=ms boundary, workspace error-copy mapping) and (2) re-checks the sender's current grant via getWorkspaceAccess(invitedById) + canManageMembers before returning ok; refusal reuses the workspace path's copy verbatim. invitedById added to the select (non-nullable in schema).",
+    "sender_threshold": "canManageMembers (OWNER/ADMIN) — the exact threshold teamspace minting (authorizeTeamspace) asks of the actor, now asked of the sender, mirroring the workspace path's 'minting threshold asked of the sender' structure. A literal canGrantRole port was rejected: it would refuse admin-minted ADMIN teamspace invites that the creation path still mints (mint/redeem inconsistency).",
+    "ordering_vs_claim_first": "Re-check sits INSIDE the shared resolver, BEFORE the P2-T11 atomic claim (cheap rejection; refused redemption spends no claim attempt). Claim-first updateMany + count!==1 gating untouched (verified at :287-293). TOCTOU window between re-check and claim is identical to the workspace path's.",
+    "p2_t11_intact": true
+  },
+  "parity_checks": [
+    "digest lookup miss -> 'not valid' copy: same",
+    "canRedeem({expiresAt, usedAt: acceptedAt, maxUses: 1, usedCount: 0}): same module, same precedence (expired -> already_used)",
+    "reason->error mapping verbatim ('expired'/'already used'): same",
+    "case-insensitive email-match copy: same (pre-existing)",
+    "sender grant re-check at redemption, fail-closed on demoted/removed: added (threshold = teamspace minting rule)",
+    "preview refuses exactly what accept refuses: same (shared resolver)",
+    "intentional precedence change: used-vs-expired rows now report expired first (workspace parity); was used-first hand-rolled",
+    "deviation (not added): workspace-only isWellFormedToken pre-lookup check — teamspace tokens are randomToken(24) base64url (would pass), digest lookup already rejects non-minted strings; out of item scope, flagged as possible follow-up"
+  ],
+  "tests": {
+    "new_file": "src/server/actions/teamspace-invite-parity.test.ts (10 tests, fail-first documented)",
+    "fail_first_proven": "temporarily restored pre-fix resolver (<-comparison, no sender re-check): 6/10 new tests fail (exact-expiry boundary, demoted/removed/guest sender, preview parity, before-the-claim ordering); file restored byte-identical (cmp OK)",
+    "fixture_updates": "teamspace fixtures in invite-accept.test.ts, invite-consumption.test.ts, invite-pages.render.test.ts now carry invitedById (mocked sender resolves as OWNER, re-check passes by default)"
+  },
+  "verification": {
+    "tsc": "npm run typecheck: single error src/lib/rollup.ts(50,10) 'Cannot find name toNumber' — PRE-EXISTING from prior uncommitted P1/P2 working-tree edit (verified via git diff; file untouched by me); zero errors from my 5 files",
+    "vitest_scoped_actions": "npx vitest run src/server/actions: 107/108 files pass; sole failure share-link-settings.test.ts (untracked prior-phase file) passes in isolation — the documented full-run flake, unrelated to invites",
+    "vitest_invite_area": "6 files / 46 tests green (parity, accept, consumption[P2-T11 with re-check live], render, accept-grant, email-invite-token)"
+  },
+  "no_git_mutations": true,
+  "prior_files_untouched": "all prior uncommitted changes left as-is; P2-T11 claim-first fix intact on disk"
+}

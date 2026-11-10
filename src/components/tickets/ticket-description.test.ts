@@ -50,8 +50,13 @@ describe("autosave cadence", () => {
  * contract the panels are opened through: each control is a labelled dialog
  * trigger that names its own panel, and nothing renders until one is opened.
  */
-describe("description toolbar panels", () => {
-  const render = (locale = "en", workspaceId?: string) =>
+describe(
+  "description toolbar panels",
+  // Radix-backed static renders stretched past the 5 s default under
+  // full-suite contention (8.2 s, P3-T09).
+  { timeout: 60_000 },
+  () => {
+  const render = (locale = "en") =>
     renderToStaticMarkup(
       // The toolbar's buttons carry tooltips, which are Radix-backed and need the
       // provider the app's layout supplies.
@@ -62,7 +67,6 @@ describe("description toolbar panels", () => {
           doc: null,
           text: "",
           locale,
-          workspaceId,
           onSave: () => {},
         }),
       ),
@@ -99,14 +103,5 @@ describe("description toolbar panels", () => {
     const html = render("fr");
     expect(html).toContain('aria-label="Couleur du texte"');
     expect(html).toContain('aria-label="Lien"');
-  });
-
-  it("offers document attachments only when the workspace is known", () => {
-    const withWorkspace = render("en", "ws-1");
-    expect(withWorkspace).toContain('aria-label="Attach file"');
-    expect(withWorkspace).toContain('type="file"');
-    expect(withWorkspace).toContain(".xlsx");
-    expect(withWorkspace).toContain(".pdf");
-    expect(render("en")).not.toContain('type="file"');
   });
 });

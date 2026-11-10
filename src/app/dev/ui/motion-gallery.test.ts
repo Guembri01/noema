@@ -195,7 +195,13 @@ describe("motion gallery — reduce-motion preview", () => {
   });
 });
 
-describe("motion gallery — server render", () => {
+describe(
+  "motion gallery — server render",
+  // A real static render with dynamic imports of react/react-dom/server;
+  // stretched past the 5 s default under full-suite contention (8.9 s,
+  // P3-T09).
+  { timeout: 60_000 },
+  () => {
   it("renders every required id, and starts with the preview off", async () => {
     // A real render (no DOM needed for static markup) is the end-to-end proof
     // that the section cannot throw and that every id the harness queries is

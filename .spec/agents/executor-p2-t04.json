@@ -1,0 +1,28 @@
+{
+  "agent": "executor",
+  "task": "P2-T04 UNIQUE_ID allocator: persistent per-property counter",
+  "status": "complete",
+  "timestamp": "2026-10-27T11:46:00Z",
+  "files_changed": [
+    "prisma/schema.prisma",
+    "src/server/row-cells.ts"
+  ],
+  "files_created": [
+    "prisma/migrations/20261027140000_unique_id_counter/migration.sql",
+    "src/server/row-cells.test.ts"
+  ],
+  "packages_installed": [],
+  "verification": {
+    "tsc": "npx tsc --noEmit → 0 errors",
+    "vitest": "npx vitest run src/server → 114 files / 909 tests passed",
+    "db": "ALTER applied to dev DB; information_schema confirms Property.uniqueIdCounter INTEGER NOT NULL DEFAULT 0 (61 properties, all counters 0 → lazy backfill engages on first allocation)"
+  },
+  "notes": [
+    "Mechanic: Property.uniqueIdCounter Int @default(0) — per-property counter column; allocation = tx.property.update({ uniqueIdCounter: { increment: 1 } }) inside the row-create tx; row-lock serialization makes concurrent allocations distinct & sequential.",
+    "Backfill decision: lazy application-code backfill (option b) — value JSON may store the number under number/value/text/id as string or int; SQL parsing is fragile, the shared TS engine (existingUniqueIds + nextNumbers) is authoritative. Guarded stamp (uniqueIdCounter == 0) runs once per property ever.",
+    "pages.ts purge path unchanged (verbatim): hard row purge cascades PropertyValue deletes but Property (counter) survives — never-reuse contract holds without touching pages.ts/calendar.ts.",
+    "Output JSON shape unchanged: { number, text }.",
+    "No git mutations; changes left uncommitted."
+  ],
+  "next_steps": ["git-wrangler commit when orchestrator green-lights"]
+}

@@ -20,7 +20,7 @@ const db = vi.hoisted(() => ({
   inviteDeleteMany: vi.fn(),
   inviteCreate: vi.fn(),
   inviteFindUnique: vi.fn(),
-  inviteUpdate: vi.fn(),
+  inviteUpdateMany: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
   projectMemberUpsert: vi.fn(),
 }));
@@ -37,7 +37,7 @@ vi.mock("@/lib/db", () => ({
       deleteMany: db.inviteDeleteMany,
       create: db.inviteCreate,
       findUnique: db.inviteFindUnique,
-      update: db.inviteUpdate,
+      updateMany: db.inviteUpdateMany,
     },
     workspaceMember: { upsert: db.workspaceMemberUpsert },
     projectMember: { upsert: db.projectMemberUpsert },
@@ -111,7 +111,7 @@ beforeEach(() => {
   db.projectFindUnique.mockResolvedValue(null);
   db.inviteDeleteMany.mockResolvedValue({ count: 0 });
   db.inviteCreate.mockResolvedValue({ id: "inv-1" });
-  db.inviteUpdate.mockResolvedValue({ id: "inv-1" });
+  db.inviteUpdateMany.mockResolvedValue({ count: 1 });
   db.workspaceMemberUpsert.mockResolvedValue({ id: "wm-1" });
   db.projectMemberUpsert.mockResolvedValue({ id: "pm-1" });
   mailer.sendMail.mockResolvedValue({ ok: true });
@@ -184,7 +184,7 @@ describe("invite acceptance verifies through the module", () => {
       expect.objectContaining({ where: { token: hashToken(raw) } }),
     );
     expect(db.workspaceMemberUpsert).toHaveBeenCalledTimes(1);
-    expect(db.inviteUpdate).toHaveBeenCalledTimes(1);
+    expect(db.inviteUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a malformed token before any database lookup", async () => {

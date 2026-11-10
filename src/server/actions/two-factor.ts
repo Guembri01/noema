@@ -72,9 +72,22 @@ export async function enableTwoFactorAction(
   if (step === null) {
     return { error: "That code is not valid. Check your authenticator app." };
   }
-  if (!(await consumeTotpStep(user.id, step))) {
-    return { error: "That code is not valid. Check your authenticator app." };
-  }
+  // P2-T09: the enrolment code must NOT spend its step. Spending it here
+  // (`counter = step`) made the replay guard refuse the same code at the very
+  // next sign-in — a user who enabled 2FA was locked out for the rest of the
+  // 30 s window. The step is therefore kept spendable once at login: the row
+  // moves to `step - 1`, a step the guard still accepts (`counter < step`),
+  // so the first sign-in consumes it normally and the second use is a replay.
+  // The write keeps the counter's forward-only rule: a counter that already
+  // reached `step - 1` (or beyond, e.g. a step spent under a previous secret's
+  // cycle) is never moved backwards.
+  await prisma.user.updateMany({
+    where: {
+      id: user.id,
+      OR: [{ twoFactorCounter: null }, { twoFactorCounter: { lt: step - 1 } }],
+    },
+    data: { twoFactorCounter: step - 1 },
+  });
   // Always store the sealed form — this also migrates a pre-B05 cleartext row.
   let sealed: string;
   try {

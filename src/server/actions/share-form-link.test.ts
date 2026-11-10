@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { generateShortCode } from "@/lib/short-link";
 
 /**
  * Public form links are ShareLink rows with a `viewId`. These tests pin the
@@ -9,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
+  pageUpdateMany: vi.fn(),
   viewFindUnique: vi.fn(),
   linkFindFirst: vi.fn(),
   linkCreate: vi.fn(),
@@ -28,7 +30,7 @@ const access = vi.hoisted(() => ({ pageCapabilitiesFromRelation: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    page: { findUnique: db.pageFindUnique },
+    page: { findUnique: db.pageFindUnique, updateMany: db.pageUpdateMany },
     databaseView: { findUnique: db.viewFindUnique },
     shareLink: {
       findFirst: db.linkFindFirst,
@@ -84,6 +86,7 @@ beforeEach(() => {
   db.linkCreate.mockResolvedValue({ token: "tok-1" });
   db.linkUpdate.mockResolvedValue({});
   db.linkDeleteMany.mockResolvedValue({ count: 1 });
+  db.pageUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("form share links", () => {
@@ -158,7 +161,7 @@ describe("form share links", () => {
   });
 
   it("removing the page link leaves every form link published", async () => {
-    expect(await revokeShareLinkAction("db-1")).toEqual({ ok: true });
+    expect(await revokeShareLinkAction("db-1")).toEqual({ ok: true, removed: 1 });
     expect(db.linkDeleteMany).toHaveBeenCalledWith({
       where: { pageId: "db-1", viewId: null },
     });
@@ -182,5 +185,53 @@ describe("form share links", () => {
     expect(db.linkFindFirst).toHaveBeenLastCalledWith({
       where: { pageId: "db-1", viewId: null },
     });
+  });
+});
+
+
+/**
+ * P1-T02 — the short link the dialog renders lives on a deterministic alias
+ * (`Page.shortCode`, seeded by the page id). The alias is stamped lazily
+ * whenever a permitted user reads or (re)publishes the page-level share
+ * state, so the public resolver finds it by an indexed lookup instead of a
+ * scan. A collision race never throws — it just leaves the alias unset,
+ * which makes the short link fail closed rather than mis-route.
+ */
+describe("the short-code alias stamp (P1-T02)", () => {
+  it("stamps the alias when the page-level share state is read", async () => {
+    await getShareLinkStateAction("db-1");
+
+    expect(db.pageFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "db-1" } }),
+    );
+    expect(db.pageUpdateMany).toHaveBeenCalledWith({
+      where: { id: "db-1", shortCode: null },
+      data: { shortCode: generateShortCode({ seed: "db-1" }) },
+    });
+  });
+
+  it("stamps the alias when the page-level link is published or revisited", async () => {
+    await createShareLinkAction("db-1", {});
+
+    expect(db.pageUpdateMany).toHaveBeenCalledWith({
+      where: { id: "db-1", shortCode: null },
+      data: { shortCode: generateShortCode({ seed: "db-1" }) },
+    });
+  });
+
+  it("swallows a collision race instead of failing the publish", async () => {
+    db.pageUpdateMany.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    await expect(createShareLinkAction("db-1", {})).resolves.toEqual({
+      url: "/s/tok-1",
+    });
+  });
+
+  it("does not stamp the alias for a form-view link", async () => {
+    await createFormShareLinkAction("view-1");
+
+    expect(db.pageUpdateMany).not.toHaveBeenCalled();
   });
 });

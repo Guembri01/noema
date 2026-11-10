@@ -22,13 +22,18 @@ const h = vi.hoisted(() => ({
   createSession: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  // P3-T04: the sign-up provisions user+workspace+page inside one
+  // `$transaction`; the tx client is the same mock (callback pass-through).
+  const prisma = {
     user: { findUnique: h.userFindUnique, create: h.userCreate },
     workspace: { findUnique: h.workspaceFindUnique, create: h.workspaceCreate },
     page: { create: h.pageCreate },
-  },
-}));
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(prisma),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/auth", () => ({
   createSession: h.createSession,

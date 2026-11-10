@@ -17,7 +17,7 @@ import { pageSearchText } from "@/lib/search";
  * the update path writes.
  */
 
-const db = vi.hoisted(() => ({
+const behavior = vi.hoisted(() => ({
   workspaceFindUnique: vi.fn(),
   pageFindUnique: vi.fn(),
   pageFindUniqueOrThrow: vi.fn(),
@@ -37,11 +37,25 @@ const db = vi.hoisted(() => ({
   templateFindMany: vi.fn(),
   templateCreateMany: vi.fn(),
   transaction: vi.fn(),
+}));
+
+const db = vi.hoisted(() => ({
+  ...behavior,
   tx: {
-    page: { findFirst: vi.fn(), create: vi.fn(), createMany: vi.fn(), findUnique: vi.fn() },
-    property: { findMany: vi.fn(), createMany: vi.fn() },
-    propertyValue: { createMany: vi.fn() },
-    databaseView: { createMany: vi.fn() },
+    page: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      createMany: vi.fn(),
+      findUnique: vi.fn(),
+      findUniqueOrThrow: behavior.pageFindUniqueOrThrow,
+    },
+    property: {
+      findMany: vi.fn(),
+      createMany: vi.fn(),
+      create: behavior.propertyCreate,
+    },
+    propertyValue: { createMany: vi.fn(), create: behavior.propertyValueCreate },
+    databaseView: { createMany: behavior.databaseViewCreateMany },
     template: { createMany: vi.fn() },
   },
 }));
@@ -144,7 +158,9 @@ afterEach(() => {
 describe("pages.ts create paths", () => {
   it("createPageAction indexes a new database page and its seeded starter rows", async () => {
     db.workspaceFindUnique.mockResolvedValue({ slug: "demo-workspace" });
-    db.pageCreate
+    // The page row and the seed now commit through one transaction, so every
+    // `page.create` of this flow lands on the transaction client.
+    db.tx.page.create
       .mockResolvedValueOnce({ id: "db-1" })
       .mockResolvedValue({ id: "seed-row" });
 
@@ -152,10 +168,10 @@ describe("pages.ts create paths", () => {
     expect(result).toMatchObject({ ok: true, id: "db-1" });
 
     // One database page + two starter rows, from the same create path.
-    expect(db.pageCreate).toHaveBeenCalledTimes(3);
+    expect(db.tx.page.create).toHaveBeenCalledTimes(3);
     const expectedTitles = ["New database", "Draft the project brief", "Collect requirements"];
     expectedTitles.forEach((title, index) => {
-      expectIndexed(dataOf(db.pageCreate, index), pageSearchText(title, null));
+      expectIndexed(dataOf(db.tx.page.create, index), pageSearchText(title, null));
     });
   });
 });

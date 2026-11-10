@@ -213,6 +213,7 @@ export function TableView({
   rowHeight,
   loading = false,
   onAddRow,
+  addRowPending = false,
   selectedRowIds = [],
   onToggleRow,
   onToggleAllRows,
@@ -276,6 +277,11 @@ export function TableView({
   loading?: boolean;
   /** Empty-state primary action; absent renders the hint without a button. */
   onAddRow?: () => void;
+  /**
+   * P2-T10 (M7) — true while one create is on the wire; the empty-state add
+   * row button renders `disabled` + `aria-busy` until the guard settles.
+   */
+  addRowPending?: boolean;
   /** Row ids currently selected for the bulk bar (optional, table-only). */
   selectedRowIds?: readonly string[];
   /** Toggle one row's selection; absent renders no selection control. */
@@ -796,8 +802,10 @@ export function TableView({
                         type="button"
                         data-testid="table-add-row"
                         onClick={onAddRow}
+                        disabled={addRowPending}
+                        aria-busy={addRowPending}
                         aria-label={t(locale, "newRow")}
-                        className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
+                        className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         {t(locale, "newRow")}

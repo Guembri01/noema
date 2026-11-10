@@ -30,13 +30,25 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
+// The short-code resolver (P1-T02) redirects to the canonical token URL; the
+// router-less render surfaces that as a thrown sentinel carrying the target.
+const navigation = vi.hoisted(() => ({
+  redirect: (url: string): never => {
+    throw new Error(`NEXT_REDIRECT:${url}`);
+  },
+}));
+vi.mock("next/navigation", () => navigation);
+
 const db = vi.hoisted(() => ({
   shareLinkFindUnique: vi.fn(),
+  shareLinkFindFirst: vi.fn(),
+  pageFindUnique: vi.fn(),
   propertyFindMany: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
   prisma: {
-    shareLink: { findUnique: db.shareLinkFindUnique },
+    shareLink: { findUnique: db.shareLinkFindUnique, findFirst: db.shareLinkFindFirst },
+    page: { findUnique: db.pageFindUnique },
     property: { findMany: db.propertyFindMany },
   },
 }));
@@ -83,6 +95,7 @@ vi.mock("@/components/database/public-form", async () => {
 
 import PublicSharedPage, { generateMetadata } from "./page";
 import { createShareUnlockToken, shareUnlockCookieName } from "@/lib/secrets";
+import { generateShortCode } from "@/lib/short-link";
 
 const TOKEN = "share-token-abc";
 const OTHER_TOKEN = "another-share-token";
@@ -142,6 +155,8 @@ beforeEach(() => {
   process.env.AUTH_SECRET = "test-secret-for-share-page-tests";
   auth.getCurrentUser.mockResolvedValue(null);
   db.shareLinkFindUnique.mockResolvedValue(link("$2a$12$notarealhashnotarealhashnotareal"));
+  db.shareLinkFindFirst.mockResolvedValue(null);
+  db.pageFindUnique.mockResolvedValue(null);
   db.propertyFindMany.mockResolvedValue([
     { id: "title", name: "Name", type: "TEXT", config: { primary: true } },
   ]);
@@ -367,5 +382,129 @@ describe("the public form route (R89.29 / O89.1)", () => {
 
     expect(html).toContain("Password required");
     expect(html).not.toContain('data-testid="public-form"');
+  });
+});
+
+/**
+ * P1-T02 — the share dialog advertises `https://host/s/<code>` where `<code>`
+ * is the deterministic `generateShortCode({ seed: pageId })`, but the only
+ * resolver matched full random tokens, so every copied short link landed on
+ * "no longer available". The resolver branch consults the unique, indexed
+ * `Page.shortCode` alias, re-derives the code to guard a stale row, then
+ * redirects to the page's LIVE published page-level token. Everything else —
+ * unpublished, expired, deleted, unclaimed — fails closed.
+ */
+describe("the short-code resolver (P1-T02)", () => {
+  const CODE = generateShortCode({ seed: "page-1" });
+  const LIVE_TOKEN = "live-share-token";
+
+  const renderShortCode = async (token: string = CODE) => {
+    try {
+      return {
+        kind: "rendered" as const,
+        html: await renderToStaticMarkup(
+          await PublicSharedPage({
+            params: Promise.resolve({ token }),
+            searchParams: Promise.resolve({}),
+          }),
+        ),
+      };
+    } catch (thrown) {
+      return { kind: "redirect" as const, target: String((thrown as never as Error).message) };
+    }
+  };
+
+  it("redirects a short code to the page's live published page-level token", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+    db.pageFindUnique.mockResolvedValue({ id: "page-1" });
+    db.shareLinkFindFirst.mockResolvedValue({ token: LIVE_TOKEN });
+
+    await expect(renderShortCode()).resolves.toEqual({
+      kind: "redirect",
+      target: `NEXT_REDIRECT:/s/${LIVE_TOKEN}`,
+    });
+  });
+
+  it("resolves through the indexed alias — never a scan — and only for a live link", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+    db.pageFindUnique.mockResolvedValue({ id: "page-1" });
+    db.shareLinkFindFirst.mockResolvedValue({ token: LIVE_TOKEN });
+
+    await renderShortCode();
+
+    expect(db.pageFindUnique).toHaveBeenCalledWith({
+      where: { shortCode: CODE },
+      select: { id: true },
+    });
+    expect(db.shareLinkFindFirst).toHaveBeenCalledWith({
+      where: {
+        pageId: "page-1",
+        viewId: null,
+        page: { deletedAt: null },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+      },
+      select: { token: true },
+    });
+  });
+
+  it("fails closed for an unknown short code", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+    db.pageFindUnique.mockResolvedValue(null);
+
+    const outcome = await renderShortCode();
+
+    expect(outcome).toMatchObject({ kind: "rendered" });
+    expect((outcome as { html: string }).html).toContain(
+      "This link is no longer available",
+    );
+    expect(db.shareLinkFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the page has no live published link (unpublished or expired)", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+    db.pageFindUnique.mockResolvedValue({ id: "page-1" });
+    db.shareLinkFindFirst.mockResolvedValue(null);
+
+    const outcome = await renderShortCode();
+
+    expect(outcome).toMatchObject({ kind: "rendered" });
+    expect((outcome as { html: string }).html).toContain(
+      "This link is no longer available",
+    );
+  });
+
+  it("fails closed when the stored alias does not re-derive to the requested code", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+    db.pageFindUnique.mockResolvedValue({ id: "page-2" });
+
+    const outcome = await renderShortCode();
+
+    expect(outcome).toMatchObject({ kind: "rendered" });
+    expect((outcome as { html: string }).html).toContain(
+      "This link is no longer available",
+    );
+    expect(db.shareLinkFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("never enters the short-code branch for a real full token (miss included)", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+
+    const outcome = await renderShortCode("another-share-token");
+
+    expect(outcome).toMatchObject({ kind: "rendered" });
+    expect((outcome as { html: string }).html).toContain(
+      "This link is no longer available",
+    );
+    expect(db.pageFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("keeps the direct path authoritative when a base62 token IS a real link", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(link(null, "Open page"));
+
+    const outcome = await renderShortCode("abc123");
+
+    expect(outcome).toMatchObject({ kind: "rendered" });
+    expect((outcome as { html: string }).html).toContain(MARKER);
+    expect(db.pageFindUnique).not.toHaveBeenCalled();
   });
 });

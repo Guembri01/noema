@@ -986,7 +986,10 @@ function run(testCase) {
 
 if (process.env.VITEST) {
   const { describe, it } = await import("vitest");
-  describe("the parent-scope gate (B08)", () => {
+  // Each case spawns the gate as a subprocess (~1.5 s cold, multiples of
+  // that while the rest of the suite loads the machine — P3-T09), so the
+  // 5 s default flaked at 5-12 s in the full run.
+  describe("the parent-scope gate (B08)", { timeout: 60_000 }, () => {
     for (const testCase of CASES) {
       it(testCase.name, () => run(testCase));
     }

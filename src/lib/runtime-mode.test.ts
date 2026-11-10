@@ -15,6 +15,7 @@ import {
   resolveApiBase,
   resolveDataDir,
   runtimeMode,
+  updateCheckOutcome,
 } from "@/lib/runtime-mode";
 
 const bridge = {
@@ -188,6 +189,55 @@ describe("invoking the shell", () => {
   it("swallows a refusal instead of failing the caller", async () => {
     withShell(() => Promise.reject(new Error("no main window")));
     await expect(invokeShell("set_theme", { theme: "dark" })).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * P3-T08 — "Check for updates…" used to answer every click with "up to date":
+ * the shipped stub answers `Ok(None)`, and a *failed* check arrived as
+ * `undefined` after `invokeShell` swallowed the rejection — and both shapes
+ * fell through to the same success toast. The three answers now mean three
+ * things (`updateCheckOutcome`): an update to announce, a build that cannot
+ * check, and a check that failed.
+ */
+describe("reading a check_update answer", () => {
+  it("announces a non-empty version string as an available update", () => {
+    expect(updateCheckOutcome("1.5.0")).toBe("available");
+    expect(updateCheckOutcome(" 2.0.0-beta.1 ")).toBe("available");
+  });
+
+  it("reads the stub's null as 'this build cannot check', not good news", () => {
+    // Rust `Ok(None)` serialises to JSON `null` — the shell HAS answered, and
+    // its answer is "no updater in this build".
+    expect(updateCheckOutcome(null)).toBe("unavailable");
+  });
+
+  it("reads a failed call as 'could not check' instead of good news", () => {
+    // The shape a server `Err` (or a dead shell) really arrives as: `undefined`
+    // after the swallow, never a rejection.
+    expect(updateCheckOutcome(undefined)).toBe("cannot-check");
+  });
+
+  it("treats anything unexpected as 'could not check'", () => {
+    expect(updateCheckOutcome("")).toBe("cannot-check");
+    expect(updateCheckOutcome("   ")).toBe("cannot-check");
+    expect(updateCheckOutcome(0)).toBe("cannot-check");
+    expect(updateCheckOutcome({ version: "1.5.0" })).toBe("cannot-check");
+  });
+
+  it("the three answers keep their distinct shapes through the shell", async () => {
+    // The stub's `Ok(None)`: JSON null, a completed call.
+    withShell(() => Promise.resolve(null));
+    await expect(invokeShell("check_update")).resolves.toBeNull();
+
+    // A version-carrying answer (the future real updater).
+    withShell(() => Promise.resolve("1.5.0"));
+    await expect(invokeShell("check_update")).resolves.toBe("1.5.0");
+
+    // A refused command: resolved `undefined`, so the webview can tell it
+    // apart from the `null` above.
+    withShell(() => Promise.reject(new Error("the updater endpoint refused")));
+    await expect(invokeShell("check_update")).resolves.toBeUndefined();
   });
 });
 

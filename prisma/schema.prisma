@@ -307,6 +307,10 @@ model Page {
   /// Plain-text mirror of the document, maintained on write, used for Postgres
   /// full-text search (GIN index created by `npm run setup:search`).
   searchText  String?
+  /// Deterministic public alias backing the `/s/<code>` short link the share
+  /// dialog renders: `generateShortCode({ seed: id })`. Filled lazily when the
+  /// share state is read or the link is (re)published; null until then.
+  shortCode   String?  @unique
   position    Float    @default(0)
   isFavorite  Boolean  @default(false)
   isArchived  Boolean  @default(false)
@@ -404,6 +408,12 @@ model Property {
   type           PropertyType
   config         Json? // select/status options, relation target, rollup + formula config
   position       Float        @default(0)
+  // Monotonic UNIQUE_ID allocation counter (P2-T04). Stores the highest id
+  // number ever issued for this property; `update: { increment: 1 }` inside the
+  // row-create transaction hands out the next one. It survives hard purges of
+  // rows (values cascade away, the counter does not), so a purged row never
+  // re-issues an id that exports or backlinks already treat as identity.
+  uniqueIdCounter Int          @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

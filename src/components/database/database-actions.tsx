@@ -84,6 +84,7 @@ export function DatabaseActions({
   showReadOnlyLock,
   onToggleLock,
   onAddRow,
+  addRowPending,
   defaultTemplateName,
   templates,
   onAddRowFromTemplate,
@@ -104,6 +105,11 @@ export function DatabaseActions({
   showReadOnlyLock: boolean;
   onToggleLock: () => void;
   onAddRow: () => void;
+  /**
+   * P2-T10 (M7) — true while one create is on the wire; the button renders
+   * `disabled` + `aria-busy` until the guard settles (mirrors form-view).
+   */
+  addRowPending?: boolean;
   defaultTemplateName: string | null;
   templates: ActionTemplate[];
   onAddRowFromTemplate: (template: ActionTemplate) => void;
@@ -192,11 +198,13 @@ export function DatabaseActions({
         <button
           type="button"
           onClick={onAddRow}
+          disabled={addRowPending}
+          aria-busy={addRowPending}
           aria-label={t(locale, "newRow")}
           title={
             defaultTemplateName ? `${t(locale, "newRow")} — ${defaultTemplateName}` : undefined
           }
-          className="focus-ring u-colors flex items-center gap-1 rounded-control bg-action px-2.5 py-1 text-sm text-action-fg hover:opacity-90"
+          className="focus-ring u-colors flex items-center gap-1 rounded-control bg-action px-2.5 py-1 text-sm text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Plus className="h-4 w-4" />
           {t(locale, "newRow")}

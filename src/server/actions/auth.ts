@@ -15,7 +15,10 @@ import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 import { verifyTotpCounter } from "@/lib/totp";
 import { consumeTotpStep } from "@/lib/totp-replay";
 import { welcomeDoc } from "@/lib/welcome";
-import { uniqueWorkspaceSlug } from "@/server/unique";
+import {
+  isWorkspaceSlugConflict,
+  uniqueWorkspaceSlug,
+} from "@/server/unique";
 import { isSafeReturnTo, passwordStrategyEnabled } from "@/lib/auth-strategies";
 import {
   authLimitMessage,
@@ -87,18 +90,21 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Create the user row. A unique-constraint violation means another sign-up
- * for the same address won the race; it is reported as `null` so the caller
- * can answer with the very same neutral text as the "address is taken" case
+ * Create the user row on the given client — the shared one for a standalone
+ * user, the transaction handle when it runs as part of the provisioning
+ * transaction below. A unique-constraint violation means another sign-up for
+ * the same address won the race; it is reported as `null` so the caller can
+ * answer with the very same neutral text as the "address is taken" case
  * (B24). Every other failure propagates untouched.
  */
 async function createUser(
+  client: Prisma.TransactionClient,
   name: string,
   email: string,
   passwordHash: string,
 ): Promise<{ id: string } | null> {
   try {
-    return await prisma.user.create({
+    return await client.user.create({
       data: {
         name,
         email,
@@ -135,6 +141,15 @@ async function clientAddress(): Promise<string> {
  * persisted on the user row, so the lock survives a restart of the app;
  * the backoff grows with every consecutive failure and is reset by the
  * next successful sign-in.
+ *
+ * P3-T03 — concurrent failures cannot undo each other's work. The increment
+ * is arithmetic under the row's write lock (`SET x = x + 1`), so overlapping
+ * failures never lose a count, and the lock that follows is a **conditional
+ * write**: its where-clause is evaluated in the same statement as its write,
+ * so a slow failure carrying a smaller backoff can only match a row whose
+ * lock is smaller — one a concurrent failure armed meanwhile stays the
+ * larger one and simply wins. Whatever interleaving the requests take, the
+ * stored lock only ever moves forward in time.
  */
 async function registerFailedLogin(userId: string, now: Date): Promise<void> {
   const updated = await prisma.user.update({
@@ -143,12 +158,35 @@ async function registerFailedLogin(userId: string, now: Date): Promise<void> {
     select: { failedLoginCount: true },
   });
   const backoff = authLockoutMs(updated.failedLoginCount);
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      lockedUntil: backoff > 0 ? new Date(now.getTime() + backoff) : null,
-    },
-  });
+  if (backoff > 0) {
+    // Arm or extend the lock. The row may already hold a lock a concurrent
+    // failure armed after the increment above — a larger one then matches
+    // nothing here and stays; this write only lands when it extends what is
+    // stored (no lock before, or one that ends earlier).
+    const lockedUntil = new Date(now.getTime() + backoff);
+    await prisma.user.updateMany({
+      where: {
+        id: userId,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lt: lockedUntil } }],
+      },
+      data: { lockedUntil },
+    });
+  } else {
+    // Under the threshold nothing is owed, so a stale lock value is wiped —
+    // but only one that is not live: the gate in `loginAction` refuses while
+    // a lock ends after `now`, so this may only clear a lock that has
+    // already expired (or was never set). The "no lock" this branch writes
+    // is the smallest backoff there is; like the arm above, it may not
+    // overwrite a lock a concurrent failure armed after the increment was
+    // read.
+    await prisma.user.updateMany({
+      where: {
+        id: userId,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+      },
+      data: { lockedUntil: null },
+    });
+  }
 }
 
 /** A successful sign-in clears the failure counter and the lock. */
@@ -157,6 +195,73 @@ async function clearFailedLogins(userId: string): Promise<void> {
     where: { id: userId },
     data: { failedLoginCount: 0, lockedUntil: null },
   });
+}
+
+/**
+ * P3-T04 — provision the whole account: user row, workspace with its OWNER
+ * member, and the "Getting started" page, all inside ONE transaction. The
+ * earlier shape created the user first and provisioned the workspace and page
+ * afterwards as separate writes — a failure in between stranded an
+ * `emailVerified: false` user whose retries hit the neutral text and whose
+ * next login landed workspace-less on `/app`; the transaction rolls the
+ * attempt back entirely, so the caller answers neutrally and a retry starts
+ * from a clean slate (nothing was persisted).
+ *
+ * The slug race regenerates instead of failing: the slug a concurrent
+ * same-name sign-up took between `uniqueWorkspaceSlug`'s check and the insert
+ * is invisible to the check but still collides with the index, and on
+ * Postgres that failed insert aborts the transaction, so the *attempt* (not
+ * the statement) is what retries. The committed winner is visible to the next
+ * attempt's check, which proposes the next free variant; the bounded loop
+ * answers with the neutral sign-up text instead of a raw 500 when even that
+ * cannot win. No email is sent between the user and workspace writes and the
+ * session is a cookie issued afterwards, so nothing non-transactional lives
+ * inside the block.
+ */
+const SIGNUP_ATTEMPTS = 3;
+
+async function provisionAccount(
+  name: string,
+  email: string,
+  passwordHash: string,
+): Promise<{ userId: string; workspaceSlug: string } | null> {
+  for (let attempt = 0; attempt < SIGNUP_ATTEMPTS; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const user = await createUser(tx, name, email, passwordHash);
+        if (!user) {
+          // A concurrent sign-up for the same address won the race; nothing
+          // this attempt created survives and the caller answers neutrally.
+          return null;
+        }
+        const workspace = await tx.workspace.create({
+          data: {
+            name: `${name.split(" ")[0]}'s Workspace`,
+            slug: await uniqueWorkspaceSlug(name),
+            ownerId: user.id,
+            members: { create: { userId: user.id, role: "OWNER" } },
+          },
+        });
+        await tx.page.create({
+          data: {
+            workspaceId: workspace.id,
+            title: "Getting started",
+            icon: "👋",
+            createdById: user.id,
+            content: welcomeDoc() as unknown as Prisma.InputJsonValue,
+          },
+        });
+        return { userId: user.id, workspaceSlug: workspace.slug };
+      });
+    } catch (error) {
+      // Only a slug collision is worth another attempt, freshly generated —
+      // every other failure propagates (transaction rolled back, nothing
+      // stranded).
+      if (isWorkspaceSlugConflict(error)) continue;
+      throw error;
+    }
+  }
+  return null;
 }
 
 export async function signupAction(
@@ -197,33 +302,16 @@ export async function signupAction(
     return { error: SIGNUP_FAILED };
   }
 
-  const user = await createUser(name, email, passwordHash);
-  if (!user) {
-    // Another sign-up for this address won the race — same neutral answer.
+  const provisioned = await provisionAccount(name, email, passwordHash);
+  if (!provisioned) {
+    // The address was registered a moment before the user write landed, or
+    // the slug race outlasted every attempt — either way the same neutral
+    // answer, and nothing persisted for a retry to trip over.
     return { error: SIGNUP_FAILED };
   }
 
-  const workspace = await prisma.workspace.create({
-    data: {
-      name: `${name.split(" ")[0]}'s Workspace`,
-      slug: await uniqueWorkspaceSlug(name),
-      ownerId: user.id,
-      members: { create: { userId: user.id, role: "OWNER" } },
-    },
-  });
-
-  await prisma.page.create({
-    data: {
-      workspaceId: workspace.id,
-      title: "Getting started",
-      icon: "👋",
-      createdById: user.id,
-      content: welcomeDoc() as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  await createSession(user.id);
-  redirect(`/w/${workspace.slug}`);
+  await createSession(provisioned.userId);
+  redirect(`/w/${provisioned.workspaceSlug}`);
 }
 
 export async function loginAction(

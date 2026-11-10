@@ -1,0 +1,17 @@
+{
+  "agent": "executor",
+  "task": "P1-T03 form-share token leak",
+  "status": "complete",
+  "timestamp": "2026-10-27T10:22:00Z",
+  "files_changed": [
+    "src/server/queries/workspaces.ts",
+    "src/server/actions/share.ts",
+    "src/components/share-dialog.tsx",
+    "src/components/share-dialog.test.ts",
+    "src/server/actions/share-form-link.test.ts",
+    "src/server/actions/share-state-leak.test.ts (new)"
+  ],
+  "notes": "Result shape of revokeShareLinkAction widened to { ok: true, removed: number }. All suites green, tsc clean. No git operations performed.",
+  "next_steps": ["historian review", "git-wrangler commit"],
+  "packages_installed": []
+}

@@ -43,8 +43,10 @@ const auth = vi.hoisted(() => ({
   destroySession: vi.fn<() => Promise<void>>(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  // P3-T04: the sign-up provisions user+workspace+page inside one
+  // `$transaction`; the tx client is the same mock (callback pass-through).
+  const prisma = {
     user: {
       findUnique: db.userFindUnique,
       update: db.userUpdate,
@@ -57,8 +59,11 @@ vi.mock("@/lib/db", () => ({
     },
     workspaceMember: { findFirst: db.workspaceMemberFindFirst },
     page: { create: db.pageCreate },
-  },
-}));
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(prisma),
+  };
+  return { prisma };
+});
 vi.mock("@/lib/auth", () => ({
   hashPassword: auth.hashPassword,
   verifyPassword: auth.verifyPassword,
@@ -67,6 +72,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/server/unique", () => ({
   uniqueWorkspaceSlug: vi.fn(async () => "acme"),
+  isWorkspaceSlugConflict: vi.fn(() => false),
 }));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {

@@ -141,27 +141,33 @@ export async function createPageAction(input: {
     select: { position: true },
   });
 
-  const page = await prisma.page.create({
-    data: {
-      workspaceId: input.workspaceId,
-      parentId,
-      ...(project.projectId ? { projectId: project.projectId } : {}),
-      type: input.type ?? "PAGE",
-      title:
-        input.title ?? (input.type === "DATABASE" ? "New database" : "Untitled"),
-      createdById: user.id,
-      position: (last?.position ?? 0) + 1000,
-      searchText: pageSearchText(
-        input.title ?? (input.type === "DATABASE" ? "New database" : "Untitled"),
-        null,
-      ),
-    },
-    select: { id: true },
-  });
+  // The seed writes below land only if the page row lands with them: a
+  // half-seeded DATABASE page cannot be repaired, so everything is one
+  // transaction and a failed seed rolls the page creation back with it.
+  const page = await prisma.$transaction(async (tx) => {
+    const created = await tx.page.create({
+      data: {
+        workspaceId: input.workspaceId,
+        parentId,
+        ...(project.projectId ? { projectId: project.projectId } : {}),
+        type: input.type ?? "PAGE",
+        title:
+          input.title ?? (input.type === "DATABASE" ? "New database" : "Untitled"),
+        createdById: user.id,
+        position: (last?.position ?? 0) + 1000,
+        searchText: pageSearchText(
+          input.title ?? (input.type === "DATABASE" ? "New database" : "Untitled"),
+          null,
+        ),
+      },
+      select: { id: true },
+    });
+    if ((input.type ?? "PAGE") === "DATABASE") {
+      await seedDatabaseStructure(tx, created.id);
+    }
 
-  if ((input.type ?? "PAGE") === "DATABASE") {
-    await seedDatabaseStructure(page.id);
-  }
+    return created;
+  });
 
   await dispatchWebhooks(input.workspaceId, "page.created", {
     pageId: page.id,
@@ -173,8 +179,11 @@ export async function createPageAction(input: {
 }
 
 /** Create the default properties + views for a fresh database page. */
-async function seedDatabaseStructure(databasePageId: string): Promise<void> {
-  const name = await prisma.property.create({
+async function seedDatabaseStructure(
+  tx: Prisma.TransactionClient,
+  databasePageId: string,
+): Promise<void> {
+  const name = await tx.property.create({
     data: {
       databasePageId,
       name: "Name",
@@ -183,7 +192,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
       config: { primary: true },
     },
   });
-  const status = await prisma.property.create({
+  const status = await tx.property.create({
     data: {
       databasePageId,
       name: "Status",
@@ -198,7 +207,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
       },
     },
   });
-  await prisma.property.create({
+  await tx.property.create({
     data: {
       databasePageId,
       name: "Owner",
@@ -206,7 +215,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
       position: 3000,
     },
   });
-  await prisma.property.create({
+  await tx.property.create({
     data: {
       databasePageId,
       name: "Due",
@@ -215,7 +224,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
     },
   });
 
-  await prisma.databaseView.createMany({
+  await tx.databaseView.createMany({
     data: [
       { databasePageId, name: "Table", type: "TABLE", position: 1000 },
       {
@@ -231,7 +240,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
 
   // A couple of starter rows so the views are not empty. The owning workspace
   // and author are shared, so resolve them once for the whole batch.
-  const owner = await prisma.page.findUniqueOrThrow({
+  const owner = await tx.page.findUniqueOrThrow({
     where: { id: databasePageId },
     select: { workspaceId: true, createdById: true },
   });
@@ -240,7 +249,7 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
     { name: "Collect requirements", status: "todo" },
   ];
   for (const row of seeded) {
-    const page = await prisma.page.create({
+    const page = await tx.page.create({
       data: {
         workspaceId: owner.workspaceId,
         // The parent is the database page `owner` was read from, and the row is
@@ -255,14 +264,14 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
       },
       select: { id: true },
     });
-    await prisma.propertyValue.create({
+    await tx.propertyValue.create({
       data: {
         propertyId: name.id,
         pageId: page.id,
         value: { text: row.name },
       },
     });
-    await prisma.propertyValue.create({
+    await tx.propertyValue.create({
       data: {
         propertyId: status.id,
         pageId: page.id,
@@ -779,12 +788,17 @@ export async function transferPageAction(
     for (const child of childrenByParent.get(current) ?? []) queue.push(child);
   }
 
-  await prisma.page.updateMany({
-    where: { id: { in: ids } },
-    data: { workspaceId: targetWorkspaceId },
-  });
-  // The moved root becomes a top-level page in the target workspace.
-  await prisma.page.update({ where: { id: pageId }, data: { parentId: null } });
+  // P2-T02: both writes are one atomic unit. A subtree that moved workspaces
+  // while the root re-parent failed would strand cross-workspace orphaned
+  // children — the transaction rolls both writes back together.
+  await prisma.$transaction([
+    prisma.page.updateMany({
+      where: { id: { in: ids } },
+      data: { workspaceId: targetWorkspaceId },
+    }),
+    // The moved root becomes a top-level page in the target workspace.
+    prisma.page.update({ where: { id: pageId }, data: { parentId: null } }),
+  ]);
 
   revalidatePath("/w", "layout");
   return { ok: true };
@@ -804,10 +818,19 @@ export async function archivePageAction(pageId: string): Promise<Result> {
     select: { id: true, parentId: true },
   });
   const ids = subtreeClosure(nodes, [pageId]);
-  await prisma.page.updateMany({
-    where: { id: { in: ids }, workspaceId: auth.page.workspaceId, deletedAt: null },
-    data: { deletedAt: new Date(), isArchived: true },
-  });
+  // P2-T08: the trash write and the revoke of the subtree's page-level share
+  // links are one transaction — a link that outlives its trashed page would
+  // keep serving it (and silently revive on restore). Form links are
+  // view-scoped and stay; they are gated at the form endpoints themselves.
+  await prisma.$transaction([
+    prisma.page.updateMany({
+      where: { id: { in: ids }, workspaceId: auth.page.workspaceId, deletedAt: null },
+      data: { deletedAt: new Date(), isArchived: true },
+    }),
+    prisma.shareLink.deleteMany({
+      where: { pageId: { in: ids }, viewId: null },
+    }),
+  ]);
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

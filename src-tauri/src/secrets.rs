@@ -38,12 +38,16 @@ pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
 
-/// Read the secret store, or an empty map when it does not exist yet.
+/// Read the secret store, or an empty map when the file does not exist yet.
 ///
-/// A missing file is normal on first run. A *corrupt* file is not: returning an
-/// empty map would silently make the app generate a new auth secret (signing
-/// everyone out) or forget the configured database (making a new embedded one),
-/// so it is surfaced as an error instead.
+/// A missing file is normal on first run. An *empty* file is not: `save()`
+/// writes through a temporary file and renames it into place, so the only way
+/// to observe a zero-byte `secrets.bin` is a crash (or external interference)
+/// between the truncation and the write of an older in-place save. Returning an
+/// empty map there would silently make the app generate a new auth secret
+/// (signing everyone out) or forget the configured database (making a new
+/// embedded one), and the same is true for any other *corrupt* file. All three
+/// cases are surfaced as errors instead — fail closed.
 pub fn load(data_dir: &Path) -> Result<Secrets, String> {
     let file = path(data_dir);
     let raw = match fs::read(&file) {
@@ -54,7 +58,14 @@ pub fn load(data_dir: &Path) -> Result<Secrets, String> {
         Err(error) => return Err(format!("could not read {}: {error}", file.display())),
     };
     if raw.is_empty() {
-        return Ok(Secrets::new());
+        // An existing zero-byte file means the store was truncated but never
+        // rewritten (a crash mid-save, historically). Fail closed: do NOT
+        // return an empty store, which would silently drop the DB URL and
+        // invalidate every session.
+        return Err(format!(
+            "{} is empty (truncated write?); refusing to treat it as a fresh store",
+            file.display()
+        ));
     }
     let payload = raw
         .strip_prefix(MAGIC)
@@ -67,11 +78,15 @@ pub fn load(data_dir: &Path) -> Result<Secrets, String> {
 
 /// Write the secret store. The parent directory is created if needed.
 ///
-/// The file is replaced in place, not via a temporary file: on Windows
-/// `std::fs::rename` cannot replace an existing destination, and a failed
-/// rename would leave the old (still valid) file and a stray temp file. A
-/// truncated write is detected on the next read by the magic header and fails
-/// closed instead of being mistaken for an empty store.
+/// The write is atomic: the payload is written to a temporary file in the same
+/// directory, fully flushed, and then renamed over `secrets.bin`. On POSIX
+/// `rename` is atomic, so a reader either sees the complete old file or the
+/// complete new one — a crash mid-save can no longer truncate or wipe the
+/// store. On Windows `std::fs::rename` uses `MoveFileEx` with
+/// `MOVEFILE_REPLACE_EXISTING`, which also replaces an existing destination;
+/// the swap is as atomic as that API allows. The magic header on top of that
+/// remains a second line of defence: any file short of it fails closed on the
+/// next read.
 pub fn save(data_dir: &Path, secrets: &Secrets) -> Result<(), String> {
     fs::create_dir_all(data_dir)
         .map_err(|error| format!("could not create {}: {error}", data_dir.display()))?;
@@ -80,20 +95,72 @@ pub fn save(data_dir: &Path, secrets: &Secrets) -> Result<(), String> {
     let protected =
         protect(&cleartext).map_err(|error| format!("could not encrypt secrets: {error}"))?;
     let file = path(data_dir);
-    let mut handle = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&file)
-        .map_err(|error| format!("could not write {}: {error}", file.display()))?;
-    handle
+    // Temp file in the *same directory* so the rename stays on one filesystem
+    // (and therefore atomic on POSIX). A pid + random suffix keeps concurrent
+    // or retried saves from clobbering each other's temp file.
+    let temp = data_dir.join(format!(
+        "{FILE_NAME}.tmp-{}-{}",
+        std::process::id(),
+        rand::random::<u32>()
+    ));
+    let mut handle = create_private_file(&temp)?;
+    let write = handle
         .write_all(MAGIC)
         .and_then(|()| handle.write_all(&protected))
-        .and_then(|()| handle.sync_all())
-        .map_err(|error| format!("could not write {}: {error}", file.display()))?;
+        .and_then(|()| handle.flush())
+        .and_then(|()| handle.sync_all());
+    if let Err(error) = write {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("could not write {}: {error}", file.display()));
+    }
+    if let Err(error) = fs::rename(&temp, &file) {
+        let _ = fs::remove_file(&temp);
+        return Err(format!(
+            "could not replace {} atomically: {error}",
+            file.display()
+        ));
+    }
     restrict_permissions(&file)?;
+    sync_directory(data_dir);
     Ok(())
 }
+
+/// Open (create) a file that only the current user can read on POSIX, by
+/// passing mode `0600` at creation time — there is no window in which the temp
+/// file has default permissions, and the renamed store inherits the same mode.
+#[cfg(unix)]
+fn create_private_file(file: &Path) -> Result<fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(file)
+        .map_err(|error| format!("could not create {}: {error}", file.display()))
+}
+
+#[cfg(not(unix))]
+fn create_private_file(file: &Path) -> Result<fs::File, String> {
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(file)
+        .map_err(|error| format!("could not create {}: {error}", file.display()))
+}
+
+/// Best-effort durability for the rename itself: without a directory fsync a
+/// crash shortly after a successful save can still leave the rename
+/// unmaterialised on disk. Failure (e.g. an unsupported platform) is not
+/// fatal — the file contents are already fsynced.
+#[cfg(unix)]
+fn sync_directory(dir: &Path) {
+    if let Ok(handle) = fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_dir: &Path) {}
 
 #[cfg(unix)]
 fn restrict_permissions(file: &Path) -> Result<(), String> {
@@ -254,6 +321,67 @@ mod tests {
         std::fs::write(path(&dir), b"not-a-secret-store").expect("write");
         let error = load(&dir).expect_err("must not silently become empty");
         assert!(error.contains("does not look like"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_empty_existing_store_fails_closed() {
+        let dir = temp_dir("empty");
+        std::fs::create_dir_all(&dir).expect("dir");
+        // Simulates a crash in the old truncate→write save window: the file
+        // exists but is zero bytes. The pre-atomic-save `load()` returned an
+        // empty store here, silently wiping the DB URL and invalidating every
+        // session; it must error instead.
+        std::fs::write(path(&dir), b"").expect("write");
+        let error = load(&dir).expect_err("zero-byte store must not become an empty map");
+        assert!(error.contains("is empty"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_save_leaves_no_stray_temp_files() {
+        let dir = temp_dir("stray-temp");
+        let mut secrets = Secrets::new();
+        secrets.insert("authSecret".to_string(), "a".repeat(64));
+        save(&dir, &secrets).expect("save");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != FILE_NAME)
+            .collect();
+        assert!(leftovers.is_empty(), "stray files: {leftovers:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_saved_store_is_only_readable_by_the_owner() {
+        let dir = temp_dir("mode");
+        let mut secrets = Secrets::new();
+        secrets.insert("authSecret".to_string(), "a".repeat(64));
+        save(&dir, &secrets).expect("save");
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path(&dir))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "store must stay mode 0600");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_save_over_an_existing_store_keeps_its_contents_available() {
+        // The old save() opened with truncate(true) before writing; if the
+        // process died in that window the store was gone. With the temp+rename
+        // save, the previous store stays intact until the new one is complete.
+        let dir = temp_dir("replace");
+        let mut secrets = Secrets::new();
+        secrets.insert("authSecret".to_string(), "a".repeat(64));
+        save(&dir, &secrets).expect("first save");
+        secrets.insert("databaseUrl".to_string(), "postgresql://db".to_string());
+        save(&dir, &secrets).expect("second save");
+        assert_eq!(load(&dir).expect("load"), secrets);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

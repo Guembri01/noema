@@ -480,10 +480,33 @@ export async function fetchPinnedTarget(
   address: string,
 ): Promise<Response> {
   // A replaced global transport is an offline test double (or an operator's
-  // instrumentation). Honour it, but only after the caller let the target
-  // through the guard; the shipped process keeps the native fetch and uses the
-  // pinned connection below.
+  // instrumentation). Development and test runs honour it — the double keeps
+  // tests offline — but only after the caller let the target through the
+  // guard. A production build has no such excuse: the shipped process keeps
+  // the native fetch, and letting a replacement answer a pinned request would
+  // bypass the very DNS pinning this function exists for — so there it fails
+  // closed instead (`safeFetchGuarded` reports that as `failed`, and a direct
+  // caller sees the throw). The B11 operator opt-in is the one production
+  // exception (see `isBlockedOutboundTarget`): `NOEMA_ALLOW_LOOPBACK_TARGETS`
+  // declares a hermetic operation — the webhook receiver of
+  // `scripts/check-webhooks.mjs` lives on loopback and the delivery must go
+  // through the instrumentation — and a `NODE_ENV` rule cannot serve both
+  // that and the guard (the same doctrine `isBlockedFeedTarget` follows).
   if (globalThis.fetch !== nativeFetch) {
+    // Read at call time, not import time: the rule follows the mode the app
+    // runs in, and a test has to be able to switch it (the same rule
+    // `cookie-security.ts` follows).
+    const expressOptIn = process.env[LOOPBACK_TARGET_OPT_IN_ENV] !== undefined;
+    if (process.env.NODE_ENV === "production" && !expressOptIn) {
+      throw new Error(
+        "The global fetch was replaced in a production build; refusing to answer a pinned request through an unpinned transport.",
+      );
+    }
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "fetchPinnedTarget: the global fetch was replaced; sending the request through the replacement instead of the pinned connection.",
+      );
+    }
     return globalThis.fetch(rawUrl, init);
   }
   return fetchPinnedAddress(rawUrl, init, address);

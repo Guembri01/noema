@@ -18,14 +18,17 @@ const db = vi.hoisted(() => ({
   projectFindFirst: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: Record<string, unknown> = {
     workspaceMember: { findFirst: db.memberFindFirst },
     workspace: { findUnique: db.workspaceFindUnique },
     page: { findFirst: db.pageFindFirst, create: db.pageCreate },
     project: { findFirst: db.projectFindFirst },
-  },
-}));
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(prisma),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/auth", () => ({
   requireUser: async () => ({ id: "user-1", email: "member@example.test" }),

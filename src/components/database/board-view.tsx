@@ -256,6 +256,7 @@ export function BoardView({
   aggregationPropertyId,
   loading = false,
   onAddRow,
+  addRowPending = false,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -294,6 +295,11 @@ export function BoardView({
   loading?: boolean;
   /** Empty-state primary action; absent renders the hint without a button. */
   onAddRow?: () => void;
+  /**
+   * P2-T10 (M7) — true while one create is on the wire; the empty-state add
+   * row button renders `disabled` + `aria-busy` until the guard settles.
+   */
+  addRowPending?: boolean;
 }) {
   // Card drag state: the card in flight, the gap it would drop into, and the
   // card still animating back to rest after a drop (`animate-scale-in`).
@@ -414,8 +420,10 @@ export function BoardView({
             type="button"
             data-testid="board-add-row"
             onClick={onAddRow}
+            disabled={addRowPending}
+            aria-busy={addRowPending}
             aria-label={t(locale, "newRow")}
-            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
+            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Plus className="h-3.5 w-3.5" />
             {t(locale, "newRow")}

@@ -37,6 +37,8 @@ export const ROLLUP_FUNCTIONS: { id: RollupFunction; label: string }[] = [
   { id: "show_original", label: "Show original" },
 ];
 
+import { toNumber } from "@/lib/aggregations";
+
 export type RollupValue = number | string | boolean | null | undefined;
 
 const isEmpty = (value: RollupValue): boolean =>
@@ -47,10 +49,8 @@ const isEmpty = (value: RollupValue): boolean =>
 const numbers = (values: RollupValue[]): number[] =>
   values
     .filter((value) => !isEmpty(value))
-    .map((value) =>
-      typeof value === "boolean" ? Number(value) : Number(String(value).replace(/[^0-9.eE+-]/g, "")),
-    )
-    .filter((value) => Number.isFinite(value));
+    .map(toNumber)
+    .filter((value): value is number => value !== null);
 
 function aggregateNumeric(values: RollupValue[], fn: RollupFunction): number | null {
   const nums = numbers(values);

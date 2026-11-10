@@ -47,7 +47,7 @@ async function createFixture(prefix: string): Promise<Fixture> {
 async function signIn(page: Page, fixture: Fixture) {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await page.getByLabel("Email").fill(fixture.email);
-  await page.getByLabel("Password").fill(fixture.password);
+  await page.getByRole("textbox", { name: "Password" }).fill(fixture.password);
   await page.getByRole("button", { name: "Sign in" }).click({ noWaitAfter: true });
   await page.waitForURL(/\/w\//, { waitUntil: "domcontentloaded" });
 }

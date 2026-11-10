@@ -189,6 +189,7 @@ export function ListView({
   preserveScroll = false,
   loading = false,
   onAddRow,
+  addRowPending = false,
 }: {
   workspaceSlug: string;
   properties: DBProperty[];
@@ -218,6 +219,11 @@ export function ListView({
   loading?: boolean;
   /** Empty-state primary action; absent renders the hint without a button. */
   onAddRow?: () => void;
+  /**
+   * P2-T10 (M7) — true while one create is on the wire; the empty-state add
+   * row button renders `disabled` + `aria-busy` until the guard settles.
+   */
+  addRowPending?: boolean;
 }) {
   const status = properties.find(
     (p) => p.type === "STATUS" || p.type === "SELECT",
@@ -470,8 +476,10 @@ export function ListView({
                   type="button"
                   data-testid="list-add-row"
                   onClick={onAddRow}
+                  disabled={addRowPending}
+                  aria-busy={addRowPending}
                   aria-label={t(locale, "newRow")}
-                  className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
+                  className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {t(locale, "newRow")}

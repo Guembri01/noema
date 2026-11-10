@@ -30,6 +30,7 @@ export type ActivityAction =
   | "page.restored"
   | "page.deleted"
   | "page.shared"
+  | "page.share_updated"
   | "page.unshared"
   | "ticket.created"
   | "ticket.archived"

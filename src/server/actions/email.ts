@@ -577,6 +577,28 @@ export async function acceptWorkspaceInviteAction(
   if (!resolved.ok) return { error: resolved.error };
   const { invite } = resolved;
 
+  // Single-use consumption is decided by the write, not the read: the resolver
+  // above and a concurrent accept can both see `acceptedAt: null`, so the
+  // invitation is spent with a conditional update — the same pattern an OAuth
+  // code uses. Only the request whose `UPDATE ... WHERE acceptedAt IS NULL`
+  // matches a row (`count === 1`) is the winner; the loser claims nothing, and
+  // its joins and revalidations were already done by the winner.
+  const claimed = await prisma.invite.updateMany({
+    where: { id: invite.id, acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  if (claimed.count !== 1) {
+    // Lost the race: the winner joined this user (the upserts below are
+    // idempotent, and a reworked resolver would refuse the token as
+    // already-used anyway), so redemption settles to the same outcome.
+    return {
+      ok: true,
+      slug: invite.workspace.slug,
+      workspaceName: invite.workspace.name,
+      role: invite.role,
+    };
+  }
+
   await prisma.workspaceMember.upsert({
     where: { workspaceId_userId: { workspaceId: invite.workspace.id, userId: user.id } },
     // The stored role is granted — but only because `resolveWorkspaceInvite`
@@ -592,10 +614,6 @@ export async function acceptWorkspaceInviteAction(
       update: {},
     });
   }
-  await prisma.invite.update({
-    where: { id: invite.id },
-    data: { acceptedAt: new Date() },
-  });
 
   // Legal here, and only here: acceptance is a POST (the invite page's form
   // action), not a render. The page used to accept during render, and Next
