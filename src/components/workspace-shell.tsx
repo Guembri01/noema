@@ -397,7 +397,7 @@ export function WorkspaceShell({
   }, [createNewPage, toggleSidebar]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="fixed inset-0 flex overflow-hidden">
       <RouteProgress />
       <div className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-border bg-bg pb-2 pt-[calc(0.5rem_+_env(safe-area-inset-top))] pl-[calc(0.75rem_+_env(safe-area-inset-left))] pr-[calc(0.75rem_+_env(safe-area-inset-right))] md:hidden">
         <button
@@ -469,7 +469,7 @@ export function WorkspaceShell({
         />
       )}
 
-      <div className="flex min-w-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
         <main
           id="main"
           className="min-w-0 flex-1 overflow-y-auto scrollbar-thin pt-[calc(3.5rem_+_env(safe-area-inset-top))] md:pt-0"
